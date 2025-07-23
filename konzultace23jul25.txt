@@ -1,0 +1,64 @@
+v pondeli teamsy
+mam cist clanky
+metody pro 3d nesting - obecne 3d nesting
+2d nesting s vyuzitim deep learningu
+2d nesting s vyuzitim genetickych algoritmu
+2d/3d nesting s neurogenezí
+davat si odkazy na clanky na gitu
+potreba se divat do predplacenych magazinu
+napsat do zapisu ze jsem posilal maily, kdy, nakopirovat dnesek
+potreba poradne odzdrojovat
+
+
+osnova prace:
+abstrakt
+
+prvni kapitola uvod
+1. uvod
+-potreba uvod do problematiky
+2. motivace - pripadne, muze byt zvlast
+3. vymezeni oblasti ve ktere se pohybujeme, kdo se tomu venuje a tak
+specifikace ukolu, jasne vymezit
+jasne vysvetlit cemu se venuji a cemu ne, oduvodnit cemu se nevenuju, pokud muzu - primarne dulezite vymezit vyzkumnou metodu
+4. nástin metod, budou rozebrané v teoretické části práce
+5. kde oponent/čtenář najde co hledá
+to vše za cílem zvýšit strukturu práce
+zmínit co jsem udělal já a co ne
+aby náhodou neřekl že jsem dělal něco co jsem nedělal
+posudek jestli student dostatečně odděluje co dělal a co ne
+
+případně formulace nesting problému mezi kapitolami
+
+druha kapitola state of the art
+zde odkazujeme na mnoho praci
+popis reseni problemu, metody urcene k reseni problemu
+ruzne metody pro 3d nesting do kontejneru
+pripadne popis problemu, ale spis v uvodu
+jednotlive metody rozdělit do kapitol
+pokud mam vice casu navrh komparace metod
+dulezite - kazdy clanek má mít své zastoupení v kapitole, tak aby prokazovalo že jsem ho viděl a přineslo informace
+jeden dva odstavce na clanek
+nejlepe zavest parametry, podle tech porovnat metody - treba online, offline, uspesnost atd.
+pokud chci neco nyni psat, tak shrnout clanky - klidne vyuzit ai, hlavne aby to bylo pravdive a srozumitelne
+pozdeji clanky provazeme, az pote co je prectu lze poznat podle kterych metod je lze porovnavat
+tohle vse slouzi k tomu aby mohl oponent rychle projit clanek, pochopit metody, pochopit co je muj novy prinos
+
+potenciálně
+část o neuronových sítích
+teorie není třeba tolik, hlavně potřeba popsat vlastní metodiku
+
+treti kapitola
+popis vlasní metody
+
+ctvrta a dal - podle toho jak budu postupavat
+
+pata kapitola - nastroje pro implementaci
+
+sesta - experimenty a vysledky, ohodnocení a rozbor. grafy, pásma kde jsou výsledky validní, srovnání se základními metodami
+
+sedma - závěr, jak pokračovat dál atd.
+
+afterword:
+nyní nás zajímá hlavně state of the art aby jsme udělali zadání
+todo: profil absolventa specializace/bílá kniha/prostě co má být v diplomce na oi
+nejlépe kontaktovat oponenta, ukazovat a řešit průběžně - až něco bude
