@@ -205,35 +205,34 @@ class DQNAgent:
         next_mask  = to_torch(batch['next_mask'], self.device).float()
 
         q_all = self.q(s, curr_feats)  # (B, A)
-        a_idx_clamped = torch.clamp(a_idx, 0, self.cfg.max_actions-1)
-        q_sa = q_all.gather(1, a_idx_clamped.unsqueeze(1)).squeeze(1)
 
-        with torch.no_grad():
-            if self.cfg.double_dqn:
-                q_next_online = self.q(s_next, next_feats)
-                q_next_online[next_mask < 0.5] = -1e9
-                next_a = torch.argmax(q_next_online, dim=1, keepdim=True)
-                q_next_target = self.q_target(s_next, next_feats)
-                q_next_target[next_mask < 0.5] = -1e9
-                max_next = q_next_target.gather(1, next_a).squeeze(1)
-            else:
-                q_next = self.q_target(s_next, next_feats)
-                q_next[next_mask < 0.5] = -1e9
-                max_next = torch.max(q_next, dim=1)[0]
-            target = r + (1.0 - done) * self.cfg.gamma * max_next
+        # Only compute loss for rows where an action was actually taken (a_idx >= 0)
+        valid = (a_idx >= 0)
+        if valid.any():
+            q_sa = q_all[valid].gather(1, a_idx[valid].unsqueeze(1)).squeeze(1)
 
-        loss = F.smooth_l1_loss(q_sa, target)
-        self.opt.zero_grad(); loss.backward()
-        if self.cfg.grad_clip and self.cfg.grad_clip > 0:
-            nn.utils.clip_grad_norm_(self.q.parameters(), self.cfg.grad_clip)
-        self.opt.step()
-
-        # Target updates
-        if self.cfg.tau and self.cfg.tau > 0.0:
             with torch.no_grad():
-                for p, pt in zip(self.q.parameters(), self.q_target.parameters()):
-                    pt.data.mul_(1.0 - self.cfg.tau).add_(self.cfg.tau * p.data)
-        elif self.step_count % self.cfg.target_update_interval == 0:
-            self.q_target.load_state_dict(self.q.state_dict())
+                if self.cfg.double_dqn:
+                    q_next_online = self.q(s_next, next_feats)
+                    q_next_online[next_mask < 0.5] = -1e9
+                    next_a = torch.argmax(q_next_online, dim=1, keepdim=True)
+                    q_next_target = self.q_target(s_next, next_feats)
+                    q_next_target[next_mask < 0.5] = -1e9
+                    max_next = q_next_target.gather(1, next_a).squeeze(1)
+                else:
+                    q_next = self.q_target(s_next, next_feats)
+                    q_next[next_mask < 0.5] = -1e9
+                    max_next = torch.max(q_next, dim=1)[0]
 
-        return float(loss.detach().cpu().item())
+                target_all = r + (1.0 - done) * self.cfg.gamma * max_next
+
+            target = target_all[valid]
+
+            loss = F.smooth_l1_loss(q_sa, target)
+            self.opt.zero_grad(); loss.backward()
+            if self.cfg.grad_clip and self.cfg.grad_clip > 0:
+                nn.utils.clip_grad_norm_(self.q.parameters(), self.cfg.grad_clip)
+            self.opt.step()
+        else:
+            return None
+

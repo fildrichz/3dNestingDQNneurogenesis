@@ -199,4 +199,4 @@ def train_pack_dqn(episodes=50, W=40, D=40, H=40, n_items=50, seed=42, max_actio
 
 if __name__ == "__main__":
     # quick smoke test (reduce episodes if needed)
-    train_pack_dqn(episodes=100, n_items=30, W=20, D=20, H=15, seed=42, max_actions=96, topk_eps=24)
+    train_pack_dqn(episodes=100, n_items=30, W=20, D=20, H=15, seed=42, max_actions=96, topk_eps=500)

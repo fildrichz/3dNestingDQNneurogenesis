@@ -18,6 +18,7 @@ class PackingEnv:
         self.rng = np.random.default_rng(seed)
         self.bin_size = (int(W), int(D), int(H))
         self.bin_volume = int(W*D*H)
+        self.gamma = float(gamma)
         self.max_actions = int(max_actions)
         self.topk_eps = int(topk_eps)
         self.initial_items = list(items) if items is not None else []
@@ -89,28 +90,51 @@ class PackingEnv:
         return np.concatenate([np.array([W,D,H], dtype=np.float32), mean_items, std_items, mean_eps, item_frac, ep_frac, packed_frac], axis=0)
 
     def step(self, action):
-        if self.done: raise RuntimeError("Episode done, reset required.")
-        reward = 0.0; info = {}
+        if self.done:
+            raise RuntimeError("Episode done, reset required.")
+        info = {}
+
+        # Potential Phi(s) = utilization(s)
+        util_prev = self.total_placed_volume / self.bin_volume
+
+        # Agent decides to stop (or no feasible actions chosen)
         if action is None:
             self.done = True
-            util = self.total_placed_volume / self.bin_volume
-            reward += util; info["utilization"] = util
+            # Potential-only shaping for a no-op (s' == s): r = gamma*util - util
+            reward = (self.gamma * util_prev) - util_prev
+            # Terminal bonus reinforces the end signal
+            reward += util_prev
+            info["utilization"] = util_prev
             return self._obs(), reward, self.done, info
+
+        # Try to place
         item_idx, ep_idx, rot_idx, pos, size = action
         ok = self.C.place_at(pos, size)
         if not ok:
+            # Should be rare (enumerate_actions already checked feasibility)
             self.done = True
             return self._obs(), -1.0, True, {"invalid": True}
-        v = int(size[0]*size[1]*size[2])
+
+        # Update packed volume and remove the item
+        v = int(size[0] * size[1] * size[2])
         self.total_placed_volume += v
         del self.items[item_idx]
-        reward += v / self.bin_volume
-        actions, _eps = self.enumerate_actions()
+
+        # New potential after placement
+        util_next = self.total_placed_volume / self.bin_volume
+
+        # Potential-based shaping (Ng et al., 1999)
+        reward = (self.gamma * util_next) - util_prev
+
+        # Check termination: no feasible actions or no items left
+        actions, eps_subset = self.enumerate_actions()
         if len(actions) == 0 or len(self.items) == 0:
             self.done = True
-            util = self.total_placed_volume / self.bin_volume
-            reward += util; info["utilization"] = util
+            reward += util_next                # terminal bonus
+            info["utilization"] = util_next
+
         return self._obs(), reward, self.done, info
+
 
 # ---------------------
 # Feature utils for DQN from dqn.py
@@ -199,4 +223,4 @@ def train_pack_dqn(episodes=50, W=40, D=40, H=40, n_items=50, seed=42, max_actio
 
 if __name__ == "__main__":
     # quick smoke test (reduce episodes if needed)
-    train_pack_dqn(episodes=100, n_items=30, W=20, D=20, H=15, seed=42, max_actions=96, topk_eps=50)
+    train_pack_dqn(episodes=100, n_items=50, W=20, D=20, H=20, seed=42, max_actions=50, topk_eps=500)
