@@ -404,7 +404,7 @@ class Container(box3d):
         merged = survivors + added
         self.eps = sorted(set(merged), key=lambda p: (p[2], p[1], p[0]))
         #self._prune_colinear_min()
-        self.update_residual_space(k)
+        #self.update_residual_space(k)
         return self.eps
 
 
