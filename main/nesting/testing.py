@@ -72,10 +72,10 @@ def test_rs_caps():
     n = _mk(20,20,10, 10,8,10)   # x:[10,30), y:[8,28), z:[10,20)
     C.placed.append(n)
     C.update_3depl(n)            # will call update_residual_space(n)
-    print("caps:", C.ep_rs[(5,8,12)])  # expect x_cap <= 5, y_cap unchanged, z_cap unchanged
+    #print("caps:", C.ep_rs[(5,8,12)])  # expect x_cap <= 5, y_cap unchanged, z_cap unchanged
     C.plot3d(title="After placing box for RS cap test")
 
-#test_rs_caps()
+test_rs_caps()
 
 # =================== 4x4x4 cubes demo ===================
 
@@ -187,4 +187,4 @@ def run_many_boxes_demo(save_png: bool = True):
         C.plot3d(title=title)
 
 # Uncomment to run:
-run_many_boxes_demo(save_png=False)
+#run_many_boxes_demo(save_png=False)
