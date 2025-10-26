@@ -139,17 +139,48 @@ class PackingEnv:
 # ---------------------
 # Feature utils for DQN from dqn.py
 # ---------------------
-ACTION_FEAT_DIM = 12
+# in packing_with_dqncore_potential.py
+ACTION_FEAT_DIM = 19
+
+def _safe_caps(C, ep):
+    # residual caps you already maintain; fallback to container bounds
+    x,y,z = ep
+    return C.ep_rs.get(ep, (C.w - x, C.d - y, C.h - z))
 
 def build_action_features(env: PackingEnv, actions):
-    rows=[]
+    W,D,H = env.bin_size
+    binV = float(env.bin_volume)
+    rows = []
     for a in actions:
-        if a is None: rows.append([0]*ACTION_FEAT_DIM)
-        else:
-            item_idx, ep_idx, rot_idx, pos, size=a
-            W,D,H=env.bin_size; x,y,z=pos; item=env.items[item_idx]
-            rows.append([item[0],item[1],item[2], size[0],size[1],size[2], x,y,z, W,D,H])
+        if a is None:
+            rows.append([0.0]*ACTION_FEAT_DIM); continue
+        item_idx, ep_idx, rot_idx, ep, size = a
+        iw,id_,ih = env.items[item_idx]
+        rw,rd,rh  = size
+        ex,ey,ez  = ep
+        cx,cy,cz  = _safe_caps(env.C, ep)
+        # normalized sizes/pos/caps
+        rw_n, rd_n, rh_n = rw/W, rd/D, rh/H
+        ex_n, ey_n, ez_n = ex/W, ey/D, ez/H
+        cx_n, cy_n, cz_n = cx/W, cy/D, cz/H
+        # slack (cap - size), normalized
+        sx, sy, sz = max(0,cx-rw), max(0,cy-rd), max(0,cz-rh)
+        sx_n, sy_n, sz_n = sx/W, sy/D, sz/H
+        # cheap immediate gain + tightness
+        vol     = float(rw*rd*rh)
+        delta_u = vol / binV
+        tight   = float((sx==0) + (sy==0) + (sz==0))
+        rows.append([
+            iw/W, id_/D, ih/H,         # item original dims (normed)
+            rw_n, rd_n, rh_n,          # chosen rotation (normed)
+            ex_n, ey_n, ez_n,          # EP position (normed)
+            cx_n, cy_n, cz_n,          # residual caps (normed)
+            sx_n, sy_n, sz_n,          # slack (normed)
+            delta_u, tight,            # reward hints
+            W/D, D/H                   # bin aspect ratios
+        ])
     return np.asarray(rows, dtype=np.float32)
+
 
 def pad_feats_mask(feats: np.ndarray, mask_short: np.ndarray, maxA:int):
     A = feats.shape[0]
@@ -223,4 +254,4 @@ def train_pack_dqn(episodes=50, W=40, D=40, H=40, n_items=50, seed=42, max_actio
 
 if __name__ == "__main__":
     # quick smoke test (reduce episodes if needed)
-    train_pack_dqn(episodes=100, n_items=50, W=20, D=20, H=20, seed=42, max_actions=50, topk_eps=500)
+    train_pack_dqn(episodes=100, n_items=50, W=20, D=20, H=20, seed=42, max_actions=50, topk_eps=1000)
