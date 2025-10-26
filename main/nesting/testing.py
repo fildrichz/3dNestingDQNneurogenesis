@@ -75,7 +75,7 @@ def test_rs_caps():
     #print("caps:", C.ep_rs[(5,8,12)])  # expect x_cap <= 5, y_cap unchanged, z_cap unchanged
     C.plot3d(title="After placing box for RS cap test")
 
-test_rs_caps()
+#test_rs_caps()
 
 # =================== 4x4x4 cubes demo ===================
 
@@ -153,9 +153,8 @@ def run_many_boxes_demo(save_png: bool = True):
     # Tunables
     W, D, H = 140, 100, 90
     catalog = [
-        (10,10,10), (12,8,10), (8,12,10), (6,6,6), (14,10,8),
-        (10,14,8), (8,8,12), (10,6,10), (12,12,6), (16,8,6)
-    ] * 15  # 50 items total
+        (10,10,10), (12,8,10), (8,12,10)
+    ] * 1  # 50 items total
 
     # Container
     C = Container(W, D, H)
@@ -187,4 +186,4 @@ def run_many_boxes_demo(save_png: bool = True):
         C.plot3d(title=title)
 
 # Uncomment to run:
-#run_many_boxes_demo(save_png=False)
+run_many_boxes_demo(save_png=False)

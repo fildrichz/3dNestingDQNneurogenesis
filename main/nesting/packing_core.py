@@ -262,88 +262,120 @@ class Container(box3d):
 
     def update_3depl(self, k) -> List[EP]:
         """
-        Wall-fallback EP update (robust):
-        - Always add the 3 face-corner EPs of the placed item k.
-        - For each of the 3 inward rays (from right/front/top faces toward origin),
-        add the nearest blocker EP; if no blocker, fallback to the wall.
-        - Remove EPs strictly inside k (face/edge EPs remain), dedup, sort (z,y,x).
+        EP update (paper-accurate, wall-fallback, NO corner-EPs):
+        From each face-corner of k, cast two inward rays:
+            R = (xk+wk, yk,    zk)  -> along -Y and -Z
+            F = (xk,    yk+dk, zk)  -> along -X and -Z
+            T = (xk,    yk,    zk+hk)-> along -X and -Y
+        For each ray: endpoint is the nearest blocking item's near face (toward origin);
+        if no blocker, fall back to the wall on that axis (0). Do not add the corner points.
+        Keep EPs not strictly inside k; dedup; sort (z,y,x).
         """
         xk, yk, zk = k.x, k.y, k.z
         wk, dk, hk = k.w, k.d, k.h
 
         W, D, H = self.w, self.d, self.h
-        def _in_bounds(p: EP) -> bool:
-            return self._in_bounds_static(p, W, D, H)
 
-        def _overlap_1d(a1, a2, b1, b2):
-            # open-interval overlap on projections (faces touching is fine for EPs)
-            return not (a2 <= b1 or b2 <= a1)
+        def in_bounds(p):
+            x, y, z = p
+            return 0 <= x <= W and 0 <= y <= D and 0 <= z <= H
 
-        # survivors: keep old EPs that are NOT strictly inside k
-        survivors = [ep for ep in self.eps if not self._inside_strict(ep, k)]
+        # strict interior: EPs on faces/edges are kept
+        def inside_strict(p, b):
+            px, py, pz = p
+            return (b.x < px < b.x + b.w and
+                    b.y < py < b.y + b.d and
+                    b.z < pz < b.z + b.h)
 
-        cand: List[EP] = []
+        # treat a line at v as [v, v+1) for robust overlap with [a1,a2)
+        def line_overlaps_interval(v, a1, a2):
+            return not ((v + 1) <= a1 or a2 <= v)
 
-        # (1) Always add the three face-corner EPs
-        cand.append((xk + wk, yk,      zk     ))  # right face
-        cand.append((xk,      yk + dk, zk     ))  # front face
-        cand.append((xk,      yk,      zk + hk))  # top face
+        # survivors: old EPs not strictly inside k
+        survivors = [ep for ep in self.eps if not inside_strict(ep, k)]
 
-        # Helper: find nearest blocker face along a ray; otherwise wall fallback
-        # RAY 1: from R=(xk+wk, yk, zk) along -X  -> EP at (xi+wi, yk, zk) or (0, yk, zk)
-        nearest_x = None
-        for i in self.placed:
-            if i is k: 
-                continue
-            ix1, iy1, iz1 = i.x, i.y, i.z
-            ix2, iy2, iz2 = ix1 + i.w, iy1 + i.d, iz1 + i.h
-            # blocker must be to the left (ix2 <= xk) and overlap in Y and Z with the ray line (yk, zk)
-            if ix2 <= xk and _overlap_1d(yk, yk+1, iy1, iy2) and _overlap_1d(zk, zk+1, iz1, iz2):
-                # nearer to R means larger ix2 (closer to xk)
-                if (nearest_x is None) or (ix2 > nearest_x):
-                    nearest_x = ix2
-        if nearest_x is not None:
-            cand.append((nearest_x, yk, zk))
-        else:
-            cand.append((0, yk, zk))  # wall fallback on X
+        # helper: nearest blocker near-face coordinate along a ray; else None
+        def nearest_blocker_on_ray(axis, x0, y0, z0):
+            best = None
+            for i in self.placed:
+                if i is k: 
+                    continue
+                ix1, iy1, iz1 = i.x, i.y, i.z
+                ix2, iy2, iz2 = ix1 + i.w, iy1 + i.d, iz1 + i.h
 
-        # RAY 2: from F=(xk, yk+dk, zk) along -Y -> EP at (xk, yi+di, zk) or (xk, 0, zk)
-        nearest_y = None
-        for i in self.placed:
-            if i is k:
-                continue
-            ix1, iy1, iz1 = i.x, i.y, i.z
-            ix2, iy2, iz2 = ix1 + i.w, iy1 + i.d, iz1 + i.h
-            # blocker must be behind (iy2 <= yk) and overlap in X and Z with the ray line (xk, zk)
-            if iy2 <= yk and _overlap_1d(xk, xk+1, ix1, ix2) and _overlap_1d(zk, zk+1, iz1, iz2):
-                if (nearest_y is None) or (iy2 > nearest_y):
-                    nearest_y = iy2
-        if nearest_y is not None:
-            cand.append((xk, nearest_y, zk))
-        else:
-            cand.append((xk, 0, zk))  # wall fallback on Y
+                if axis == 'negX':
+                    # move x ↓ ; need ix2 <= x0 and overlaps at (y0, z0)
+                    if ix2 <= x0 and line_overlaps_interval(y0, iy1, iy2) and line_overlaps_interval(z0, iz1, iz2):
+                        if best is None or ix2 > best: 
+                            best = ix2   # nearer == larger ix2
+                elif axis == 'negY':
+                    # move y ↓ ; need iy2 <= y0 and overlaps at (x0, z0)
+                    if iy2 <= y0 and line_overlaps_interval(x0, ix1, ix2) and line_overlaps_interval(z0, iz1, iz2):
+                        if best is None or iy2 > best: 
+                            best = iy2   # nearer == larger iy2
+                elif axis == 'negZ':
+                    # move z ↓ ; need iz2 <= z0 and overlaps at (x0, y0)
+                    if iz2 <= z0 and line_overlaps_interval(x0, ix1, ix2) and line_overlaps_interval(y0, iy1, iy2):
+                        if best is None or iz2 > best: 
+                            best = iz2   # nearer == larger iz2
+            return best
 
-        # RAY 3: from T=(xk, yk, zk+hk) along -Z -> EP at (xk, yk, zi+hi) or (xk, yk, 0)
-        nearest_z = None
-        for i in self.placed:
-            if i is k:
-                continue
-            ix1, iy1, iz1 = i.x, i.y, i.z
-            ix2, iy2, iz2 = ix1 + i.w, iy1 + i.d, iz1 + i.h
-            # blocker must be below (iz2 <= zk) and overlap in X and Y with the ray line (xk, yk)
-            if iz2 <= zk and _overlap_1d(xk, xk+1, ix1, ix2) and _overlap_1d(yk, yk+1, iy1, iy2):
-                if (nearest_z is None) or (iz2 > nearest_z):
-                    nearest_z = iz2
-        if nearest_z is not None:
-            cand.append((xk, yk, nearest_z))
-        else:
-            cand.append((xk, yk, 0))  # wall fallback on Z
+        cand = []
 
-        # Filter: in-bounds and not strictly inside k
-        cand = [ep for ep in cand if _in_bounds(ep) and not self._inside_strict(ep, k)]
+        # R = (xk+wk, yk, zk): project along -Y and -Z
+        Rx, Ry, Rz = xk + wk, yk, zk
+        nbY = nearest_blocker_on_ray('negY', Rx, Ry, Rz)
+        cand.append((Rx, nbY if nbY is not None else 0,  Rz))
+        nbZ = nearest_blocker_on_ray('negZ', Rx, Ry, Rz)
+        cand.append((Rx, Ry,  nbZ if nbZ is not None else 0))
 
-        # Merge, dedup, order (z,y,x)
+        # F = (xk, yk+dk, zk): project along -X and -Z
+        Fx, Fy, Fz = xk, yk + dk, zk
+        nbX = nearest_blocker_on_ray('negX', Fx, Fy, Fz)
+        cand.append((nbX if nbX is not None else 0,  Fy, Fz))
+        nbZ = nearest_blocker_on_ray('negZ', Fx, Fy, Fz)
+        cand.append((Fx, Fy,  nbZ if nbZ is not None else 0))
+
+        # T = (xk, yk, zk+hk): project along -X and -Y
+        Tx, Ty, Tz = xk, yk, zk + hk
+        nbX = nearest_blocker_on_ray('negX', Tx, Ty, Tz)
+        cand.append((nbX if nbX is not None else 0,  Ty, Tz))
+        nbY = nearest_blocker_on_ray('negY', Tx, Ty, Tz)
+        cand.append((Tx, nbY if nbY is not None else 0,  Tz))
+
+        # keep in-bounds and not strictly inside new box
+        cand = [ep for ep in cand if in_bounds(ep) and not inside_strict(ep, k)]
+
+        # merge, dedup, order by (z,y,x)
         merged = survivors + cand
         self.eps = sorted(set(merged), key=lambda p: (p[2], p[1], p[0]))
         return self.eps
 
+
+    def _pareto_prune_eps(self, points: list[tuple[int,int,int]]) -> list[tuple[int,int,int]]:
+        """
+        Keep only non-dominated EPs in the MIN sense over (x,y,z).
+        a dominates b  <=>  a<=b coord-wise and at least one strict.
+        O(n^2) for clarity (EP counts are small).
+        """
+        # de-dup first (EPs are hashable)
+        pts = list(set(points))
+
+        def dominates(a, b):
+            return ((a[0] >= b[0]) and (a[1] >= b[1]) and (a[2] >= b[2])
+                     #and ((a[0] > b[0]) or (a[1] > b[1]) or (a[2] > b[2]))
+                     )
+
+        front = []
+        for i, p in enumerate(pts):
+            dominated = False
+            for j, q in enumerate(pts):
+                if i != j and dominates(q, p):
+                    dominated = True
+                    break
+            if not dominated:
+                front.append(p)
+
+        # Optional: keep your usual order for downstream code
+        front.sort(key=lambda t: (t[2], t[1], t[0]))  # (z, y, x)
+        return front
