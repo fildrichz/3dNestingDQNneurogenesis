@@ -291,11 +291,11 @@ class DQNAgent:
         # Compute target values
         with torch.no_grad():
             if self.cfg.double_dqn:
-                # ✅ CORRECT: Double DQN implementation (matches van Hasselt et al. 2016)
+                # Double DQN implementation (matches van Hasselt et al. 2016)
                 # Use online network for action selection
                 q_next_online = self.q(s_next, next_feats)
                 
-                # ✅ FIX: Better masking strategy to avoid gradient issues
+                # Better masking strategy to avoid gradient issues
                 # Mask before argmax to select best valid action
                 q_next_online_masked = torch.where(
                     next_mask > 0.5,
