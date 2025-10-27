@@ -172,12 +172,16 @@ def train_with_scenario(scenario="medium", seed=42):
     """
     from packing_with_dqncore_potential_fixed import train_pack_dqn, train_pack_dqn_fixed_items
     from dqn_fixed import DQNConfig
+    import os
     
     config = get_config(scenario)
     print(f"\n{'='*70}")
     print(f"Training with {scenario.upper()} configuration")
     print(f"Description: {config['description']}")
     print(f"{'='*70}\n")
+    
+    # Create output_data directory
+    os.makedirs("output_data", exist_ok=True)
     
     # Determine which training function to use
     use_fixed = (scenario == "fixed")
@@ -196,7 +200,7 @@ def train_with_scenario(scenario="medium", seed=42):
         num_train_steps=config["num_train_steps"],
         seed=seed,
         log_interval=10,
-        save_path=f"/mnt/user-data/outputs/dqn_packing_{scenario}.pt"
+        save_path=f"dqn_packing_{scenario}.pt"  # Will be saved to ./output_data/
     )
     
     return agent, env

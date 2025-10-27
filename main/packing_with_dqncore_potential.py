@@ -221,6 +221,12 @@ def train_pack_dqn(episodes=100, W=40, D=40, H=40, n_items=50, seed=42,
         log_interval: Print stats every N episodes
         save_path: Path to save final model (optional)
     """
+    # Create output_data directory if saving
+    import os
+    if save_path:
+        os.makedirs("output_data", exist_ok=True)
+        if not save_path.startswith("output_data/"):
+            save_path = os.path.join("output_data", os.path.basename(save_path))
     print(f"\n{'='*60}")
     print(f"Starting DQN Training for 3D Bin Packing")
     print(f"{'='*60}")
@@ -372,6 +378,12 @@ def train_pack_dqn_fixed_items(episodes=100, W=40, D=40, H=40, n_items=50, seed=
     
     Same arguments as train_pack_dqn, but uses the same item set every episode.
     """
+    # Create output_data directory if saving
+    import os
+    if save_path:
+        os.makedirs("output_data", exist_ok=True)
+        if not save_path.startswith("output_data/"):
+            save_path = os.path.join("output_data", os.path.basename(save_path))
     print(f"\n{'='*60}")
     print(f"Starting DQN Training (FIXED ITEMS) for 3D Bin Packing")
     print(f"{'='*60}")
@@ -517,7 +529,7 @@ if __name__ == "__main__":
     # Quick test with varying items
     print("Training with VARYING items (more realistic):")
     agent, env = train_pack_dqn(
-        episodes=200, 
+        episodes=300, 
         n_items=50, 
         W=20, D=20, H=20, 
         seed=42, 
@@ -526,7 +538,7 @@ if __name__ == "__main__":
         train_freq=1,
         num_train_steps=1,
         log_interval=10,
-        save_path="/mnt/user-data/outputs/dqn_packing_model.pt"
+        save_path="dqn_packing_model.pt"  # Will be saved to ./output_data/
     )
     
     # Uncomment to test with fixed items (useful for debugging)
@@ -538,5 +550,6 @@ if __name__ == "__main__":
     #     seed=42, 
     #     max_actions=50, 
     #     topk_eps=1000,
-    #     log_interval=10
+    #     log_interval=10,
+    #     save_path="dqn_packing_fixed_model.pt"  # Will be saved to ./output_data/
     # )
