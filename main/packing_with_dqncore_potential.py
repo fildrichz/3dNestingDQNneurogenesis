@@ -529,7 +529,7 @@ if __name__ == "__main__":
     # Quick test with varying items
     print("Training with VARYING items (more realistic):")
     agent, env = train_pack_dqn(
-        episodes=300, 
+        episodes=500, 
         n_items=50, 
         W=20, D=20, H=20, 
         seed=42, 
