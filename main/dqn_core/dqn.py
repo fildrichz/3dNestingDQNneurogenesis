@@ -36,23 +36,59 @@ class ReplayBuffer:
         self.next_feats = np.zeros((capacity, A, D), dtype=np.float32)
         self.next_mask  = np.zeros((capacity, A), dtype=np.float32)
 
-        self.n_step_buffer = deque(maxlen=self.n_step)
+        # ✅ FIX: Don't use maxlen - we manually control the size with popleft()
+        self.n_step_buffer = deque()
 
     def _n_step_push(self, transition):
+        """
+        ✅ FIXED: Properly implements sliding window n-step learning.
+        
+        Key changes:
+        1. Uses popleft() instead of clear() to maintain sliding window
+        2. Computes n-step return from OLDEST transition
+        3. Generates one sample per timestep (after warmup)
+        
+        Returns:
+            n-step transition tuple or None if buffer not full
+        """
         self.n_step_buffer.append(transition)
+        
+        # Wait until we have n transitions
         if len(self.n_step_buffer) < self.n_step:
             return None
-        R, s, a_idx, currF, currM = 0.0, None, None, None, None
+        
+        # ✅ FIX: Extract data from OLDEST transition (index 0)
+        oldest = self.n_step_buffer[0]
+        s = oldest[0]
+        a_idx = oldest[1]
+        currF = oldest[5]
+        currM = oldest[6]
+        
+        # Compute n-step return
+        R = 0.0
+        gamma_power = 1.0
+        
+        # Check for terminal states within n-step window
         for i, (si, ai, ri, sni, di, cF, cM, nF, nM) in enumerate(self.n_step_buffer):
-            if i == 0:
-                s = si; a_idx = ai; currF = cF; currM = cM
-            R = R + (self.gamma ** i) * ri
+            R += gamma_power * ri
+            gamma_power *= self.gamma
+            
             if di:
-                s_next, done, nextF, nextM = sni, di, nF, nM
-                break
-        else:
-            s_next, done, nextF, nextM = self.n_step_buffer[-1][3], self.n_step_buffer[-1][4], self.n_step_buffer[-1][7], self.n_step_buffer[-1][8]
-        self.n_step_buffer.clear()
+                # Episode terminated - use this state as final
+                # ✅ FIX: Use popleft() to maintain sliding window
+                self.n_step_buffer.popleft()
+                return (s, a_idx, R, sni, 1.0, currF, currM, nF, nM)
+        
+        # No termination in window - bootstrap from last state
+        last = self.n_step_buffer[-1]
+        s_next = last[3]
+        done = last[4]
+        nextF = last[7]
+        nextM = last[8]
+        
+        # ✅ CRITICAL FIX: Remove only oldest, maintain sliding window
+        self.n_step_buffer.popleft()  # Not clear()!
+        
         return (s, a_idx, R, s_next, float(done), currF, currM, nextF, nextM)
 
     def push(self, s, a_idx, r, s_next, done, curr_action_feats, curr_mask, next_action_feats, next_mask):
@@ -187,8 +223,9 @@ class DQNAgent:
         self._eps = cfg.eps_start
 
     def epsilon(self) -> float:
-        """Epsilon for exploration, decays based on training steps"""
-        frac = min(1.0, self.training_steps / max(1, self.cfg.eps_decay_steps))
+        """Epsilon for exploration, decays based on environment steps (not training steps)"""
+        # ✅ IMPROVEMENT: Use env_steps for more consistent exploration schedule
+        frac = min(1.0, self.env_steps / max(1, self.cfg.eps_decay_steps))
         self._eps = self.cfg.eps_start + (self.cfg.eps_end - self.cfg.eps_start) * frac
         return self._eps
 
@@ -212,7 +249,8 @@ class DQNAgent:
         with torch.no_grad():
             q = self.q(obs_t, feats_t)[0].cpu().numpy()
         
-        q[mask < 0.5] = -1e9
+        # Mask invalid actions
+        q[mask < 0.5] = -np.inf  # Use -inf for safety
         return int(np.argmax(q))
 
     def store(self, s, a_idx, r, s_next, done, *, curr_action_feats, curr_mask, next_action_feats, next_mask):
@@ -242,8 +280,7 @@ class DQNAgent:
 
         # Compute Q(s,a) for taken actions
         q_all = self.q(s, curr_feats)
-        q_all = q_all.masked_fill(curr_mask < 0.5, 0.0)
-
+        
         # Only compute loss for valid actions (where a_idx >= 0)
         valid = (a_idx >= 0)
         if not valid.any():
@@ -254,19 +291,36 @@ class DQNAgent:
         # Compute target values
         with torch.no_grad():
             if self.cfg.double_dqn:
-                # Double DQN: use online net for action selection, target net for evaluation
+                # ✅ CORRECT: Double DQN implementation (matches van Hasselt et al. 2016)
+                # Use online network for action selection
                 q_next_online = self.q(s_next, next_feats)
-                q_next_online = q_next_online.masked_fill(next_mask < 0.5, -1e9)
-                next_a = torch.argmax(q_next_online, dim=1, keepdim=True)
                 
+                # ✅ FIX: Better masking strategy to avoid gradient issues
+                # Mask before argmax to select best valid action
+                q_next_online_masked = torch.where(
+                    next_mask > 0.5,
+                    q_next_online,
+                    torch.tensor(float('-inf'), device=self.device)
+                )
+                next_a = torch.argmax(q_next_online_masked, dim=1, keepdim=True)
+                
+                # Use target network for evaluation
                 q_next_target = self.q_target(s_next, next_feats)
-                q_next_target = q_next_target.masked_fill(next_mask < 0.5, -1e9)
                 max_next = q_next_target.gather(1, next_a).squeeze(1)
+                
+                # Zero out if selected action was invalid (shouldn't happen, but safe)
+                action_was_valid = next_mask.gather(1, next_a).squeeze(1) > 0.5
+                max_next = torch.where(action_was_valid, max_next, torch.zeros_like(max_next))
+                
             else:
                 # Standard DQN
                 q_next = self.q_target(s_next, next_feats)
-                q_next = q_next.masked_fill(next_mask < 0.5, -1e9)
-                max_next = torch.max(q_next, dim=1)[0]
+                q_next_masked = torch.where(
+                    next_mask > 0.5,
+                    q_next,
+                    torch.tensor(float('-inf'), device=self.device)
+                )
+                max_next = torch.max(q_next_masked, dim=1)[0]
 
             target_all = r + (1.0 - done) * self.cfg.gamma * max_next
 
