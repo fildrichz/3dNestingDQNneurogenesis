@@ -36,16 +36,12 @@ class ReplayBuffer:
         self.next_feats = np.zeros((capacity, A, D), dtype=np.float32)
         self.next_mask  = np.zeros((capacity, A), dtype=np.float32)
 
-        # ✅ FIX: Don't use maxlen - we manually control the size with popleft()
         self.n_step_buffer = deque()
 
     def _n_step_push(self, transition):
         """
-        ✅ FIXED: Properly implements sliding window n-step learning.
-        
-        Key changes:
-        1. Uses popleft() instead of clear() to maintain sliding window
-        2. Computes n-step return from OLDEST transition
+        1. ?aintain sliding window
+        2. Computes n-step return from oldest transition
         3. Generates one sample per timestep (after warmup)
         
         Returns:
@@ -57,7 +53,7 @@ class ReplayBuffer:
         if len(self.n_step_buffer) < self.n_step:
             return None
         
-        # ✅ FIX: Extract data from OLDEST transition (index 0)
+        #  Extract data from OLDEST transition (index 0)
         oldest = self.n_step_buffer[0]
         s = oldest[0]
         a_idx = oldest[1]
@@ -75,7 +71,7 @@ class ReplayBuffer:
             
             if di:
                 # Episode terminated - use this state as final
-                # ✅ FIX: Use popleft() to maintain sliding window
+                # Use popleft() to maintain sliding window
                 self.n_step_buffer.popleft()
                 return (s, a_idx, R, sni, 1.0, currF, currM, nF, nM)
         
@@ -86,7 +82,7 @@ class ReplayBuffer:
         nextF = last[7]
         nextM = last[8]
         
-        # ✅ CRITICAL FIX: Remove only oldest, maintain sliding window
+        # Remove only oldest, maintain sliding window
         self.n_step_buffer.popleft()  # Not clear()!
         
         return (s, a_idx, R, s_next, float(done), currF, currM, nextF, nextM)
@@ -224,7 +220,7 @@ class DQNAgent:
 
     def epsilon(self) -> float:
         """Epsilon for exploration, decays based on environment steps (not training steps)"""
-        # ✅ IMPROVEMENT: Use env_steps for more consistent exploration schedule
+        # IMPROVEMENT: Use env_steps for more consistent exploration schedule
         frac = min(1.0, self.env_steps / max(1, self.cfg.eps_decay_steps))
         self._eps = self.cfg.eps_start + (self.cfg.eps_end - self.cfg.eps_start) * frac
         return self._eps
