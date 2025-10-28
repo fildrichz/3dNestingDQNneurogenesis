@@ -19,7 +19,21 @@ def volume(size: Tuple[int,int,int]) -> int:
 
 class PackingEnv:
     def __init__(self, W=40, D=40, H=40, items: List[Tuple[int,int,int]] = None, 
-                 max_actions: int = 128, topk_eps: int = 32, seed: int = 0, gamma: float = 0.992):
+                 max_actions: int = 128, topk_eps: int = 32, seed: int = 0, gamma: float = 0.992,
+                 multi_bin: bool = False):
+        """
+        PackingEnv for 3D bin packing.
+        
+        Args:
+            W, D, H: Bin dimensions
+            items: List of items to pack
+            max_actions: Maximum actions per step
+            topk_eps: Maximum extreme points to consider
+            seed: Random seed
+            gamma: Discount factor
+            multi_bin: If True, uses multiple bins (thpack9 mode: minimize bins)
+                      If False, uses single bin (maximize utilization)
+        """
         self.rng = np.random.default_rng(seed)
         self.bin_size = (int(W), int(D), int(H))
         self.bin_volume = int(W*D*H)
@@ -27,18 +41,30 @@ class PackingEnv:
         self.max_actions = int(max_actions)
         self.topk_eps = int(topk_eps)
         self.initial_items = list(items) if items is not None else []
+        self.multi_bin = multi_bin
         self.reset()
 
     def reset(self, items: List[Tuple[int,int,int]] = None):
         self.items = list(items if items is not None else self.initial_items)
         self.n_items = len(self.items)
-        self.C = Container(*self.bin_size)
-        # initialize EPs the way your core does; ensure at least origin exists
+        
+        if self.multi_bin:
+            # Multi-bin mode: start with one bin, can add more
+            self.bins = [Container(*self.bin_size)]
+            self.current_bin_idx = 0
+            self.C = self.bins[0]  # Current active bin
+        else:
+            # Single-bin mode: maximize utilization of one bin
+            self.C = Container(*self.bin_size)
+            self.bins = [self.C]
+        
+        # Initialize EPs
         if not getattr(self.C, "eps", None):
             self.C.eps = [(0,0,0)]
         else:
             self.C.eps = [(0,0,0)]
         self.C.placed = []
+        
         self.total_placed_volume = 0
         self.done = False
         return self._obs()
@@ -82,63 +108,164 @@ class PackingEnv:
     def _obs(self) -> np.ndarray:
         """Reduced observation for faster learning"""
         W,D,H = self.bin_size
-        packed = self.total_placed_volume / self.bin_volume
-        items_left = len(self.items) / max(1, self.n_items)
-        # quick geometry proxy: max residual caps among EPs
-        if self.C.eps:
-            caps = [self.C.ep_rs.get(ep, (W-ep[0], D-ep[1], H-ep[2])) for ep in self.C.eps]
-            cx = max(c[0] for c in caps)/W
-            cy = max(c[1] for c in caps)/D
-            cz = max(c[2] for c in caps)/H
+        
+        if self.multi_bin:
+            # Multi-bin mode: include bin count info
+            bins_used = len(self.bins)
+            bins_normalized = bins_used / max(1, self.n_items)  # Normalized by items
+            packed = self.total_placed_volume / (self.bin_volume * bins_used)  # Average utilization
+            items_left = len(self.items) / max(1, self.n_items)
+            
+            # Current bin geometry
+            if self.C.eps:
+                caps = [self.C.ep_rs.get(ep, (W-ep[0], D-ep[1], H-ep[2])) for ep in self.C.eps]
+                cx = max(c[0] for c in caps)/W
+                cy = max(c[1] for c in caps)/D
+                cz = max(c[2] for c in caps)/H
+            else:
+                cx=cy=cz=0.0
+            
+            return np.array([packed, items_left, cx, cy, cz, bins_normalized], dtype=np.float32)
         else:
-            cx=cy=cz=0.0
-        return np.array([packed, items_left, cx, cy, cz], dtype=np.float32)
+            # Single-bin mode: original observation
+            packed = self.total_placed_volume / self.bin_volume
+            items_left = len(self.items) / max(1, self.n_items)
+            
+            if self.C.eps:
+                caps = [self.C.ep_rs.get(ep, (W-ep[0], D-ep[1], H-ep[2])) for ep in self.C.eps]
+                cx = max(c[0] for c in caps)/W
+                cy = max(c[1] for c in caps)/D
+                cz = max(c[2] for c in caps)/H
+            else:
+                cx=cy=cz=0.0
+            
+            return np.array([packed, items_left, cx, cy, cz], dtype=np.float32)
 
     def step(self, action):
         if self.done:
             raise RuntimeError("Episode done, reset required.")
         info = {}
 
-        # Potential Phi(s) = utilization(s)
-        util_prev = self.total_placed_volume / self.bin_volume
+        if self.multi_bin:
+            # Multi-bin mode: minimize bins used
+            bins_before = len(self.bins)
+            
+            # Agent decides to stop or no action
+            if action is None:
+                self.done = True
+                # Penalize if items remain
+                items_remaining = len(self.items)
+                if items_remaining > 0:
+                    # Heavy penalty for not packing all items
+                    reward = -10.0 * (items_remaining / max(1, self.n_items))
+                else:
+                    # Reward based on bins used (fewer is better)
+                    reward = 1.0 - (len(self.bins) / max(1, self.n_items))
+                
+                info["bins_used"] = len(self.bins)
+                info["items_remaining"] = items_remaining
+                info["all_packed"] = (items_remaining == 0)
+                return self._obs(), reward, self.done, info
 
-        # Agent decides to stop (or no feasible actions chosen)
-        if action is None:
-            self.done = True
-            # Potential-only shaping for a no-op (s' == s): r = gamma*util - util
-            reward = (self.gamma * util_prev) - util_prev
-            # Terminal bonus reinforces the end signal
-            reward += util_prev
-            info["utilization"] = util_prev
+            # Try to place in current bin
+            item_idx, ep_idx, rot_idx, pos, size = action
+            ok = self.C.place_at(pos, size)
+            
+            if not ok:
+                # Should be rare - action was checked as feasible
+                self.done = True
+                return self._obs(), -1.0, True, {"invalid": True}
+
+            # Successfully placed
+            v = int(size[0] * size[1] * size[2])
+            self.total_placed_volume += v
+            del self.items[item_idx]
+            
+            # Reward: small positive for placing, penalty for opening new bins
+            bins_after = len(self.bins)
+            reward = 0.01  # Small reward for each placement
+            
+            if bins_after > bins_before:
+                # Opened a new bin - penalty
+                reward -= 0.5
+            
+            # Check if all items packed
+            if len(self.items) == 0:
+                self.done = True
+                # Bonus for packing everything, scaled by efficiency
+                reward += 2.0 - (len(self.bins) / max(1, self.n_items))
+                info["bins_used"] = len(self.bins)
+                info["items_remaining"] = 0
+                info["all_packed"] = True
+            else:
+                # Check if current bin has feasible actions
+                actions, _ = self.enumerate_actions()
+                if len(actions) == 0:
+                    # Current bin full, try to open new bin
+                    self._open_new_bin()
+                    bins_after = len(self.bins)
+                    if bins_after > bins_before:
+                        reward -= 0.5  # Penalty for opening bin
+                    
+                    # Check if new bin has feasible actions
+                    actions, _ = self.enumerate_actions()
+                    if len(actions) == 0:
+                        # No feasible actions even in new bin - terminate
+                        self.done = True
+                        items_remaining = len(self.items)
+                        reward -= 5.0 * (items_remaining / max(1, self.n_items))
+                        info["bins_used"] = len(self.bins)
+                        info["items_remaining"] = items_remaining
+                        info["all_packed"] = False
+
             return self._obs(), reward, self.done, info
+            
+        else:
+            # Single-bin mode: maximize utilization (original behavior)
+            util_prev = self.total_placed_volume / self.bin_volume
 
-        # Try to place
-        item_idx, ep_idx, rot_idx, pos, size = action
-        ok = self.C.place_at(pos, size)
-        if not ok:
-            # Should be rare (enumerate_actions already checked feasibility)
-            self.done = True
-            return self._obs(), -1.0, True, {"invalid": True}
+            if action is None:
+                self.done = True
+                reward = (self.gamma * util_prev) - util_prev
+                reward += util_prev  # Terminal bonus
+                info["utilization"] = util_prev
+                return self._obs(), reward, self.done, info
 
-        # Update packed volume and remove the item
-        v = int(size[0] * size[1] * size[2])
-        self.total_placed_volume += v
-        del self.items[item_idx]
+            # Try to place
+            item_idx, ep_idx, rot_idx, pos, size = action
+            ok = self.C.place_at(pos, size)
+            if not ok:
+                self.done = True
+                return self._obs(), -1.0, True, {"invalid": True}
 
-        # New potential after placement
-        util_next = self.total_placed_volume / self.bin_volume
+            # Update volume and remove item
+            v = int(size[0] * size[1] * size[2])
+            self.total_placed_volume += v
+            del self.items[item_idx]
 
-        # Potential-based shaping (Ng et al., 1999)
-        reward = (self.gamma * util_next) - util_prev
+            # New utilization
+            util_next = self.total_placed_volume / self.bin_volume
 
-        # Check termination: no feasible actions or no items left
-        actions, eps_subset = self.enumerate_actions()
-        if len(actions) == 0 or len(self.items) == 0:
-            self.done = True
-            reward += util_next  # terminal bonus
-            info["utilization"] = util_next
+            # Potential-based shaping
+            reward = (self.gamma * util_next) - util_prev
 
-        return self._obs(), reward, self.done, info
+            # Check termination
+            actions, eps_subset = self.enumerate_actions()
+            if len(actions) == 0 or len(self.items) == 0:
+                self.done = True
+                reward += util_next  # Terminal bonus
+                info["utilization"] = util_next
+
+            return self._obs(), reward, self.done, info
+    
+    def _open_new_bin(self):
+        """Open a new bin for multi-bin mode"""
+        new_bin = Container(*self.bin_size)
+        new_bin.eps = [(0, 0, 0)]
+        new_bin.placed = []
+        self.bins.append(new_bin)
+        self.current_bin_idx = len(self.bins) - 1
+        self.C = new_bin
 
 
 # ---------------------
@@ -536,7 +663,7 @@ def train_pack_dqn_fixed_items(episodes=100, W=40, D=40, H=40, n_items=50, seed=
 
 def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_eps=48,
                          train_freq=1, num_train_steps=1, log_interval=10, 
-                         save_path=None, shuffle_items=True, seed=42):
+                         save_path=None, shuffle_items=True, seed=42, multi_bin=True):
     """
     Train DQN agent on a thpack9 instance.
     
@@ -547,6 +674,8 @@ def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_e
         topk_eps: Maximum extreme points to consider
         shuffle_items: Shuffle item order each episode for generalization
         save_path: Path to save trained model (optional)
+        multi_bin: If True, minimize bins (thpack9 objective)
+                   If False, maximize single bin utilization
     
     Returns:
         agent, env, history: Trained agent, final env state, training history
@@ -562,8 +691,9 @@ def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_e
         if not save_path.startswith("output_data/"):
             save_path = os.path.join("output_data", os.path.basename(save_path))
     
+    mode_str = "Multi-Bin (Minimize Bins)" if multi_bin else "Single-Bin (Maximize Util)"
     print(f"\n{'='*60}")
-    print(f"Training DQN on Thpack9 Instance")
+    print(f"Training DQN on Thpack9 Instance - {mode_str}")
     print(f"{'='*60}")
     print(f"Problem ID: {thpack_instance.problem_id}")
     print(f"Container: {W}x{D}x{H} (volume={W*D*H})")
@@ -571,13 +701,15 @@ def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_e
     print(f"Total items: {len(base_items)}")
     print(f"Total item volume: {thpack_instance.total_volume()}")
     print(f"Density: {thpack_instance.total_volume() / thpack_instance.container_volume():.2f}x")
+    print(f"Theoretical min bins: {int(np.ceil(thpack_instance.total_volume() / thpack_instance.container_volume()))}")
     print(f"Episodes: {episodes}")
     print(f"Shuffle items: {shuffle_items}")
     print(f"{'='*60}\n")
     
     # Create environment
     env = PackingEnv(W, D, H, items=base_items, 
-                     max_actions=max_actions, topk_eps=topk_eps, seed=seed, gamma=0.992)
+                     max_actions=max_actions, topk_eps=topk_eps, seed=seed, 
+                     gamma=0.992, multi_bin=multi_bin)
     obs = env.reset()
     OBS_DIM = obs.shape[0]
     
@@ -603,12 +735,20 @@ def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_e
     
     # Tracking
     import collections
-    util_hist = collections.deque(maxlen=50)
+    if multi_bin:
+        bins_hist = collections.deque(maxlen=50)
+        packed_all_hist = collections.deque(maxlen=50)
+    else:
+        util_hist = collections.deque(maxlen=50)
+    
     returns_hist = collections.deque(maxlen=50)
     steps_hist = collections.deque(maxlen=50)
     
-    history = {'utilization': [], 'returns': [], 'steps': [], 'losses': []}
-    best_util = 0.0
+    history = {'bins_used': [], 'returns': [], 'steps': [], 'losses': [], 
+               'all_packed': [], 'items_remaining': []}
+    
+    best_bins = float('inf')
+    best_episode_all_packed = None
     rng = np.random.default_rng(seed)
     
     print(f"Agent initialized. Starting training...\n")
@@ -668,49 +808,93 @@ def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_e
             steps += 1
             
             if done:
-                util = info.get("utilization", 0.0)
-                util_hist.append(util)
-                returns_hist.append(ep_ret)
-                steps_hist.append(steps)
+                if multi_bin:
+                    bins_used = info.get("bins_used", len(env.bins))
+                    items_rem = info.get("items_remaining", len(env.items))
+                    all_packed = info.get("all_packed", items_rem == 0)
+                    
+                    bins_hist.append(bins_used)
+                    packed_all_hist.append(1.0 if all_packed else 0.0)
+                    returns_hist.append(ep_ret)
+                    steps_hist.append(steps)
+                    
+                    history['bins_used'].append(bins_used)
+                    history['all_packed'].append(all_packed)
+                    history['items_remaining'].append(items_rem)
+                else:
+                    util = info.get("utilization", 0.0)
+                    util_hist.append(util)
+                    returns_hist.append(ep_ret)
+                    steps_hist.append(steps)
+                    history['bins_used'].append(1)
+                    history['all_packed'].append(True)
+                    history['items_remaining'].append(0)
                 
-                history['utilization'].append(util)
                 history['returns'].append(ep_ret)
                 history['steps'].append(steps)
                 if losses:
                     history['losses'].append(np.mean(losses))
                 
-                best_util = max(best_util, util)
+                if multi_bin and all_packed and bins_used < best_bins:
+                    best_bins = bins_used
+                    best_episode_all_packed = ep
                 
                 if (ep + 1) % log_interval == 0 or ep == 0:
-                    ma_util = np.mean(util_hist) if len(util_hist) > 0 else util
-                    avg_loss = np.mean(losses) if losses else 0.0
-                    
-                    print(f"Episode {ep+1:4d}/{episodes} | "
-                          f"Steps: {steps:3d} | "
-                          f"Util: {util:.3f} | "
-                          f"MA50: {ma_util:.3f} | "
-                          f"Best: {best_util:.3f} | "
-                          f"ε: {agent.epsilon():.3f} | "
-                          f"Loss: {avg_loss:.4f}")
+                    if multi_bin:
+                        ma_bins = np.mean(bins_hist) if len(bins_hist) > 0 else bins_used
+                        ma_packed = np.mean(packed_all_hist) if len(packed_all_hist) > 0 else (1.0 if all_packed else 0.0)
+                        avg_loss = np.mean(losses) if losses else 0.0
+                        
+                        print(f"Episode {ep+1:4d}/{episodes} | "
+                              f"Bins: {bins_used:2d} | "
+                              f"AllPacked: {int(all_packed)} | "
+                              f"ItemsRem: {items_rem:3d} | "
+                              f"MA50_bins: {ma_bins:.1f} | "
+                              f"Best: {best_bins if best_bins < float('inf') else '-'} | "
+                              f"ε: {agent.epsilon():.3f}")
+                    else:
+                        ma_util = np.mean(util_hist) if len(util_hist) > 0 else util
+                        avg_loss = np.mean(losses) if losses else 0.0
+                        
+                        print(f"Episode {ep+1:4d}/{episodes} | "
+                              f"Steps: {steps:3d} | "
+                              f"Util: {util:.3f} | "
+                              f"MA50: {ma_util:.3f} | "
+                              f"ε: {agent.epsilon():.3f} | "
+                              f"Loss: {avg_loss:.4f}")
                 break
     
     print(f"\n{'='*60}")
     print(f"Training Complete!")
-    print(f"Best utilization: {best_util:.3f}")
-    print(f"Final MA50 utilization: {np.mean(util_hist):.3f}")
+    if multi_bin:
+        print(f"Best bins used (all packed): {best_bins if best_bins < float('inf') else 'Never packed all'}")
+        if best_episode_all_packed is not None:
+            print(f"Best achieved at episode: {best_episode_all_packed + 1}")
+        success_rate = np.mean([1 if x else 0 for x in history['all_packed']])
+        print(f"Success rate (all packed): {success_rate:.2%}")
+    else:
+        print(f"Best utilization: {max(util_hist):.3f}")
+        print(f"Final MA50 utilization: {np.mean(util_hist):.3f}")
     print(f"{'='*60}\n")
     
     if save_path:
         agent.save(save_path)
         print(f"Model saved to: {save_path}\n")
     
-    env.C.plot3d(title=f"Thpack Instance {thpack_instance.problem_id} (Util: {util:.3f})")
+    # Visualize
+    if multi_bin and len(env.bins) > 0:
+        print(f"Final packing used {len(env.bins)} bins")
+        for i, bin in enumerate(env.bins[:3]):  # Show first 3 bins
+            bin.plot3d(title=f"Bin {i+1}/{len(env.bins)} - Items: {len(bin.placed)}")
+    else:
+        env.C.plot3d(title=f"Thpack Instance {thpack_instance.problem_id}")
     
     return agent, env, history
 
 
 def evaluate_thpack_instance(agent, thpack_instance, n_episodes=10, 
-                             max_actions=128, topk_eps=48, visualize_best=True, seed=42):
+                             max_actions=128, topk_eps=48, visualize_best=True, 
+                             seed=42, multi_bin=True):
     """
     Evaluate a trained agent on a thpack9 instance.
     
@@ -719,6 +903,7 @@ def evaluate_thpack_instance(agent, thpack_instance, n_episodes=10,
         thpack_instance: ThpackInstance object
         n_episodes: Number of evaluation episodes
         visualize_best: Show 3D plot of best packing
+        multi_bin: If True, use multi-bin mode (minimize bins)
     
     Returns:
         dict with evaluation metrics
@@ -726,18 +911,22 @@ def evaluate_thpack_instance(agent, thpack_instance, n_episodes=10,
     W, D, H = thpack_instance.container_w, thpack_instance.container_d, thpack_instance.container_h
     base_items = thpack_instance.expand_to_items()
     
+    mode_str = "Multi-Bin" if multi_bin else "Single-Bin"
     print(f"\n{'='*60}")
-    print(f"Evaluating on Thpack Instance {thpack_instance.problem_id}")
+    print(f"Evaluating on Thpack Instance {thpack_instance.problem_id} ({mode_str})")
     print(f"Episodes: {n_episodes}")
     print(f"{'='*60}\n")
     
     env = PackingEnv(W, D, H, items=base_items, 
-                     max_actions=max_actions, topk_eps=topk_eps, seed=seed, gamma=0.992)
+                     max_actions=max_actions, topk_eps=topk_eps, 
+                     seed=seed, gamma=0.992, multi_bin=multi_bin)
     
-    utilizations = []
+    bins_used_list = []
+    all_packed_list = []
+    items_remaining_list = []
     returns = []
     steps_list = []
-    best_util = 0.0
+    best_bins = float('inf')
     best_env = None
     
     rng = np.random.default_rng(seed)
@@ -769,38 +958,81 @@ def evaluate_thpack_instance(agent, thpack_instance, n_episodes=10,
             steps += 1
             
             if done:
-                util = info.get("utilization", 0.0)
-                utilizations.append(util)
+                if multi_bin:
+                    bins_used = info.get("bins_used", len(env.bins))
+                    items_rem = info.get("items_remaining", len(env.items))
+                    all_packed = info.get("all_packed", items_rem == 0)
+                    
+                    bins_used_list.append(bins_used)
+                    all_packed_list.append(all_packed)
+                    items_remaining_list.append(items_rem)
+                    
+                    if all_packed and bins_used < best_bins:
+                        best_bins = bins_used
+                        import copy
+                        best_env = copy.deepcopy(env)
+                    
+                    print(f"Ep {ep+1:2d}/{n_episodes} | "
+                          f"Bins: {bins_used:2d} | "
+                          f"AllPacked: {int(all_packed)} | "
+                          f"ItemsRem: {items_rem:3d}/{len(base_items)} | "
+                          f"Steps: {steps:3d}")
+                else:
+                    util = info.get("utilization", 0.0)
+                    bins_used_list.append(1)
+                    all_packed_list.append(True)
+                    items_remaining_list.append(0)
+                    
+                    print(f"Ep {ep+1:2d}/{n_episodes} | Util: {util:.3f} | Steps: {steps:3d}")
+                
                 returns.append(ep_ret)
                 steps_list.append(steps)
-                
-                if util > best_util:
-                    best_util = util
-                    import copy
-                    best_env = copy.deepcopy(env)
-                
-                print(f"Ep {ep+1:2d}/{n_episodes} | Util: {util:.3f} | Steps: {steps:3d} | Placed: {len(env.C.placed)}/{len(base_items)}")
                 break
     
     agent._eps = original_eps
     
+    success_rate = np.mean([1 if x else 0 for x in all_packed_list])
+    
     results = {
-        'mean_util': np.mean(utilizations),
-        'std_util': np.std(utilizations),
-        'best_util': best_util,
-        'worst_util': min(utilizations),
+        'mean_bins': np.mean(bins_used_list),
+        'std_bins': np.std(bins_used_list),
+        'best_bins': best_bins if best_bins < float('inf') else None,
+        'worst_bins': max(bins_used_list) if bins_used_list else None,
+        'success_rate': success_rate,
+        'mean_items_remaining': np.mean(items_remaining_list),
         'mean_return': np.mean(returns),
         'mean_steps': np.mean(steps_list),
-        'all_utils': utilizations
+        'all_results': {
+            'bins_used': bins_used_list,
+            'all_packed': all_packed_list,
+            'items_remaining': items_remaining_list
+        }
     }
     
     print(f"\n{'='*60}")
-    print(f"Mean Utilization: {results['mean_util']:.3f} ± {results['std_util']:.3f}")
-    print(f"Best Utilization: {results['best_util']:.3f}")
+    print(f"Evaluation Results")
+    print(f"{'='*60}")
+    if multi_bin:
+        print(f"Success Rate (all packed): {results['success_rate']:.1%}")
+        print(f"Mean Bins Used: {results['mean_bins']:.2f} ± {results['std_bins']:.2f}")
+        if results['best_bins']:
+            print(f"Best Bins (all packed): {results['best_bins']}")
+        else:
+            print(f"Best Bins (all packed): Never achieved")
+        print(f"Worst Bins: {results['worst_bins']}")
+        print(f"Mean Items Remaining: {results['mean_items_remaining']:.1f}")
+    else:
+        print(f"Mean Utilization: {results['mean_bins']:.3f}")
+    print(f"Mean Steps: {results['mean_steps']:.1f}")
     print(f"{'='*60}\n")
     
-    if visualize_best and best_env is not None:
-        best_env.C.plot3d(title=f"Best - Instance {thpack_instance.problem_id} (Util: {best_util:.3f})")
+    # Visualize best packing
+    if visualize_best and best_env is not None and multi_bin:
+        print(f"Visualizing best packing ({best_bins} bins, all items packed)")
+        for i, bin in enumerate(best_env.bins[:3]):  # Show first 3 bins
+            bin.plot3d(title=f"Best - Bin {i+1}/{len(best_env.bins)} - Items: {len(bin.placed)}")
+    elif visualize_best and not multi_bin:
+        env.C.plot3d(title=f"Instance {thpack_instance.problem_id}")
     
     return results
 
