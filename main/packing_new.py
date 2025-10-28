@@ -2,9 +2,14 @@ import numpy as np
 from typing import List, Tuple
 from dataclasses import dataclass
 
-# Import your core modules
-from nesting.packing_core import Container
-from dqn_core.dqn import DQNAgent, DQNConfig  # <-- uses fixed dqn.py
+# Import your core modules (flexible imports)
+try:
+    from nesting.packing_core import Container
+    from dqn_core.dqn import DQNAgent, DQNConfig
+except ImportError:
+    # If not in subdirectories, try direct import
+    from packing_core import Container
+    from dqn import DQNAgent, DQNConfig
 
 # ---------------------
 # Lightweight RL Env around Container
@@ -525,31 +530,334 @@ def train_pack_dqn_fixed_items(episodes=100, W=40, D=40, H=40, n_items=50, seed=
     return agent, env
 
 
-if __name__ == "__main__":
-    # Quick test with varying items
-    print("Training with VARYING items (more realistic):")
-    agent, env = train_pack_dqn(
-        episodes=500, 
-        n_items=50, 
-        W=20, D=20, H=20, 
-        seed=42, 
-        max_actions=50, 
-        topk_eps=1000,
-        train_freq=1,
-        num_train_steps=1,
-        log_interval=10,
-        save_path="dqn_packing_model.pt"  # Will be saved to ./output_data/
-    )
+# ---------------------
+# THPACK9 Support Functions
+# ---------------------
+
+def train_thpack_instance(thpack_instance, episodes=200, max_actions=128, topk_eps=48,
+                         train_freq=1, num_train_steps=1, log_interval=10, 
+                         save_path=None, shuffle_items=True, seed=42):
+    """
+    Train DQN agent on a thpack9 instance.
     
-    # Uncomment to test with fixed items (useful for debugging)
-    # print("\n\nTraining with FIXED items (for analysis):")
-    # agent_fixed, env_fixed = train_pack_dqn_fixed_items(
-    #     episodes=100, 
-    #     n_items=50, 
-    #     W=20, D=20, H=20, 
-    #     seed=42, 
-    #     max_actions=50, 
-    #     topk_eps=1000,
-    #     log_interval=10,
-    #     save_path="dqn_packing_fixed_model.pt"  # Will be saved to ./output_data/
-    # )
+    Args:
+        thpack_instance: ThpackInstance object from thpack_loader
+        episodes: Number of training episodes
+        max_actions: Maximum actions to consider per step
+        topk_eps: Maximum extreme points to consider
+        shuffle_items: Shuffle item order each episode for generalization
+        save_path: Path to save trained model (optional)
+    
+    Returns:
+        agent, env, history: Trained agent, final env state, training history
+    """
+    # Extract container dimensions and items
+    W, D, H = thpack_instance.container_w, thpack_instance.container_d, thpack_instance.container_h
+    base_items = thpack_instance.expand_to_items()
+    
+    # Create output_data directory if saving
+    import os
+    if save_path:
+        os.makedirs("output_data", exist_ok=True)
+        if not save_path.startswith("output_data/"):
+            save_path = os.path.join("output_data", os.path.basename(save_path))
+    
+    print(f"\n{'='*60}")
+    print(f"Training DQN on Thpack9 Instance")
+    print(f"{'='*60}")
+    print(f"Problem ID: {thpack_instance.problem_id}")
+    print(f"Container: {W}x{D}x{H} (volume={W*D*H})")
+    print(f"Box types: {len(thpack_instance.box_types)}")
+    print(f"Total items: {len(base_items)}")
+    print(f"Total item volume: {thpack_instance.total_volume()}")
+    print(f"Density: {thpack_instance.total_volume() / thpack_instance.container_volume():.2f}x")
+    print(f"Episodes: {episodes}")
+    print(f"Shuffle items: {shuffle_items}")
+    print(f"{'='*60}\n")
+    
+    # Create environment
+    env = PackingEnv(W, D, H, items=base_items, 
+                     max_actions=max_actions, topk_eps=topk_eps, seed=seed, gamma=0.992)
+    obs = env.reset()
+    OBS_DIM = obs.shape[0]
+    
+    # Create DQN agent
+    cfg = DQNConfig(
+        obs_dim=OBS_DIM,
+        action_feat_dim=ACTION_FEAT_DIM,
+        max_actions=max_actions,
+        device="cpu",
+        gamma=0.992,
+        lr=2e-4,
+        batch_size=64,
+        buffer_size=200_000,
+        eps_start=1.0,
+        eps_end=0.05,
+        eps_decay_steps=episodes * 15,
+        target_update_interval=1000,
+        n_step=3,
+        double_dqn=True,
+        warmup_steps=1000,
+    )
+    agent = DQNAgent(cfg)
+    
+    # Tracking
+    import collections
+    util_hist = collections.deque(maxlen=50)
+    returns_hist = collections.deque(maxlen=50)
+    steps_hist = collections.deque(maxlen=50)
+    
+    history = {'utilization': [], 'returns': [], 'steps': [], 'losses': []}
+    best_util = 0.0
+    rng = np.random.default_rng(seed)
+    
+    print(f"Agent initialized. Starting training...\n")
+    
+    for ep in range(episodes):
+        # Shuffle items each episode if requested
+        if shuffle_items:
+            items_this_ep = base_items.copy()
+            rng.shuffle(items_this_ep)
+        else:
+            items_this_ep = base_items.copy()
+        
+        obs = env.reset(items=items_this_ep)
+        ep_ret = 0.0
+        steps = 0
+        losses = []
+        
+        while True:
+            actions, mask_short, _ = env.action_space()
+            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            
+            act_idx = agent.select_action(
+                obs, 
+                feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+            )
+            act = None if (act_idx is None or actions==[] or actions[act_idx] is None) else actions[act_idx]
+            
+            currF, currM = pad_feats_mask(
+                feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            
+            nobs, rew, done, info = env.step(act)
+            
+            n_actions, n_mask_short, _ = env.action_space()
+            n_feats = build_action_features(env, n_actions) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            nextF, nextM = pad_feats_mask(
+                n_feats, 
+                n_mask_short if n_mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            
+            agent.store(obs, act_idx, rew, nobs, done,
+                       curr_action_feats=currF, curr_mask=currM,
+                       next_action_feats=nextF, next_mask=nextM)
+            
+            if steps % train_freq == 0:
+                for _ in range(num_train_steps):
+                    loss = agent.train_step()
+                    if loss is not None:
+                        losses.append(loss)
+            
+            obs = nobs
+            ep_ret += rew
+            steps += 1
+            
+            if done:
+                util = info.get("utilization", 0.0)
+                util_hist.append(util)
+                returns_hist.append(ep_ret)
+                steps_hist.append(steps)
+                
+                history['utilization'].append(util)
+                history['returns'].append(ep_ret)
+                history['steps'].append(steps)
+                if losses:
+                    history['losses'].append(np.mean(losses))
+                
+                best_util = max(best_util, util)
+                
+                if (ep + 1) % log_interval == 0 or ep == 0:
+                    ma_util = np.mean(util_hist) if len(util_hist) > 0 else util
+                    avg_loss = np.mean(losses) if losses else 0.0
+                    
+                    print(f"Episode {ep+1:4d}/{episodes} | "
+                          f"Steps: {steps:3d} | "
+                          f"Util: {util:.3f} | "
+                          f"MA50: {ma_util:.3f} | "
+                          f"Best: {best_util:.3f} | "
+                          f"ε: {agent.epsilon():.3f} | "
+                          f"Loss: {avg_loss:.4f}")
+                break
+    
+    print(f"\n{'='*60}")
+    print(f"Training Complete!")
+    print(f"Best utilization: {best_util:.3f}")
+    print(f"Final MA50 utilization: {np.mean(util_hist):.3f}")
+    print(f"{'='*60}\n")
+    
+    if save_path:
+        agent.save(save_path)
+        print(f"Model saved to: {save_path}\n")
+    
+    env.C.plot3d(title=f"Thpack Instance {thpack_instance.problem_id} (Util: {util:.3f})")
+    
+    return agent, env, history
+
+
+def evaluate_thpack_instance(agent, thpack_instance, n_episodes=10, 
+                             max_actions=128, topk_eps=48, visualize_best=True, seed=42):
+    """
+    Evaluate a trained agent on a thpack9 instance.
+    
+    Args:
+        agent: Trained DQN agent
+        thpack_instance: ThpackInstance object
+        n_episodes: Number of evaluation episodes
+        visualize_best: Show 3D plot of best packing
+    
+    Returns:
+        dict with evaluation metrics
+    """
+    W, D, H = thpack_instance.container_w, thpack_instance.container_d, thpack_instance.container_h
+    base_items = thpack_instance.expand_to_items()
+    
+    print(f"\n{'='*60}")
+    print(f"Evaluating on Thpack Instance {thpack_instance.problem_id}")
+    print(f"Episodes: {n_episodes}")
+    print(f"{'='*60}\n")
+    
+    env = PackingEnv(W, D, H, items=base_items, 
+                     max_actions=max_actions, topk_eps=topk_eps, seed=seed, gamma=0.992)
+    
+    utilizations = []
+    returns = []
+    steps_list = []
+    best_util = 0.0
+    best_env = None
+    
+    rng = np.random.default_rng(seed)
+    original_eps = agent._eps
+    agent._eps = 0.0  # Greedy evaluation
+    
+    for ep in range(n_episodes):
+        items_this_ep = base_items.copy()
+        rng.shuffle(items_this_ep)
+        
+        obs = env.reset(items=items_this_ep)
+        ep_ret = 0.0
+        steps = 0
+        
+        while True:
+            actions, mask_short, _ = env.action_space()
+            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            
+            act_idx = agent.select_action(
+                obs, 
+                feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+            )
+            act = None if (act_idx is None or actions==[] or actions[act_idx] is None) else actions[act_idx]
+            
+            nobs, rew, done, info = env.step(act)
+            obs = nobs
+            ep_ret += rew
+            steps += 1
+            
+            if done:
+                util = info.get("utilization", 0.0)
+                utilizations.append(util)
+                returns.append(ep_ret)
+                steps_list.append(steps)
+                
+                if util > best_util:
+                    best_util = util
+                    import copy
+                    best_env = copy.deepcopy(env)
+                
+                print(f"Ep {ep+1:2d}/{n_episodes} | Util: {util:.3f} | Steps: {steps:3d} | Placed: {len(env.C.placed)}/{len(base_items)}")
+                break
+    
+    agent._eps = original_eps
+    
+    results = {
+        'mean_util': np.mean(utilizations),
+        'std_util': np.std(utilizations),
+        'best_util': best_util,
+        'worst_util': min(utilizations),
+        'mean_return': np.mean(returns),
+        'mean_steps': np.mean(steps_list),
+        'all_utils': utilizations
+    }
+    
+    print(f"\n{'='*60}")
+    print(f"Mean Utilization: {results['mean_util']:.3f} ± {results['std_util']:.3f}")
+    print(f"Best Utilization: {results['best_util']:.3f}")
+    print(f"{'='*60}\n")
+    
+    if visualize_best and best_env is not None:
+        best_env.C.plot3d(title=f"Best - Instance {thpack_instance.problem_id} (Util: {best_util:.3f})")
+    
+    return results
+
+
+if __name__ == "__main__":
+    import sys
+    
+    # Check if user wants to train on thpack9
+    if len(sys.argv) > 1 and sys.argv[1] == "thpack":
+        from thpack_loader import load_thpack9, print_instance_info
+        
+        thpack_file = sys.argv[2] if len(sys.argv) > 2 else "thpack9.txt"
+        instance_id = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+        episodes = int(sys.argv[4]) if len(sys.argv) > 4 else 200
+        
+        instances = load_thpack9(thpack_file)
+        instance = instances[instance_id - 1]  # 1-indexed
+        
+        print_instance_info(instance)
+        
+        # Train
+        agent, env, history = train_thpack_instance(
+            thpack_instance=instance,
+            episodes=episodes,
+            max_actions=128,
+            topk_eps=48,
+            save_path=f"thpack_inst{instance_id}_model.pt",
+            shuffle_items=True
+        )
+        
+        # Evaluate
+        results = evaluate_thpack_instance(
+            agent=agent,
+            thpack_instance=instance,
+            n_episodes=10,
+            visualize_best=True
+        )
+        
+    else:
+        # Original test with varying items
+        print("Training with VARYING items (original behavior):")
+        print("="*60)
+        agent, env = train_pack_dqn(
+            episodes=500, 
+            n_items=50, 
+            W=20, D=20, H=20, 
+            seed=42, 
+            max_actions=50, 
+            topk_eps=1000,
+            train_freq=1,
+            num_train_steps=1,
+            log_interval=10,
+            save_path="dqn_packing_model.pt"
+        )
+        
+        print("\n" + "="*60)
+        print("To train on thpack9 instances:")
+        print("  python packing_with_dqncore_potential.py thpack thpack9.txt 1 200")
+        print("  Arguments: thpack <file> <instance_id> <episodes>")
+        print("="*60)
