@@ -1,3 +1,4 @@
+# Fixed version of packing_with_dqn_q4real.py (prevents IndexError in reward by not relying on placed_items[-1])  :contentReference[oaicite:0]{index=0}
 """
 DQN Agent for Q4RealBPP 3D Bin Packing
 Integrates DQN with Q4RealBPP-constrained packing environment
@@ -43,6 +44,13 @@ class Q4RealBPPEnvironment:
         self.step_count = 0
         self.total_reward = 0.0
         
+        # Rewards
+        self.invalid_action_penalty = -1.0
+        self.valid_place_reward_scale = 10.0  # scales volume fraction
+        self.weight_util_bonus = 0.5          # when utilization in (0.6, 0.95)
+        self.compact_bonus_eps_threshold = 10
+        self.compact_bonus_value = 0.2
+        
     def reset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Reset environment.
@@ -68,20 +76,31 @@ class Q4RealBPPEnvironment:
         self.placed_items = []
         
         # Pick first item
-        self.current_item = self.remaining_items[0]
+        self.current_item = self.remaining_items[0] if self.remaining_items else None
         
         self.step_count = 0
         self.total_reward = 0.0
         
         return self._get_observation()
     
-    def step(self, action_idx: int) -> Tuple[np.ndarray, float, bool, Dict]:
+    def step(self, action_idx: int) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray], float, bool, Dict]:
         """
         Execute action (place current item at EP with orientation).
         Returns: (next_obs, reward, done, info)
         """
         if self.current_item is None:
-            raise ValueError("No current item - did you call reset()?")
+            # No item to place; episode is effectively done.
+            done_obs = (np.zeros(self._get_obs_dim(), dtype=np.float32),
+                        np.zeros((self._get_max_actions(), self._get_action_feat_dim()), dtype=np.float32),
+                        np.zeros(self._get_max_actions(), dtype=np.float32))
+            return done_obs, 0.0, True, {
+                'success': False,
+                'items_placed': len(self.placed_items),
+                'items_remaining': 0,
+                'weight_used': self.container.current_weight,
+                'weight_capacity': self.container.max_weight,
+                'volume_utilization': self._get_volume_utilization(),
+            }
         
         # Decode action
         ep, orientation = self._decode_action(action_idx)
@@ -97,27 +116,18 @@ class Q4RealBPPEnvironment:
                 self.current_item.id
             )
         
-        # Calculate reward
-        reward = self._calculate_reward(success)
+        # Compute reward based on whether we just placed current_item
+        reward = self._calculate_reward(success, self.current_item if success else None)
         self.total_reward += reward
         
-        # Update state
-        if success:
-            self.placed_items.append(self.current_item)
-            self.remaining_items.remove(self.current_item)
-        else:
-            # Item couldn't be placed - remove from queue anyway
+        # Update state lists
+        # (remove current_item regardless; dataset may require skipping unplaceable items)
+        if success and self.current_item in self.remaining_items:
             self.remaining_items.remove(self.current_item)
         
-        # Check if done
+        # Check if done and advance to next item
         done = len(self.remaining_items) == 0
-        
-        # Move to next item
-        if not done:
-            self.current_item = self.remaining_items[0]
-        else:
-            self.current_item = None
-        
+        self.current_item = None if done else self.remaining_items[0]
         self.step_count += 1
         
         # Info
@@ -130,27 +140,27 @@ class Q4RealBPPEnvironment:
             'volume_utilization': self._get_volume_utilization(),
         }
         
-        # Get next observation
+        # Next observation
         if done:
-            # Return dummy observation
-            obs = np.zeros(self._get_obs_dim())
-            action_feats = np.zeros((self._get_max_actions(), self._get_action_feat_dim()))
-            mask = np.zeros(self._get_max_actions())
+            obs = np.zeros(self._get_obs_dim(), dtype=np.float32)
+            action_feats = np.zeros((self._get_max_actions(), self._get_action_feat_dim()), dtype=np.float32)
+            mask = np.zeros(self._get_max_actions(), dtype=np.float32)
         else:
             obs, action_feats, mask = self._get_observation()
         
         return (obs, action_feats, mask), reward, done, info
     
-    def _decode_action(self, action_idx: int) -> Tuple[Optional[Tuple], Optional[Tuple]]:
+    def _decode_action(self, action_idx: int) -> Tuple[Optional[Tuple[int, int, int]], Optional[Tuple[int, int, int]]]:
         """Decode action index to (EP, orientation)"""
         eps = sorted(set(self.container.eps), key=lambda p: (p[2], p[1], p[0]))
+        # Six axis-aligned orientations
         orientations = [
-            (int(self.current_item.width), int(self.current_item.depth), int(self.current_item.height)),
-            (int(self.current_item.width), int(self.current_item.height), int(self.current_item.depth)),
-            (int(self.current_item.depth), int(self.current_item.width), int(self.current_item.height)),
-            (int(self.current_item.depth), int(self.current_item.height), int(self.current_item.width)),
-            (int(self.current_item.height), int(self.current_item.width), int(self.current_item.depth)),
-            (int(self.current_item.height), int(self.current_item.depth), int(self.current_item.width)),
+            (int(self.current_item.width),  int(self.current_item.depth),  int(self.current_item.height)),
+            (int(self.current_item.width),  int(self.current_item.height), int(self.current_item.depth)),
+            (int(self.current_item.depth),  int(self.current_item.width),  int(self.current_item.height)),
+            (int(self.current_item.depth),  int(self.current_item.height), int(self.current_item.width)),
+            (int(self.current_item.height), int(self.current_item.width),  int(self.current_item.depth)),
+            (int(self.current_item.height), int(self.current_item.depth),  int(self.current_item.width)),
         ]
         
         num_eps = len(eps)
@@ -182,7 +192,7 @@ class Q4RealBPPEnvironment:
         # Container features
         W, D, H = self.container.w, self.container.d, self.container.h
         volume_util = self._get_volume_utilization()
-        weight_util = self.container.current_weight / self.container.max_weight
+        weight_util = self.container.current_weight / self.container.max_weight if self.container.max_weight > 0 else 0.0
         num_placed = len(self.container.placed)
         num_remaining = len(self.remaining_items)
         
@@ -191,8 +201,8 @@ class Q4RealBPPEnvironment:
             item_w = self.current_item.width / W
             item_d = self.current_item.depth / D
             item_h = self.current_item.height / H
-            item_weight = self.current_item.weight / self.container.max_weight
-            item_cat = self.current_item.category / 10.0  # Assume max 10 categories
+            item_weight = self.current_item.weight / self.container.max_weight if self.container.max_weight > 0 else 0.0
+            item_cat = (self.current_item.category / 10.0) if isinstance(self.current_item.category, (int, float)) else 0.0
         else:
             item_w = item_d = item_h = item_weight = item_cat = 0.0
         
@@ -203,7 +213,7 @@ class Q4RealBPPEnvironment:
         state = np.array([
             volume_util,
             weight_util,
-            num_placed / 100.0,  # Normalize
+            num_placed / 100.0,     # Normalize
             num_remaining / 100.0,
             item_w,
             item_d,
@@ -220,34 +230,33 @@ class Q4RealBPPEnvironment:
         Encode possible actions (EP + orientation combinations).
         Returns: (action_features, action_mask)
         """
+        max_actions = self._get_max_actions()
+        action_feat_dim = self._get_action_feat_dim()
+        
         if not self.current_item:
             # No current item
-            max_actions = self._get_max_actions()
-            action_feats = np.zeros((max_actions, self._get_action_feat_dim()), dtype=np.float32)
+            action_feats = np.zeros((max_actions, action_feat_dim), dtype=np.float32)
             mask = np.zeros(max_actions, dtype=np.float32)
             return action_feats, mask
         
         eps = sorted(set(self.container.eps), key=lambda p: (p[2], p[1], p[0]))
         orientations = [
-            (int(self.current_item.width), int(self.current_item.depth), int(self.current_item.height)),
-            (int(self.current_item.width), int(self.current_item.height), int(self.current_item.depth)),
-            (int(self.current_item.depth), int(self.current_item.width), int(self.current_item.height)),
-            (int(self.current_item.depth), int(self.current_item.height), int(self.current_item.width)),
-            (int(self.current_item.height), int(self.current_item.width), int(self.current_item.depth)),
-            (int(self.current_item.height), int(self.current_item.depth), int(self.current_item.width)),
+            (int(self.current_item.width),  int(self.current_item.depth),  int(self.current_item.height)),
+            (int(self.current_item.width),  int(self.current_item.height), int(self.current_item.depth)),
+            (int(self.current_item.depth),  int(self.current_item.width),  int(self.current_item.height)),
+            (int(self.current_item.depth),  int(self.current_item.height), int(self.current_item.width)),
+            (int(self.current_item.height), int(self.current_item.width),  int(self.current_item.depth)),
+            (int(self.current_item.height), int(self.current_item.depth),  int(self.current_item.width)),
         ]
         
         W, D, H = self.container.w, self.container.d, self.container.h
-        max_actions = self._get_max_actions()
-        action_feat_dim = self._get_action_feat_dim()
-        
         action_feats = np.zeros((max_actions, action_feat_dim), dtype=np.float32)
         mask = np.zeros(max_actions, dtype=np.float32)
         
-        action_idx = 0
+        action_i = 0
         for ep in eps:
             for orientation in orientations:
-                if action_idx >= max_actions:
+                if action_i >= max_actions:
                     break
                 
                 # EP features (normalized)
@@ -271,40 +280,42 @@ class Q4RealBPPEnvironment:
                 )
                 
                 # Build feature vector
-                action_feats[action_idx] = np.array([
+                action_feats[action_i] = np.array([
                     feat_ep_x, feat_ep_y, feat_ep_z,
                     feat_w, feat_d, feat_h,
                     feat_vol,
                     float(is_feasible),
                 ], dtype=np.float32)
                 
-                mask[action_idx] = 1.0 if is_feasible else 0.0
-                action_idx += 1
+                mask[action_i] = 1.0 if is_feasible else 0.0
+                action_i += 1
         
+        # Remaining actions (if any) stay zeroed with mask=0
         return action_feats, mask
     
-    def _calculate_reward(self, success: bool) -> float:
-        """Calculate reward for placement"""
-        if not success:
-            # Penalty for failed placement
-            return -1.0
+    def _calculate_reward(self, success: bool, just_placed_item: Optional[Item]) -> float:
+        """Calculate reward for placement without relying on placed_items[-1]."""
+        if not success or just_placed_item is None:
+            # Penalty for failed placement (invalid action, collision, constraint fail, etc.)
+            return self.invalid_action_penalty
         
         # Reward for successful placement
-        item = self.placed_items[-1]  # Just placed
-        item_volume = item.width * item.depth * item.height
-        container_volume = self.container.w * self.container.d * self.container.h
+        item = just_placed_item
+        item_volume = float(item.width) * float(item.depth) * float(item.height)
+        container_volume = float(self.container.w) * float(self.container.d) * float(self.container.h)
+        vol_fraction = item_volume / container_volume if container_volume > 0 else 0.0
         
         # Base reward: volume efficiency
-        reward = (item_volume / container_volume) * 10.0
+        reward = vol_fraction * self.valid_place_reward_scale
         
         # Bonus for good weight utilization
-        weight_util = self.container.current_weight / self.container.max_weight
+        weight_util = self.container.current_weight / self.container.max_weight if self.container.max_weight > 0 else 0.0
         if 0.6 < weight_util < 0.95:
-            reward += 0.5
+            reward += self.weight_util_bonus
         
-        # Bonus for low EP count (compact packing)
-        if len(self.container.eps) < 10:
-            reward += 0.2
+        # Bonus for compact packing (fewer EPs)
+        if len(self.container.eps) < self.compact_bonus_eps_threshold:
+            reward += self.compact_bonus_value
         
         return reward
     
@@ -314,7 +325,7 @@ class Q4RealBPPEnvironment:
             return 0.0
         used_volume = sum(b.w * b.d * b.h for b in self.container.placed)
         total_volume = self.container.w * self.container.d * self.container.h
-        return used_volume / total_volume
+        return used_volume / total_volume if total_volume > 0 else 0.0
     
     def _get_obs_dim(self) -> int:
         """Get observation dimension"""
@@ -373,11 +384,21 @@ def train_dqn_q4realbpp(instance: Q4RealBPPInstance,
         done = False
         step = 0
         
+        # Fallback info in case no step is taken
+        info = {
+            'success': False,
+            'items_placed': 0,
+            'items_remaining': len(instance.items),
+            'weight_used': 0.0,
+            'weight_capacity': env.container.max_weight,
+            'volume_utilization': 0.0,
+        }
+        
         while not done:
             # Select action
             action_idx = agent.select_action(obs, action_feats, mask)
             if action_idx is None:
-                # No valid actions
+                # No valid actions (all mask==0)
                 break
             
             # Take step
@@ -394,7 +415,7 @@ def train_dqn_q4realbpp(instance: Q4RealBPPInstance,
             )
             
             # Train
-            loss = agent.train_step()
+            _ = agent.train_step()
             
             # Update
             obs = next_obs
@@ -402,14 +423,12 @@ def train_dqn_q4realbpp(instance: Q4RealBPPInstance,
             mask = next_mask
             step += 1
         
-        # Episode stats
-        items_placed = info['items_placed']
-        volume_util = info['volume_utilization']
+        # Ensure we have final stats even if the loop broke without any step
+        items_placed = info.get('items_placed', len(env.placed_items))
+        volume_util = info.get('volume_utilization', env._get_volume_utilization())
         
-        if items_placed > best_items_placed:
-            best_items_placed = items_placed
-        if volume_util > best_volume_util:
-            best_volume_util = volume_util
+        best_items_placed = max(best_items_placed, items_placed)
+        best_volume_util = max(best_volume_util, volume_util)
         
         if (episode + 1) % 10 == 0:
             eps = agent.epsilon()
@@ -447,6 +466,16 @@ def evaluate_dqn_q4realbpp(agent: DQNAgent,
         # Greedy evaluation (no exploration)
         agent._eps = 0.0
         
+        # Fallback in case no step is taken
+        info = {
+            'success': False,
+            'items_placed': 0,
+            'items_remaining': len(instance.items),
+            'weight_used': 0.0,
+            'weight_capacity': env.container.max_weight,
+            'volume_utilization': 0.0,
+        }
+        
         while not done:
             action_idx = agent.select_action(obs, action_feats, mask)
             if action_idx is None:
@@ -456,21 +485,24 @@ def evaluate_dqn_q4realbpp(agent: DQNAgent,
             episode_reward += reward
             obs, action_feats, mask = next_obs, next_feats, next_mask
         
+        items_placed = info.get('items_placed', len(env.placed_items))
+        volume_util = info.get('volume_utilization', env._get_volume_utilization())
+        
         results.append({
-            'items_placed': info['items_placed'],
-            'volume_utilization': info['volume_utilization'],
-            'weight_used': info['weight_used'],
+            'items_placed': items_placed,
+            'volume_utilization': volume_util,
+            'weight_used': info.get('weight_used', env.container.current_weight),
             'reward': episode_reward,
         })
         
         if visualize and i == 0:
             # Visualize first solution
-            env.container.plot3d(title=f"DQN Solution - {info['items_placed']} items")
+            env.container.plot3d(title=f"DQN Solution - {items_placed} items")
     
     # Aggregate results
-    avg_items = np.mean([r['items_placed'] for r in results])
-    avg_volume = np.mean([r['volume_utilization'] for r in results])
-    avg_reward = np.mean([r['reward'] for r in results])
+    avg_items = float(np.mean([r['items_placed'] for r in results])) if results else 0.0
+    avg_volume = float(np.mean([r['volume_utilization'] for r in results])) if results else 0.0
+    avg_reward = float(np.mean([r['reward'] for r in results])) if results else 0.0
     
     print(f"\nEvaluation Results ({num_eval} episodes):")
     print(f"  Avg items placed: {avg_items:.1f}/{len(instance.items)}")
@@ -507,7 +539,7 @@ def main():
     
     # Evaluate
     print(f"\nEvaluating agent...")
-    results = evaluate_dqn_q4realbpp(agent, instance, num_eval=5, visualize=False)
+    _ = evaluate_dqn_q4realbpp(agent, instance, num_eval=5, visualize=False)
     
     print(f"\nDone!")
 
