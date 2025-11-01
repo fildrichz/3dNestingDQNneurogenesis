@@ -1,0 +1,12 @@
+3dBPP_1: 51 items with dimension restrictions.
+3dBPP_2: 51 items with dimension restrictions and a maximum weight capacity of 1000.
+3dBPP_3: 52 packages with dimension restrictions.
+3dBPP_4: 52 items with dimension restrictions. Items with ID {0,1,9} are heavy packages that must be beneath the rest of the items.
+3dBPP_5: 54 packages with dimension restrictions.
+3dBPP_6: 54 items with dimension restrictions. Items with ID {7,9} and {4,7} must not be packed together (mutual incompatibility between first ID and second ID in each set).
+3dBPP_7: 46 items with dimension restrictions.
+3dBPP_8: 46 packages with dimension restrictions. Items with ID {4,8} must not be packed together, while items with ID {0,3} and {0,8} must be stored in the same bin.
+3dBPP_9: 47 items with dimension restrictions. Center of mass is in the middle of the bin (750, 750).
+3dBPP_10: 47 items with dimension restrictions. Center of mass is in (900, 500).
+3dBPP_11: 38 items with dimension restrictions; maximum weight capacity of 800; items {0,7} are heavy packages; {7,9} incompatible; {0,3} and {0,8} must be packed together; center of mass in (750, 750).
+3dBPP_12: 38 items with dimension restrictions; maximum weight capacity of 900; items {3,4} are heavy packages; {4,8} incompatible; {2,4} must be packed together; center  of mass in (500, 500).
