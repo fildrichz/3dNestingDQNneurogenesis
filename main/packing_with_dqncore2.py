@@ -499,7 +499,7 @@ def train_multibin_pack_dqn(
         buffer_size=400_000,
         eps_start=1.0,
         eps_end=0.15,
-        eps_decay_steps=episodes * 60,
+        eps_decay_steps=episodes * 30,
         target_update_interval=500,
         n_step=3,
         double_dqn=True,
@@ -509,12 +509,15 @@ def train_multibin_pack_dqn(
     
     # Tracking
     import collections
+    import copy
     util_hist = collections.deque(maxlen=50)
     bins_hist = collections.deque(maxlen=50)
     items_hist = collections.deque(maxlen=50)
     returns_hist = collections.deque(maxlen=50)
     best_bins = float('inf')
     best_items = 0
+    best_util = 0.0
+    best_solution = None  # Will store the best bins configuration
     
     print(f"Agent initialized on {cfg.device}")
     print(f"Starting training...\n")
@@ -577,10 +580,13 @@ def train_multibin_pack_dqn(
                 items_hist.append(items_placed)
                 returns_hist.append(ep_ret)
                 
-                # Track best based on items placed, then bins used
-                if items_placed > best_items or (items_placed == best_items and bins_used < best_bins):
+                # Track best solution based on utilization (greatest utilization)
+                if util > best_util:
+                    best_util = util
                     best_items = items_placed
                     best_bins = bins_used
+                    # Deep copy the bins to save best solution
+                    best_solution = copy.deepcopy(env.bins)
                 
                 if (ep + 1) % log_interval == 0 or ep == 0:
                     ma_util = np.mean(util_hist) if len(util_hist) > 0 else util
@@ -609,7 +615,7 @@ def train_multibin_pack_dqn(
     print(f"\n{'='*80}")
     print(f"TRAINING COMPLETE!")
     print(f"{'='*80}")
-    print(f"Best result: {best_bins} bins used, {best_items}/{len(items)} items placed")
+    print(f"Best result: {best_bins} bins used, {best_items}/{len(items)} items placed, util: {best_util:.3f}")
     print(f"Final MA50: {np.mean(bins_hist):.1f} bins, {np.mean(items_hist):.1f} items, {np.mean(util_hist):.3f} util")
     print(f"{'='*80}\n")
     
@@ -620,18 +626,19 @@ def train_multibin_pack_dqn(
         agent.save(save_path)
         print(f"Model saved to: {save_path}\n")
     
-    # Visualize all used bins
-    print("Visualizing final packing...")
-    for i, bin in enumerate(env.bins):
+    # Visualize best solution (use last solution as fallback if no best was found)
+    bins_to_visualize = best_solution if best_solution is not None else env.bins
+    print(f"Visualizing {'best' if best_solution is not None else 'final'} packing...")
+    for i, bin in enumerate(bins_to_visualize):
         if len(bin.placed) > 0:
             bin_util = sum(b.w * b.d * b.h for b in bin.placed) / env.bin_volume
             bin.plot3d(
                 title=f"Bin {i+1}/{env.max_bins} ({len(bin.placed)} items, util:{bin_util:.3f})",
-                save_path=f"output_data/final_bin_{i+1}.png",
+                save_path=f"output_data/best_bin_{i+1}.png",
                 show=False
             )
     
-    return agent, env
+    return agent, env, best_solution
 
 
 def full_datapath(filename: str) -> str:
@@ -642,27 +649,39 @@ def full_datapath(filename: str) -> str:
 if __name__ == "__main__":
     print("MULTI-BIN PACKING DQN")
     
-    agent, env = train_multibin_pack_dqn(
-        problem_path=full_datapath("3dBPP_2.txt"),
-        episodes=1000,
+    problem = "3dBPP_3.txt"
+
+    agent, env, best_solution = train_multibin_pack_dqn(
+        problem_path=full_datapath(problem),
+        episodes=200,
         seed=42,
         max_actions=128,
         topk_eps=1000,
         train_freq=1,
         num_train_steps=1,
         log_interval=10,
-        save_path="dqn_multibin_fixed_model.pt"
+        save_path=f"multibin_dqn_{problem.replace('.txt','')}.pth"
     )
     
+    # Use best solution for final statistics if available
+    bins_for_stats = best_solution if best_solution is not None else env.bins
+    
     print(f"\n{'='*80}")
-    print(f"FINAL STATISTICS:")
+    print(f"FINAL STATISTICS (BEST SOLUTION):")
     print(f"{'='*80}")
     print(f"Max bins allowed: {env.max_bins}")
-    print(f"Bins actually used: {env._get_bins_used()}")
-    print(f"Items placed: {env.n_items - len(env.items)}/{env.n_items}")
-    print(f"Overall utilization: {env.total_placed_volume / (env.max_bins * env.bin_volume):.3f}")
+    
+    # Calculate stats from best solution
+    bins_used = sum(1 for bin in bins_for_stats if len(bin.placed) > 0)
+    items_placed = sum(len(bin.placed) for bin in bins_for_stats)
+    total_volume = sum(sum(b.w * b.d * b.h for b in bin.placed) for bin in bins_for_stats)
+    overall_util = total_volume / (env.max_bins * env.bin_volume)
+    
+    print(f"Bins actually used: {bins_used}")
+    print(f"Items placed: {items_placed}/{env.n_items}")
+    print(f"Overall utilization: {overall_util:.3f}")
     print(f"\nPer-bin breakdown:")
-    for i, bin in enumerate(env.bins):
+    for i, bin in enumerate(bins_for_stats):
         if len(bin.placed) > 0:
             util = sum(b.w * b.d * b.h for b in bin.placed) / env.bin_volume
             print(f"  Bin {i+1}: {len(bin.placed)} items | Vol:{util:.3f} | Wgt:{bin.current_weight}/{env.max_weight}")
