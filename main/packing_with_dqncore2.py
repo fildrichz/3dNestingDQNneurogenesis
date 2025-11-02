@@ -692,7 +692,7 @@ def full_datapath(filename: str) -> str:
 if __name__ == "__main__":
     print("MULTI-BIN PACKING DQN")
     
-    problem = "3dBPP_8.txt"
+    problem = "3dBPP_4.txt"
 
     agent, env, best_solution = train_multibin_pack_dqn(
         problem_path=full_datapath(problem),
