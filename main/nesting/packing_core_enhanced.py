@@ -1,4 +1,4 @@
-# packing_core_fixed.py — Enhanced with ALL constraints properly enforced
+# packing_core_complete.py — Complete implementation with ALL constraints + gravity
 from typing import List, Tuple, Dict, Optional, Set
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
@@ -11,7 +11,7 @@ class box3d:
         self.w, self.d, self.h = int(w), int(d), int(h)
         self.x, self.y, self.z = 0, 0, 0
         self.weight = weight
-        self.item_id = item_id  # Track which item type this box is
+        self.item_id = item_id
 
     def orientations(self):
         return [
@@ -39,12 +39,12 @@ class Container(box3d):
     def __init__(self, W, D, H, max_weight: Optional[int] = None, 
                  resolution: int = 10):
         """
-        Initialize container with optional weight constraint and heightmap.
+        Initialize container with all constraint support.
         
         Args:
             W, D, H: Container dimensions
             max_weight: Maximum weight capacity (optional)
-            resolution: Grid resolution for heightmap (higher = finer grid but more memory)
+            resolution: Grid resolution for heightmap
         """
         super().__init__(W, D, H)
         self.placed: List[box3d] = []
@@ -60,14 +60,14 @@ class Container(box3d):
         self.heightmap = np.zeros((W // resolution + 1, D // resolution + 1), dtype=np.int32)
         
         # Constraint tracking
-        self.item_ids_in_bin: Set[int] = set()  # Track which item types are in this bin
+        self.item_ids_in_bin: Set[int] = set()
         self.incompatibilities: List[Tuple[int, int]] = []
         self.positive_affinities: List[Tuple[int, int]] = []
         self.center_of_mass_constraint: Optional[Tuple[int, int]] = None
-        self.relative_pos: Dict[int, List[Tuple[int, int]]] = {}  # NEW: relative positioning constraints
+        self.relative_pos: Dict[int, List[Tuple[int, int]]] = {}
         
-        # Track item positions for relative constraint checking
-        self.item_positions: Dict[int, List[box3d]] = {}  # item_id -> list of boxes with that id
+        # Track item positions for constraint checking
+        self.item_positions: Dict[int, List[box3d]] = {}
 
     def set_constraints(self, 
                        incompatibilities: List[Tuple[int, int]] = None,
@@ -96,7 +96,6 @@ class Container(box3d):
         x2, y2 = box.x + box.w, box.y + box.d
         new_height = box.z + box.h
         
-        # Update all grid cells covered by this box
         gx1 = x1 // self.resolution
         gy1 = y1 // self.resolution
         gx2 = min((x2 - 1) // self.resolution + 1, self.heightmap.shape[0])
@@ -133,6 +132,8 @@ class Container(box3d):
             plt.show()
             plt.close(fig)
 
+    # ========== CONSTRAINT CHECKING METHODS ==========
+
     def check_weight_constraint(self, additional_weight: int) -> bool:
         """Check if adding a box would violate weight constraint."""
         if self.max_weight is None:
@@ -150,19 +151,22 @@ class Container(box3d):
     
     def check_relative_positioning(self, item_id: int, ep: EP, size: Tuple[int, int, int]) -> bool:
         """
-        Check if placing item at position would violate relative positioning constraints.
+        Check if placing item would violate relative positioning constraints.
         
-        Relative positioning constraint format: {item_id: [(other_id, position_code), ...]}
-        - Position codes 3,4 typically mean "cannot be placed on top of"
-        - We check if the new item would be placed directly above any restricted items
+        Relative positioning format: {heavy_id: [(light_id, code), ...]}
+        Interpretation: heavy_id cannot be placed ON TOP of light_id
+        
+        Example: {1: [(7, 0), (7, 1)]}
+        - Item 1 is heavier than item 7
+        - Item 1 cannot be placed above item 7
         
         Args:
             item_id: ID of item to place
-            ep: Extreme point where item would be placed (x, y, z)
+            ep: Position where item would be placed (x, y, z)
             size: Size of item (w, d, h)
-        
+            
         Returns:
-            True if placement is allowed, False if it violates constraints
+            True if placement allowed, False if violates constraint
         """
         if not self.relative_pos or item_id not in self.relative_pos:
             return True
@@ -170,40 +174,33 @@ class Container(box3d):
         x, y, z = ep
         w, d, h = size
         
-        # Get constraints for this item
+        # Get constraints for this item (heavy item)
         constraints = self.relative_pos[item_id]
         
-        for other_id, position_code in constraints:
-            # Position codes 3 and 4 typically mean "cannot be on top of"
-            if position_code in [3, 4]:
-                # Check if any boxes with other_id exist in the bin
-                if other_id not in self.item_positions:
-                    continue
+        for light_id, position_code in constraints:
+            # Check if light item exists in bin
+            if light_id not in self.item_positions:
+                continue
+            
+            # Check all instances of the light item
+            for light_box in self.item_positions[light_id]:
+                # Check if boxes overlap in XY plane
+                x_overlap = not (x + w <= light_box.x or light_box.x + light_box.w <= x)
+                y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
                 
-                # Check if new box would be placed on top of any box with other_id
-                for other_box in self.item_positions[other_id]:
-                    # Check if boxes overlap in XY plane
-                    x_overlap = not (x + w <= other_box.x or other_box.x + other_box.w <= x)
-                    y_overlap = not (y + d <= other_box.y or other_box.y + other_box.d <= y)
-                    
-                    if x_overlap and y_overlap:
-                        # Boxes overlap in XY - check if new box is above
-                        if z >= other_box.z + other_box.h - 1:  # Small tolerance for floating point
-                            # New box is on top of or touching the restricted box
-                            return False
+                if x_overlap and y_overlap:
+                    # Boxes overlap in XY - check if heavy item is above light item
+                    # Heavy item would be above if its Z position is at or above light item's top
+                    if z >= light_box.z + light_box.h - 1:
+                        # VIOLATION: Heavy item would be on top of light item
+                        return False
         
         return True
     
     def check_positive_affinity_before_completion(self) -> bool:
         """
-        Check if current bin state satisfies positive affinity constraints.
-        This should be called before marking a bin as "complete".
-        
-        Positive affinities mean: if one item from the pair is in the bin,
-        ALL instances of the other item must also be in this bin.
-        
-        Returns:
-            True if affinities are satisfied or no constraints exist
+        Check if current bin satisfies positive affinity constraints.
+        For final validation - should rarely trigger if proactive check works.
         """
         if not self.positive_affinities:
             return True
@@ -213,7 +210,6 @@ class Container(box3d):
             has_b = item_b in self.item_ids_in_bin
             
             # If we have one but not the other, affinity is violated
-            # Note: It's OK to have neither (they'll go in another bin together)
             if has_a and not has_b:
                 return False
             if has_b and not has_a:
@@ -249,13 +245,86 @@ class Container(box3d):
         cx, cy = self.get_center_of_mass()
         target_x, target_y = self.center_of_mass_constraint
         
-        # Allow some tolerance (e.g., within 10% of container size)
         tolerance = min(self.w, self.d) * 0.1
         
         return (abs(cx - target_x) <= tolerance and 
                 abs(cy - target_y) <= tolerance)
 
-    # ========== general placement and helpers ============
+    # ========== GRAVITY AND SUPPORT ==========
+
+    def apply_gravity(self, x: int, y: int, z: int, w: int, d: int, h: int) -> int:
+        """
+        Apply gravity: drop box down until it hits ground or another box.
+        
+        This ensures no floating boxes - every box must be supported!
+        
+        Args:
+            x, y, z: Initial position
+            w, d, h: Box dimensions
+            
+        Returns:
+            Final Z position after dropping
+        """
+        # Start from the requested Z and drop down
+        current_z = z
+        
+        # Drop until we hit something
+        while current_z > 0:
+            # Check if placing at current_z-1 would collide with anything
+            test_z = current_z - 1
+            
+            # Check collision with all placed boxes
+            collision = False
+            for box in self.placed:
+                # Check if boxes would overlap
+                x_overlap = not (x + w <= box.x or box.x + box.w <= x)
+                y_overlap = not (y + d <= box.y or box.y + box.d <= y)
+                z_overlap = not (test_z + h <= box.z or box.z + box.h <= test_z)
+                
+                if x_overlap and y_overlap and z_overlap:
+                    collision = True
+                    break
+            
+            if collision:
+                # Can't go lower - stop at current_z
+                return current_z
+            
+            # No collision - can drop further
+            current_z = test_z
+        
+        # Reached ground (z=0)
+        return 0
+    
+    def find_support_surface(self, x: int, y: int, w: int, d: int) -> int:
+        """
+        Find the highest surface at XY position where a box can be placed.
+        
+        This is more efficient than apply_gravity for finding initial placement.
+        
+        Args:
+            x, y: XY position
+            w, d: Box width and depth
+            
+        Returns:
+            Z position of support surface (0 if ground, or top of highest box)
+        """
+        max_z = 0
+        
+        # Check all placed boxes
+        for box in self.placed:
+            # Check if box overlaps in XY with our target position
+            x_overlap = not (x + w <= box.x or box.x + box.w <= x)
+            y_overlap = not (y + d <= box.y or box.y + box.d <= y)
+            
+            if x_overlap and y_overlap:
+                # This box overlaps - check if it's higher than current max
+                box_top = box.z + box.h
+                if box_top > max_z:
+                    max_z = box_top
+        
+        return max_z
+
+    # ========== PLACEMENT METHODS ==========
 
     @staticmethod
     def _orientations(w: int, d: int, h: int):
@@ -291,10 +360,16 @@ class Container(box3d):
     def place_at(self, ep: tuple[int, int, int], size: tuple[int, int, int], 
                  weight: int = 0, item_id: int = -1) -> bool:
         """
-        Place a box at the given extreme point with ALL constraint checking.
+        Place a box with ALL constraint checking + gravity support.
+        
+        Process:
+        1. Check all constraints at requested position
+        2. Apply gravity - drop box until it hits support
+        3. Re-check constraints at final position
+        4. Place box and update tracking
         
         Args:
-            ep: Extreme point (x, y, z)
+            ep: Requested extreme point (x, y, z)
             size: Box dimensions (w, d, h)
             weight: Weight of the box
             item_id: Item type identifier
@@ -302,29 +377,30 @@ class Container(box3d):
         Returns:
             True if placement successful, False otherwise
         """
-        # Check all basic constraints
-        if not (self._fits_caps(ep, size) and
-                self._fits_container(ep, size) and
-                self._fits_collision_free(ep, size)):
-            return False
-        
-        # Check weight constraint
-        if not self.check_weight_constraint(weight):
-            return False
-        
-        # Check incompatibility constraint
-        if not self.check_incompatibility(item_id):
-            return False
-        
-        # NEW: Check relative positioning constraint
-        if not self.check_relative_positioning(item_id, ep, size):
-            return False
-
-        # Place the box
         x, y, z = ep
         w, d, h = size
+        
+        # === STEP 1: Initial constraint checks ===
+        if not (self._fits_container(ep, size) and
+                self.check_weight_constraint(weight) and
+                self.check_incompatibility(item_id)):
+            return False
+        
+        # === STEP 2: Apply gravity ===
+        # Drop box down until it hits something
+        final_z = self.apply_gravity(x, y, z, w, d, h)
+        final_ep = (x, y, final_z)
+        
+        # === STEP 3: Re-check constraints at final position ===
+        if not (self._fits_caps(final_ep, size) and
+                self._fits_container(final_ep, size) and
+                self._fits_collision_free(final_ep, size) and
+                self.check_relative_positioning(item_id, final_ep, size)):
+            return False
+        
+        # === STEP 4: Place the box ===
         k = box3d(w, d, h, weight, item_id)
-        k.set_position(x, y, z)
+        k.set_position(x, y, final_z)
         self.placed.append(k)
         
         # Update tracking
@@ -332,17 +408,17 @@ class Container(box3d):
         if item_id >= 0:
             self.item_ids_in_bin.add(item_id)
         
-        # NEW: Track item positions for relative constraint checking
         if item_id not in self.item_positions:
             self.item_positions[item_id] = []
         self.item_positions[item_id].append(k)
         
         # Update heightmap
         self.update_heightmap(k)
-
+        
         if hasattr(self, "tops_by_z"):
             self.tops_by_z.setdefault(k.z + k.h, []).append(k)
-
+        
+        # === STEP 5: Update EPs AFTER placement ===
         self.update_3depl(k)
         if hasattr(self, "update_residual_space"):
             self.update_residual_space(k)
@@ -352,18 +428,14 @@ class Container(box3d):
             self._prune_smooth_ridges_x(k)
         if hasattr(self, "_prune_colinear_min"):
             self._prune_colinear_min()
+        
         return True
 
     def place(self, ep: tuple[int, int, int], w: int, d: int, h: int, 
               weight: int = 0, item_id: int = -1) -> bool:
-        """
-        Alternate placement method with individual dimensions.
-        Calls place_at internally.
-        """
+        """Alternate placement method. Calls place_at internally."""
         return self.place_at(ep, (w, d, h), weight, item_id)
     
-    # ========== temporary placement demo ============
-
     def place_first_fit(self, base_size: tuple[int, int, int], 
                        weight: int = 0, item_id: int = -1) -> bool:
         """Try to place a box using first-fit strategy."""
@@ -372,6 +444,8 @@ class Container(box3d):
                 if self.place_at(ep, size, weight, item_id):
                     return True
         return False
+
+    # ========== VISUALIZATION ==========
 
     @staticmethod
     def _cuboid_edges(x, y, z, w, d, h):
@@ -409,12 +483,10 @@ class Container(box3d):
         ax = fig.add_subplot(111, projection="3d")
         self._setup_axes(ax, self.w, self.d, self.h, title)
         
-        # Draw container
         cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
                                 linewidths=0.8, colors='black')
         ax.add_collection3d(cont)
         
-        # Draw boxes
         if self.placed:
             colors = plt.cm.tab20(np.linspace(0, 1, 20))
             for b in self.placed:
@@ -423,13 +495,11 @@ class Container(box3d):
                                         linewidths=1.5, colors=color)
                 ax.add_collection3d(edges)
         
-        # Draw extreme points
         if self.eps:
             eps_arr = np.array(self.eps)
             ax.scatter(eps_arr[:,0], eps_arr[:,1], eps_arr[:,2], 
                       c='red', marker='o', s=50, alpha=0.6, label='Extreme Points')
         
-        # Add info text
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -450,24 +520,21 @@ class Container(box3d):
 
     def plot3d_filled(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
-        """Visualize with filled boxes (cleaner visualization)."""
+        """Visualize with filled boxes."""
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
         self._setup_axes(ax, self.w, self.d, self.h, title)
         
-        # Draw container
         cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
                                 linewidths=0.8, colors='black')
         ax.add_collection3d(cont)
         
-        # Draw filled boxes
         if self.placed:
             colors = plt.cm.tab20(np.linspace(0, 1, 20))
             for b in self.placed:
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
                 ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
         
-        # Add info text
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -486,10 +553,10 @@ class Container(box3d):
         else:
             return fig
 
-    # ========== EP update (3DEPL) — Wall-fallback ============
+    # ========== EP UPDATE (3DEPL) ==========
 
     def _point_inside_box(self, p: EP, b: box3d) -> bool:
-        """Closed-box test (used elsewhere)."""
+        """Closed-box test."""
         px, py, pz = p
         return (b.x <= px <= b.x + b.w and
                 b.y <= py <= b.y + b.d and
@@ -497,14 +564,14 @@ class Container(box3d):
 
     @staticmethod
     def _inside_strict(p: EP, b: box3d) -> bool:
-        """Strict interior: EPs that lie on faces are NOT removed."""
+        """Strict interior."""
         px, py, pz = p
         return (b.x < px < b.x + b.w and
                 b.y < py < b.y + b.d and
                 b.z < pz < b.z + b.h)
 
     def CanTakeProjection(self, k: box3d, i: box3d, axis: str, *, strict_overlap=True) -> bool:
-        """Check if projection from k to i is valid."""
+        """Check if projection is valid."""
         kx1, ky1, kz1 = k.x, k.y, k.z
         kx2, ky2, kz2 = kx1 + k.w, ky1 + k.d, kz1 + k.h
 
@@ -514,19 +581,19 @@ class Container(box3d):
         def overlap_1d(a1, a2, b1, b2):
             return not (a2 <= b1 or b2 <= a1) if strict_overlap else not (a2 < b1 or b2 < a1)
 
-        if axis in ("XY", "XZ"):  # move -X
+        if axis in ("XY", "XZ"):
             ahead = ix2 <= kx1
             oy = overlap_1d(iy1, iy2, ky1, ky2)
             oz = overlap_1d(iz1, iz2, kz1, kz2)
             return ahead and oy and oz
 
-        if axis in ("YX", "YZ"):  # move -Y
+        if axis in ("YX", "YZ"):
             ahead = iy2 <= ky1
             ox = overlap_1d(ix1, ix2, kx1, kx2)
             oz = overlap_1d(iz1, iz2, kz1, kz2)
             return ahead and ox and oz
 
-        if axis in ("ZX", "ZY"):  # move -Z
+        if axis in ("ZX", "ZY"):
             ahead = iz2 <= kz1
             ox = overlap_1d(ix1, ix2, kx1, kx2)
             oy = overlap_1d(iy1, iy2, ky1, ky2)
@@ -585,21 +652,18 @@ class Container(box3d):
 
         cand = []
 
-        # R = (xk+wk, yk, zk): project along -Y and -Z
         Rx, Ry, Rz = xk + wk, yk, zk
         nbY = nearest_blocker_on_ray('negY', Rx, Ry, Rz)
         cand.append((Rx, nbY if nbY is not None else 0,  Rz))
         nbZ = nearest_blocker_on_ray('negZ', Rx, Ry, Rz)
         cand.append((Rx, Ry,  nbZ if nbZ is not None else 0))
 
-        # F = (xk, yk+dk, zk): project along -X and -Z
         Fx, Fy, Fz = xk, yk + dk, zk
         nbX = nearest_blocker_on_ray('negX', Fx, Fy, Fz)
         cand.append((nbX if nbX is not None else 0,  Fy, Fz))
         nbZ = nearest_blocker_on_ray('negZ', Fx, Fy, Fz)
         cand.append((Fx, Fy,  nbZ if nbZ is not None else 0))
 
-        # T = (xk, yk, zk+hk): project along -X and -Y
         Tx, Ty, Tz = xk, yk, zk + hk
         nbX = nearest_blocker_on_ray('negX', Tx, Ty, Tz)
         cand.append((nbX if nbX is not None else 0,  Ty, Tz))
@@ -613,7 +677,7 @@ class Container(box3d):
         return self.eps
 
     def _pareto_prune_eps(self, points: list[tuple[int,int,int]]) -> list[tuple[int,int,int]]:
-        """Keep only non-dominated EPs in the MIN sense over (x,y,z)."""
+        """Keep only non-dominated EPs."""
         pts = list(set(points))
 
         def dominates(a, b):

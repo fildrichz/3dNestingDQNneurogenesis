@@ -21,23 +21,11 @@ def volume(size: Tuple[int,int,int]) -> int:
 
 class MultiBinPackingEnv:
     """
-    Multi-bin packing environment with fixed number of bins from dataset.
-    
-    Key features:
-    - Respects max_bins from problem definition
-    - All bins created upfront
-    - Agent chooses which bin to pack into
-    - Minimizes bins used while maximizing utilization
+    Multi-bin packing environment with COMPLETE constraint enforcement.
     """
     def __init__(self, W=40, D=40, H=40, items: List[Tuple[int,int,int,int,int]] = None, 
                  max_actions: int = 128, topk_eps: int = 32, seed: int = 0, gamma: float = 0.992,
                  max_weight: Optional[int] = None, problem: Optional[BinPackingProblem] = None):
-        """
-        Multi-bin packing environment.
-        
-        Args:
-            problem: BinPackingProblem with max_bins specification
-        """
         self.rng = np.random.default_rng(seed)
         self.bin_size = (int(W), int(D), int(H))
         self.bin_volume = int(W*D*H)
@@ -45,21 +33,21 @@ class MultiBinPackingEnv:
         self.max_actions = int(max_actions)
         self.topk_eps = int(topk_eps)
         
-        # Get max_bins from problem
+        # Store problem constraints
         if problem is not None:
             self.max_bins = problem.max_bins
             self.max_weight = problem.max_weight
             self.incompatibilities = problem.incompatibilities
             self.positive_affinities = problem.positive_affinities
             self.center_of_mass_constraint = problem.center_of_mass
-            self.relative_pos = problem.relative_pos  # NEW: Store relative positioning constraints
+            self.relative_pos = problem.relative_pos
         else:
             self.max_bins = 1
             self.max_weight = max_weight
             self.incompatibilities = []
             self.positive_affinities = []
             self.center_of_mass_constraint = None
-            self.relative_pos = {}  # NEW: Empty dict when no problem
+            self.relative_pos = {}
         
         self.problem = problem
         
@@ -77,7 +65,7 @@ class MultiBinPackingEnv:
         self.reset()
 
     def _create_bin(self) -> Container:
-        """Create a new empty bin."""
+        """Create a new empty bin with all constraints."""
         W, D, H = self.bin_size
         adaptive_resolution = max(1, min(W, D) // 20)
         
@@ -88,7 +76,7 @@ class MultiBinPackingEnv:
                 incompatibilities=self.incompatibilities,
                 positive_affinities=self.positive_affinities,
                 center_of_mass=self.center_of_mass_constraint,
-                relative_pos=self.relative_pos  # NEW: Pass relative positioning constraints
+                relative_pos=self.relative_pos
             )
         C.eps = [(0,0,0)]
         C.placed = []
@@ -103,12 +91,10 @@ class MultiBinPackingEnv:
         
         self.n_items = len(self.items)
         
-        # Create ALL bins upfront based on max_bins
+        # Create ALL bins upfront
         self.bins: List[Container] = [self._create_bin() for _ in range(self.max_bins)]
         
-        # Track which bins have been used (have items in them)
         self.bins_used_mask = np.zeros(self.max_bins, dtype=bool)
-        
         self.total_placed_volume = 0
         self.done = False
         return self._obs()
@@ -118,21 +104,14 @@ class MultiBinPackingEnv:
         return sum(1 for bin in self.bins if len(bin.placed) > 0)
 
     def _obs(self) -> np.ndarray:
-        """
-        Observation includes:
-        - Overall utilization across all available bins
-        - Items remaining
-        - Stats from the bin with most remaining capacity
-        - Number of bins already used
-        """
+        """Observation state."""
         W, D, H = self.bin_size
         
-        # Overall stats
         total_available_volume = self.max_bins * self.bin_volume
         packed = self.total_placed_volume / total_available_volume
         items_left = len(self.items) / max(1, self.n_items)
         
-        # Find bin with most remaining capacity (best candidate for next placement)
+        # Find bin with most remaining capacity
         best_bin = None
         best_capacity = -1
         for bin in self.bins:
@@ -141,7 +120,6 @@ class MultiBinPackingEnv:
                 best_capacity = remaining_vol
                 best_bin = bin
         
-        # Stats from best candidate bin
         if best_bin and best_bin.eps:
             caps = [best_bin.ep_rs.get(ep, (W-ep[0], D-ep[1], H-ep[2])) for ep in best_bin.eps]
             cx = max(c[0] for c in caps) / W
@@ -159,23 +137,66 @@ class MultiBinPackingEnv:
             avg_h_norm = 0.0
             weight_util = 0.0
         
-        # Number of bins used
         bins_used = self._get_bins_used()
         bins_used_norm = bins_used / self.max_bins
         
         return np.array([
-            packed,           # Overall utilization
-            items_left,       # Fraction of items remaining
-            cx, cy, cz,       # Best bin residual caps
-            avg_h_norm,       # Best bin height
-            weight_util,      # Best bin weight util
-            bins_used_norm,   # Fraction of bins used
+            packed,
+            items_left,
+            cx, cy, cz,
+            avg_h_norm,
+            weight_util,
+            bins_used_norm,
         ], dtype=np.float32)
+
+    def check_affinity_placement(self, item_id: int, target_bin_idx: int) -> bool:
+        """
+        PROACTIVE: Check if placing item_id in target_bin would violate affinity.
+        
+        This prevents splitting affinity pairs across bins by checking BEFORE placement.
+        
+        Args:
+            item_id: ID of item to place
+            target_bin_idx: Index of bin where we want to place it
+            
+        Returns:
+            True if placement allowed, False if would violate affinity
+        """
+        if not self.positive_affinities:
+            return True
+        
+        # Find all items that have affinity with this item
+        affinity_partners = set()
+        for a, b in self.positive_affinities:
+            if item_id == a:
+                affinity_partners.add(b)
+            if item_id == b:
+                affinity_partners.add(a)
+        
+        if not affinity_partners:
+            return True  # No affinity constraints for this item
+        
+        # Check: are any affinity partners already placed in OTHER bins?
+        for bin_idx, bin in enumerate(self.bins):
+            if bin_idx == target_bin_idx:
+                continue  # Placing in same bin is OK
+            
+            # Check if this bin contains any affinity partners
+            for partner_id in affinity_partners:
+                if partner_id in bin.item_ids_in_bin:
+                    # VIOLATION: Partner already in different bin!
+                    return False
+        
+        return True
 
     def enumerate_actions(self):
         """
-        Enumerate all feasible actions across ALL bins.
-        Each action includes which bin it's for.
+        Enumerate all feasible actions with ALL constraint checks including:
+        - Basic placement (fits, collision-free)
+        - Weight constraint
+        - Incompatibility
+        - Relative positioning (heavy not on light)
+        - PROACTIVE affinity (prevents splitting pairs)
         """
         actions = []
         
@@ -188,12 +209,14 @@ class MultiBinPackingEnv:
                     rots = ((w,d,h), (w,h,d), (d,w,h), (d,h,w), (h,w,d), (h,d,w))
                     
                     for rot_idx, size in enumerate(rots):
+                        # ALL CONSTRAINT CHECKS
                         if (bin._fits_caps(ep, size) and 
                             bin._fits_container(ep, size) and 
                             bin._fits_collision_free(ep, size) and
                             bin.check_weight_constraint(weight) and
                             bin.check_incompatibility(item_id) and
-                            bin.check_relative_positioning(item_id, ep, size)):  # NEW: Check relative positioning
+                            bin.check_relative_positioning(item_id, ep, size) and
+                            self.check_affinity_placement(item_id, bin_idx)):  # PROACTIVE!
                             
                             actions.append((bin_idx, item_idx, ep_idx, rot_idx, ep, size, weight, item_id))
         
@@ -227,7 +250,6 @@ class MultiBinPackingEnv:
         
         info = {}
         
-        # Calculate utilization (across all available bins)
         total_available_volume = self.max_bins * self.bin_volume
         util_prev = self.total_placed_volume / total_available_volume
         
@@ -239,17 +261,11 @@ class MultiBinPackingEnv:
             bins_used = self._get_bins_used()
             items_placed = self.n_items - len(self.items)
             
-            # Reward based on:
-            # 1. Utilization of space used
-            # 2. Penalty for using more bins
-            # 3. Penalty for unplaced items
-            
             if len(self.items) == 0:
-                # All items placed - bonus based on efficiency
                 bins_efficiency = 1.0 - (bins_used / self.max_bins)
                 reward += 0.3 + bins_efficiency * 0.2
                 
-                # NEW: Check positive affinity constraints
+                # SAFETY NET: Check affinities (should rarely trigger with proactive check)
                 affinity_violations = 0
                 for bin in self.bins:
                     if len(bin.placed) > 0:
@@ -257,10 +273,10 @@ class MultiBinPackingEnv:
                             affinity_violations += 1
                 
                 if affinity_violations > 0:
-                    reward -= 0.5 * affinity_violations  # Penalty for violating affinity constraints
+                    reward -= 0.1 * affinity_violations  # Small penalty
                     info["affinity_violations"] = affinity_violations
+                    print(f"⚠️  WARNING: Affinity violation despite proactive blocking!")
             else:
-                # Items remaining - penalty
                 reward -= 0.2 * (len(self.items) / self.n_items)
             
             info["utilization"] = util_prev
@@ -285,6 +301,7 @@ class MultiBinPackingEnv:
         bin_idx, item_idx, ep_idx, rot_idx, pos, size, weight, item_id = action
         target_bin = self.bins[bin_idx]
         
+        # NOTE: place_at now applies gravity automatically!
         ok = target_bin.place_at(pos, size, weight=weight, item_id=item_id)
         
         if not ok:
@@ -296,28 +313,26 @@ class MultiBinPackingEnv:
         self.total_placed_volume += v
         del self.items[item_idx]
         
-        # Calculate new utilization
         util_next = self.total_placed_volume / total_available_volume
         
         # Potential-based shaping
         reward = (self.gamma * util_next) - util_prev
         
-        # Small bonus for placing in a bin with fewer items (encourage balancing)
+        # Small bonus for balancing
         current_bin_items = len(target_bin.placed)
         avg_items_per_used_bin = sum(len(b.placed) for b in self.bins) / max(1, self._get_bins_used())
         if current_bin_items < avg_items_per_used_bin:
-            reward += 0.01  # Small bonus for balancing
+            reward += 0.01
         
         # Check if done
         if len(self.items) == 0:
             self.done = True
             bins_used = self._get_bins_used()
             
-            # Completion bonus with efficiency multiplier
             bins_efficiency = 1.0 - (bins_used / self.max_bins)
             reward += 0.3 + bins_efficiency * 0.2
             
-            # NEW: Check positive affinity constraints
+            # SAFETY NET: Check affinities
             affinity_violations = 0
             for bin in self.bins:
                 if len(bin.placed) > 0:
@@ -325,8 +340,9 @@ class MultiBinPackingEnv:
                         affinity_violations += 1
             
             if affinity_violations > 0:
-                reward -= 0.5 * affinity_violations  # Penalty for violating affinity constraints
+                reward -= 0.1 * affinity_violations
                 info["affinity_violations"] = affinity_violations
+                print(f"⚠️  WARNING: Affinity violation despite proactive blocking!")
             
             info["utilization"] = util_next
             info["bins_used"] = bins_used
