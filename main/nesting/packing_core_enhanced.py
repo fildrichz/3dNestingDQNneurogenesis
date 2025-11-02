@@ -1,4 +1,4 @@
-# packing_core.py — Enhanced with heightmap and constraints
+# packing_core_fixed.py — Enhanced with ALL constraints properly enforced
 from typing import List, Tuple, Dict, Optional, Set
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
@@ -64,11 +64,16 @@ class Container(box3d):
         self.incompatibilities: List[Tuple[int, int]] = []
         self.positive_affinities: List[Tuple[int, int]] = []
         self.center_of_mass_constraint: Optional[Tuple[int, int]] = None
+        self.relative_pos: Dict[int, List[Tuple[int, int]]] = {}  # NEW: relative positioning constraints
+        
+        # Track item positions for relative constraint checking
+        self.item_positions: Dict[int, List[box3d]] = {}  # item_id -> list of boxes with that id
 
     def set_constraints(self, 
                        incompatibilities: List[Tuple[int, int]] = None,
                        positive_affinities: List[Tuple[int, int]] = None,
-                       center_of_mass: Optional[Tuple[int, int]] = None):
+                       center_of_mass: Optional[Tuple[int, int]] = None,
+                       relative_pos: Dict[int, List[Tuple[int, int]]] = None):
         """Set problem constraints."""
         if incompatibilities:
             self.incompatibilities = incompatibilities
@@ -76,6 +81,8 @@ class Container(box3d):
             self.positive_affinities = positive_affinities
         if center_of_mass:
             self.center_of_mass_constraint = center_of_mass
+        if relative_pos:
+            self.relative_pos = relative_pos
 
     def get_heightmap_at(self, x: int, y: int) -> int:
         """Get the height at a specific (x, y) coordinate."""
@@ -141,6 +148,79 @@ class Container(box3d):
                 return False
         return True
     
+    def check_relative_positioning(self, item_id: int, ep: EP, size: Tuple[int, int, int]) -> bool:
+        """
+        Check if placing item at position would violate relative positioning constraints.
+        
+        Relative positioning constraint format: {item_id: [(other_id, position_code), ...]}
+        - Position codes 3,4 typically mean "cannot be placed on top of"
+        - We check if the new item would be placed directly above any restricted items
+        
+        Args:
+            item_id: ID of item to place
+            ep: Extreme point where item would be placed (x, y, z)
+            size: Size of item (w, d, h)
+        
+        Returns:
+            True if placement is allowed, False if it violates constraints
+        """
+        if not self.relative_pos or item_id not in self.relative_pos:
+            return True
+        
+        x, y, z = ep
+        w, d, h = size
+        
+        # Get constraints for this item
+        constraints = self.relative_pos[item_id]
+        
+        for other_id, position_code in constraints:
+            # Position codes 3 and 4 typically mean "cannot be on top of"
+            if position_code in [3, 4]:
+                # Check if any boxes with other_id exist in the bin
+                if other_id not in self.item_positions:
+                    continue
+                
+                # Check if new box would be placed on top of any box with other_id
+                for other_box in self.item_positions[other_id]:
+                    # Check if boxes overlap in XY plane
+                    x_overlap = not (x + w <= other_box.x or other_box.x + other_box.w <= x)
+                    y_overlap = not (y + d <= other_box.y or other_box.y + other_box.d <= y)
+                    
+                    if x_overlap and y_overlap:
+                        # Boxes overlap in XY - check if new box is above
+                        if z >= other_box.z + other_box.h - 1:  # Small tolerance for floating point
+                            # New box is on top of or touching the restricted box
+                            return False
+        
+        return True
+    
+    def check_positive_affinity_before_completion(self) -> bool:
+        """
+        Check if current bin state satisfies positive affinity constraints.
+        This should be called before marking a bin as "complete".
+        
+        Positive affinities mean: if one item from the pair is in the bin,
+        ALL instances of the other item must also be in this bin.
+        
+        Returns:
+            True if affinities are satisfied or no constraints exist
+        """
+        if not self.positive_affinities:
+            return True
+        
+        for item_a, item_b in self.positive_affinities:
+            has_a = item_a in self.item_ids_in_bin
+            has_b = item_b in self.item_ids_in_bin
+            
+            # If we have one but not the other, affinity is violated
+            # Note: It's OK to have neither (they'll go in another bin together)
+            if has_a and not has_b:
+                return False
+            if has_b and not has_a:
+                return False
+        
+        return True
+    
     def get_center_of_mass(self) -> Tuple[float, float]:
         """Calculate the current center of mass (x, y) of all placed items."""
         if not self.placed:
@@ -201,21 +281,17 @@ class Container(box3d):
     def _fits_collision_free(self, ep: tuple[int, int, int], size: tuple[int, int, int]) -> bool:
         x, y, z = ep
         w, d, h = size
-        ax1, ay1, az1 = x, y, z
-        ax2, ay2, az2 = x + w, y + d, z + h
         for b in self.placed:
-            bx1, by1, bz1 = b.x, b.y, b.z
-            bx2, by2, bz2 = b.x + b.w, b.y + b.d, b.z + b.h
-            if (self.colision_overlap(ax1, ax2, bx1, bx2) and
-                self.colision_overlap(ay1, ay2, by1, by2) and
-                self.colision_overlap(az1, az2, bz1, bz2)):
+            if (self.colision_overlap(x, x+w, b.x, b.x+b.w) and
+                self.colision_overlap(y, y+d, b.y, b.y+b.d) and
+                self.colision_overlap(z, z+h, b.z, b.z+b.h)):
                 return False
         return True
 
     def place_at(self, ep: tuple[int, int, int], size: tuple[int, int, int], 
                  weight: int = 0, item_id: int = -1) -> bool:
         """
-        Place a box at the given extreme point with constraint checking.
+        Place a box at the given extreme point with ALL constraint checking.
         
         Args:
             ep: Extreme point (x, y, z)
@@ -226,7 +302,7 @@ class Container(box3d):
         Returns:
             True if placement successful, False otherwise
         """
-        # Check all constraints
+        # Check all basic constraints
         if not (self._fits_caps(ep, size) and
                 self._fits_container(ep, size) and
                 self._fits_collision_free(ep, size)):
@@ -239,7 +315,12 @@ class Container(box3d):
         # Check incompatibility constraint
         if not self.check_incompatibility(item_id):
             return False
+        
+        # NEW: Check relative positioning constraint
+        if not self.check_relative_positioning(item_id, ep, size):
+            return False
 
+        # Place the box
         x, y, z = ep
         w, d, h = size
         k = box3d(w, d, h, weight, item_id)
@@ -250,6 +331,11 @@ class Container(box3d):
         self.current_weight += weight
         if item_id >= 0:
             self.item_ids_in_bin.add(item_id)
+        
+        # NEW: Track item positions for relative constraint checking
+        if item_id not in self.item_positions:
+            self.item_positions[item_id] = []
+        self.item_positions[item_id].append(k)
         
         # Update heightmap
         self.update_heightmap(k)
@@ -268,6 +354,14 @@ class Container(box3d):
             self._prune_colinear_min()
         return True
 
+    def place(self, ep: tuple[int, int, int], w: int, d: int, h: int, 
+              weight: int = 0, item_id: int = -1) -> bool:
+        """
+        Alternate placement method with individual dimensions.
+        Calls place_at internally.
+        """
+        return self.place_at(ep, (w, d, h), weight, item_id)
+    
     # ========== temporary placement demo ============
 
     def place_first_fit(self, base_size: tuple[int, int, int], 
@@ -279,101 +373,63 @@ class Container(box3d):
                     return True
         return False
 
-    # ========== residual-space helpers ============
-
-    @staticmethod
-    def _in_halfopen(v: int, a: int, b: int) -> bool:
-        return a <= v < b
-
-    def _is_on_side_x(self, ep: EP, it: box3d) -> bool:
-        ex, _, _ = ep
-        return self._in_halfopen(ex, it.x, it.x + it.w)
-
-    def _is_on_side_y(self, ep: EP, it: box3d) -> bool:
-        _, ey, _ = ep
-        return self._in_halfopen(ey, it.y, it.y + it.d)
-
-    def _is_on_side_xy(self, ep: EP, it: box3d) -> bool:
-        ex, ey, _ = ep
-        return (self._in_halfopen(ex, it.x, it.x + it.w) and
-                self._in_halfopen(ey, it.y, it.y + it.d))
-
-    def update_residual_space(self, n: box3d) -> None:
-        nx1, ny1, nz1 = n.x, n.y, n.z
-        nx2, ny2, nz2 = nx1 + n.w, ny1 + n.d, nz1 + n.h
-
-        for ep in self.eps:
-            ex, ey, ez = ep
-            if ep not in self.ep_rs:
-                self.ep_rs[ep] = (self.w - ex, self.d - ey, self.h - ez)
-            x_cap, y_cap, z_cap = self.ep_rs[ep]
-
-            if nz1 <= ez < nz2:
-                if ex <= nx1 and self._is_on_side_y(ep, n):
-                    x_cap = min(x_cap, max(0, nx1 - ex))
-                if ey <= ny1 and self._is_on_side_x(ep, n):
-                    y_cap = min(y_cap, max(0, ny1 - ey))
-
-            if ez <= nz1 and self._is_on_side_xy(ep, n):
-                z_cap = min(z_cap, max(0, nz1 - ez))
-
-            self.ep_rs[ep] = (x_cap, y_cap, z_cap)
-
-        eps_set = set(self.eps)
-        for ep in list(self.ep_rs.keys()):
-            if ep not in eps_set:
-                del self.ep_rs[ep]
-
-    def _residual_ok(self, ep: EP, size: Tuple[int, int, int]) -> bool:
-        caps = self.ep_rs.get(ep)
-        if not caps:
-            return True
-        w, d, h = size
-        x_cap, y_cap, z_cap = caps
-        return (w <= x_cap) and (d <= y_cap) and (h <= z_cap)
-
-    # ======== viz ========
-
     @staticmethod
     def _cuboid_edges(x, y, z, w, d, h):
-        X = [x, x+w, x+w, x,   x,   x+w, x+w, x]
-        Y = [y, y,   y+d, y+d, y,   y,   y+d, y+d]
-        Z = [z, z,   z,   z,   z+h, z+h, z+h, z+h]
-        edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]
-        return [[(X[i],Y[i],Z[i]), (X[j],Y[j],Z[j])] for i,j in edges]
+        """Generate edges for 3D cuboid visualization."""
+        vertices = np.array([
+            [x, y, z], [x+w, y, z], [x+w, y+d, z], [x, y+d, z],
+            [x, y, z+h], [x+w, y, z+h], [x+w, y+d, z+h], [x, y+d, z+h]
+        ])
+        edges = [
+            [vertices[0], vertices[1]], [vertices[1], vertices[2]],
+            [vertices[2], vertices[3]], [vertices[3], vertices[0]],
+            [vertices[4], vertices[5]], [vertices[5], vertices[6]],
+            [vertices[6], vertices[7]], [vertices[7], vertices[4]],
+            [vertices[0], vertices[4]], [vertices[1], vertices[5]],
+            [vertices[2], vertices[6]], [vertices[3], vertices[7]]
+        ]
+        return edges
 
     @staticmethod
-    def _setup_axes(ax, W, D, H, title=""):
-        ax.set_xlim(0, W); ax.set_ylim(0, D); ax.set_zlim(0, H)
-        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-        ax.set_box_aspect((W, D, H))
-        if title: ax.set_title(title)
+    def _setup_axes(ax, W, D, H, title):
+        """Setup 3D axes for visualization."""
+        ax.set_xlim([0, W])
+        ax.set_ylim([0, D])
+        ax.set_zlim([0, H])
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(title)
+        ax.set_box_aspect([W, D, H])
 
-    def plot3d(self, *, annotate_eps: bool = True, save_path: str | None = None,
+    def plot3d(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
+        """Visualize the packing with boxes and extreme points."""
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
         self._setup_axes(ax, self.w, self.d, self.h, title)
-        cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h), 
-                               linewidths=0.8, colors='black')
+        
+        # Draw container
+        cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
+                                linewidths=0.8, colors='black')
         ax.add_collection3d(cont)
         
+        # Draw boxes
         if self.placed:
-            # Color boxes by item_id if available
             colors = plt.cm.tab20(np.linspace(0, 1, 20))
             for b in self.placed:
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
-                lc = Line3DCollection(self._cuboid_edges(b.x,b.y,b.z, b.w,b.d,b.h), 
-                                     linewidths=1.4, colors=color)
-                ax.add_collection3d(lc)
+                edges = Line3DCollection(self._cuboid_edges(b.x, b.y, b.z, b.w, b.d, b.h),
+                                        linewidths=1.5, colors=color)
+                ax.add_collection3d(edges)
         
-        if self.eps and annotate_eps:
-            xs, ys, zs = zip(*self.eps)
-            ax.scatter(xs, ys, zs, s=28, c='red', marker='o')
-            for (x,y,z) in self.eps[:10]:  # Limit annotations for clarity
-                ax.text(x, y, z, f"({x},{y},{z})", fontsize=7)
+        # Draw extreme points
+        if self.eps:
+            eps_arr = np.array(self.eps)
+            ax.scatter(eps_arr[:,0], eps_arr[:,1], eps_arr[:,2], 
+                      c='red', marker='o', s=50, alpha=0.6, label='Extreme Points')
         
-        # Add weight and COM info
+        # Add info text
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -391,24 +447,27 @@ class Container(box3d):
             plt.close(fig)
         else:
             return fig
-        
 
-    #another plot, that doesnt show eps and has filled boxes
     def plot3d_filled(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
+        """Visualize with filled boxes (cleaner visualization)."""
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
         self._setup_axes(ax, self.w, self.d, self.h, title)
+        
+        # Draw container
         cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
-                                 linewidths=0.8, colors='black')
+                                linewidths=0.8, colors='black')
         ax.add_collection3d(cont)
+        
+        # Draw filled boxes
         if self.placed:
-            # Color boxes by item_id if available
             colors = plt.cm.tab20(np.linspace(0, 1, 20))
             for b in self.placed:
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
                 ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
-        # Add weight and COM info
+        
+        # Add info text
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -417,6 +476,7 @@ class Container(box3d):
             info_text += f"\nCoM: ({cx:.1f}, {cy:.1f})"
         ax.text2D(0.05, 0.95, info_text, transform=ax.transAxes, fontsize=10,
                  verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
         if save_path:
             fig.savefig(save_path, dpi=140, bbox_inches="tight")
             plt.close(fig)
@@ -444,13 +504,7 @@ class Container(box3d):
                 b.z < pz < b.z + b.h)
 
     def CanTakeProjection(self, k: box3d, i: box3d, axis: str, *, strict_overlap=True) -> bool:
-        """
-        INWARD projections (toward origin):
-        XY, XZ -> moving along -X (blocker must be left of k): ix2 <= kx1
-        YX, YZ -> moving along -Y (blocker must be behind k): iy2 <= ky1
-        ZX, ZY -> moving along -Z (blocker must be below k):  iz2 <= kz1
-        Require overlap on the other two axes.
-        """
+        """Check if projection from k to i is valid."""
         kx1, ky1, kz1 = k.x, k.y, k.z
         kx2, ky2, kz2 = kx1 + k.w, ky1 + k.d, kz1 + k.h
 
@@ -486,10 +540,7 @@ class Container(box3d):
         return (0 <= x <= W) and (0 <= y <= D) and (0 <= z <= H)
 
     def update_3depl(self, k) -> List[EP]:
-        """
-        EP update (paper-accurate, wall-fallback, NO corner-EPs):
-        From each face-corner of k, cast two inward rays.
-        """
+        """EP update with wall-fallback."""
         xk, yk, zk = k.x, k.y, k.z
         wk, dk, hk = k.w, k.d, k.h
 

@@ -52,12 +52,14 @@ class MultiBinPackingEnv:
             self.incompatibilities = problem.incompatibilities
             self.positive_affinities = problem.positive_affinities
             self.center_of_mass_constraint = problem.center_of_mass
+            self.relative_pos = problem.relative_pos  # NEW: Store relative positioning constraints
         else:
             self.max_bins = 1
             self.max_weight = max_weight
             self.incompatibilities = []
             self.positive_affinities = []
             self.center_of_mass_constraint = None
+            self.relative_pos = {}  # NEW: Empty dict when no problem
         
         self.problem = problem
         
@@ -85,7 +87,8 @@ class MultiBinPackingEnv:
             C.set_constraints(
                 incompatibilities=self.incompatibilities,
                 positive_affinities=self.positive_affinities,
-                center_of_mass=self.center_of_mass_constraint
+                center_of_mass=self.center_of_mass_constraint,
+                relative_pos=self.relative_pos  # NEW: Pass relative positioning constraints
             )
         C.eps = [(0,0,0)]
         C.placed = []
@@ -189,7 +192,8 @@ class MultiBinPackingEnv:
                             bin._fits_container(ep, size) and 
                             bin._fits_collision_free(ep, size) and
                             bin.check_weight_constraint(weight) and
-                            bin.check_incompatibility(item_id)):
+                            bin.check_incompatibility(item_id) and
+                            bin.check_relative_positioning(item_id, ep, size)):  # NEW: Check relative positioning
                             
                             actions.append((bin_idx, item_idx, ep_idx, rot_idx, ep, size, weight, item_id))
         
@@ -244,6 +248,17 @@ class MultiBinPackingEnv:
                 # All items placed - bonus based on efficiency
                 bins_efficiency = 1.0 - (bins_used / self.max_bins)
                 reward += 0.3 + bins_efficiency * 0.2
+                
+                # NEW: Check positive affinity constraints
+                affinity_violations = 0
+                for bin in self.bins:
+                    if len(bin.placed) > 0:
+                        if not bin.check_positive_affinity_before_completion():
+                            affinity_violations += 1
+                
+                if affinity_violations > 0:
+                    reward -= 0.5 * affinity_violations  # Penalty for violating affinity constraints
+                    info["affinity_violations"] = affinity_violations
             else:
                 # Items remaining - penalty
                 reward -= 0.2 * (len(self.items) / self.n_items)
@@ -301,6 +316,17 @@ class MultiBinPackingEnv:
             # Completion bonus with efficiency multiplier
             bins_efficiency = 1.0 - (bins_used / self.max_bins)
             reward += 0.3 + bins_efficiency * 0.2
+            
+            # NEW: Check positive affinity constraints
+            affinity_violations = 0
+            for bin in self.bins:
+                if len(bin.placed) > 0:
+                    if not bin.check_positive_affinity_before_completion():
+                        affinity_violations += 1
+            
+            if affinity_violations > 0:
+                reward -= 0.5 * affinity_violations  # Penalty for violating affinity constraints
+                info["affinity_violations"] = affinity_violations
             
             info["utilization"] = util_next
             info["bins_used"] = bins_used
@@ -633,6 +659,8 @@ def train_multibin_pack_dqn(
         if len(bin.placed) > 0:
             bin_util = sum(b.w * b.d * b.h for b in bin.placed) / env.bin_volume
             
+            
+
             # Save version WITH extreme points (for debugging/analysis)
             bin.plot3d(
                 title=f"Bin {i+1}/{env.max_bins} ({len(bin.placed)} items, util:{bin_util:.3f}) [with EPs]",
@@ -664,11 +692,11 @@ def full_datapath(filename: str) -> str:
 if __name__ == "__main__":
     print("MULTI-BIN PACKING DQN")
     
-    problem = "3dBPP_3.txt"
+    problem = "3dBPP_8.txt"
 
     agent, env, best_solution = train_multibin_pack_dqn(
         problem_path=full_datapath(problem),
-        episodes=50,
+        episodes=100,
         seed=42,
         max_actions=128,
         topk_eps=1000,
