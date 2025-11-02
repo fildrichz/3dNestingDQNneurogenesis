@@ -86,19 +86,41 @@ def parse_problem_file(filepath: str) -> BinPackingProblem:
             rel_text = line.split(':', 1)[1].strip()
             j = i + 1
             # Continue reading if the constraint spans multiple lines
-            while j < len(lines) and not lines[j].strip().startswith('#'):
-                if lines[j].strip():
-                    rel_text += ' ' + lines[j].strip()
+            # Note: continuation lines may start with '#' followed by whitespace
+            while j < len(lines):
+                next_line = lines[j].strip()
+                # Stop if we hit a line that starts with '# ' followed by a letter (new constraint)
+                # But continue if it's '# \t' or similar (continuation with just whitespace)
+                if next_line.startswith('#'):
+                    # Check if it's a new constraint or a continuation
+                    after_hash = next_line[1:].lstrip()
+                    if after_hash and after_hash[0].isupper():
+                        # New constraint (starts with capital letter like "Max", "Bin", etc)
+                        break
+                    # Otherwise it's a continuation line, remove the # and continue
+                    # Add comma if the previous line doesn't end with comma/opening bracket
+                    if rel_text and rel_text[-1] not in ',{[' and after_hash and after_hash[0] == '(':
+                        rel_text += ', '
+                    rel_text += ' ' + after_hash
+                elif next_line:
+                    # Add comma if needed
+                    if rel_text and rel_text[-1] not in ',{[' and next_line[0] == '(':
+                        rel_text += ', '
+                    rel_text += ' ' + next_line
+                elif not next_line:
+                    # Empty line might end the constraint
+                    break
                 j += 1
             
             if rel_text and rel_text != '':
                 # Parse dictionary-like format: {6: [(1, 0), (1, 7), ...]}
                 try:
-                    # Remove comments that might be embedded
+                    # Remove any remaining comments
                     rel_text = rel_text.split('#')[0].strip()
                     if rel_text:
                         relative_pos = eval(rel_text)
-                except:
+                except Exception as e:
+                    # Silently fail and continue - relative_pos stays empty
                     pass
             i = j - 1
         
