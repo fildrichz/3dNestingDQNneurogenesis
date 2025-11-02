@@ -391,6 +391,40 @@ class Container(box3d):
             plt.close(fig)
         else:
             return fig
+        
+
+    #another plot, that doesnt show eps and has filled boxes
+    def plot3d_filled(self, *, save_path: str | None = None,
+               show: bool = True, title: str = "Packing state") -> None:
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection="3d")
+        self._setup_axes(ax, self.w, self.d, self.h, title)
+        cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
+                                 linewidths=0.8, colors='black')
+        ax.add_collection3d(cont)
+        if self.placed:
+            # Color boxes by item_id if available
+            colors = plt.cm.tab20(np.linspace(0, 1, 20))
+            for b in self.placed:
+                color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
+                ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
+        # Add weight and COM info
+        info_text = f"Weight: {self.current_weight}"
+        if self.max_weight:
+            info_text += f"/{self.max_weight}"
+        if self.placed:
+            cx, cy = self.get_center_of_mass()
+            info_text += f"\nCoM: ({cx:.1f}, {cy:.1f})"
+        ax.text2D(0.05, 0.95, info_text, transform=ax.transAxes, fontsize=10,
+                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        if save_path:
+            fig.savefig(save_path, dpi=140, bbox_inches="tight")
+            plt.close(fig)
+        elif show:
+            plt.show()
+            plt.close(fig)
+        else:
+            return fig
 
     # ========== EP update (3DEPL) — Wall-fallback ============
 

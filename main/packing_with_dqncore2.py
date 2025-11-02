@@ -632,11 +632,26 @@ def train_multibin_pack_dqn(
     for i, bin in enumerate(bins_to_visualize):
         if len(bin.placed) > 0:
             bin_util = sum(b.w * b.d * b.h for b in bin.placed) / env.bin_volume
+            
+            # Save version WITH extreme points (for debugging/analysis)
             bin.plot3d(
-                title=f"Bin {i+1}/{env.max_bins} ({len(bin.placed)} items, util:{bin_util:.3f})",
-                save_path=f"output_data/best_bin_{i+1}.png",
+                title=f"Bin {i+1}/{env.max_bins} ({len(bin.placed)} items, util:{bin_util:.3f}) [with EPs]",
+                save_path=f"output_data/best_bin_{i+1}_with_eps.png",
                 show=False
             )
+            
+            # Save version WITHOUT extreme points (clean, filled boxes only)
+            # Temporarily store and clear eps for clean visualization
+            
+
+
+            bin.plot3d_filled(
+                title=f"Bin {i+1}/{env.max_bins} ({len(bin.placed)} items, util:{bin_util:.3f})",
+                save_path=f"output_data/best_bin_{i+1}_filled.png",
+                show=False
+            )
+            # Restore eps
+
     
     return agent, env, best_solution
 
@@ -653,7 +668,7 @@ if __name__ == "__main__":
 
     agent, env, best_solution = train_multibin_pack_dqn(
         problem_path=full_datapath(problem),
-        episodes=200,
+        episodes=50,
         seed=42,
         max_actions=128,
         topk_eps=1000,
