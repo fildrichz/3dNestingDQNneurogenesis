@@ -26,7 +26,7 @@ import random
 #a: Yes
 
 
-from dqn_core.dqn import DQNConfig, DQNAgent, to_torch
+from dqn_core.dqn_base import DQNConfig, DQNAgent, to_torch
 
 
 # ============================================================================
@@ -566,7 +566,7 @@ class FCNeurogenesisController:
                 fitness = evaluate_fn(genome, agent)
                 genome.fitness = fitness
                 
-                if verbose and i % 5 == 0:
+                if verbose and i % 1 == 0:
                     print(f"  Evaluated {i+1}/{len(self.pop_manager.population)}", end='\r')
             
             # Print statistics

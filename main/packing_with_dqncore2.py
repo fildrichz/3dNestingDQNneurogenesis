@@ -12,7 +12,7 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 from nesting.packing_core_enhanced import Container, box3d
-from dqn_core.dqn import DQNAgent, DQNConfig
+from dqn_core.dqn_base import DQNAgent, DQNConfig
 from nesting.dataset_loader import load_problem, BinPackingProblem
 
 def volume(size: Tuple[int,int,int]) -> int:
