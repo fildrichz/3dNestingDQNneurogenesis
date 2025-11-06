@@ -1,12 +1,12 @@
 {
-  "hidden_dim": 64,
-  "enc_layers": 3,
+  "hidden_dim": 512,
+  "enc_layers": 1,
   "head_hidden": 64,
   "lr": 1e-05,
-  "gamma": 0.98,
-  "n_step": 5,
-  "batch_size": 64,
-  "fitness": -0.9375670401616291,
-  "avg_utilization": 0.513717201728024,
+  "gamma": 0.985,
+  "n_step": 1,
+  "batch_size": 256,
+  "fitness": -28.79557626193435,
+  "avg_utilization": 0.5050936299774605,
   "avg_bins_used": 1.0
 }

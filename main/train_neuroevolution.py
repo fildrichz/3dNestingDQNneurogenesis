@@ -229,13 +229,13 @@ if __name__ == "__main__":
     os.makedirs("output_data", exist_ok=True)
     
     # Example 1: Small-scale neuroevolution
-    print("🧬 EXAMPLE 1: Small-scale neuroevolution")
+    print(" EXAMPLE 1: Small-scale neuroevolution")
     problem = "3dBPP_4.txt"
     
     neuro_evo, best = train_with_neuroevolution(
         problem_path=full_datapath(problem),
-        num_generations=3,      # Quick demo - use 10-20 for real runs
-        population_size=6,      # Small population - use 10-20 for real runs
+        num_generations=2,      # Quick demo - use 10-20 for real runs
+        population_size=4,      # Small population - use 10-20 for real runs
         episodes_per_gen=30,    # Short training - use 50-100 for real runs
         seed=42
     )

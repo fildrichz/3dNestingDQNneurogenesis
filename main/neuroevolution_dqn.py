@@ -450,7 +450,7 @@ class NeuroEvolutionDQN:
         Returns statistics about the generation.
         """
         print(f"\n{'='*80}")
-        print(f"🧬 GENERATION {self.generation + 1}")
+        print(f" GENERATION {self.generation + 1}")
         print(f"{'='*80}")
         
         # Step 2: Train and evaluate each architecture
@@ -555,7 +555,7 @@ class NeuroEvolutionDQN:
         import matplotlib.pyplot as plt
         
         if not self.fitness_history:
-            print("⚠️  No evolution history to plot")
+            print(" No evolution history to plot")
             return
         
         generations = [h['generation'] for h in self.fitness_history]
@@ -592,7 +592,7 @@ class NeuroEvolutionDQN:
         
         if save_path:
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            print(f"📊 Evolution plot saved to {save_path}")
+            print(f" Evolution plot saved to {save_path}")
         else:
             plt.show()
         

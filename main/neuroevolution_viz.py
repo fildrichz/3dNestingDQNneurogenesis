@@ -243,7 +243,7 @@ def print_evolution_summary(neuro_evo):
         print(f"   Final mean fitness: {last_gen['mean_fitness']:.4f} ± {last_gen['std_fitness']:.4f}")
     
     if neuro_evo.best_individual:
-        best = neuro_evo.best_individual
+        best = neuro_evo.best_individualF
         print(f"\n Best Architecture Found:")
         print(f"   Fitness: {best.gene.fitness:.4f}")
         print(f"   Utilization: {best.avg_utilization:.3f}")
@@ -261,7 +261,7 @@ def print_evolution_summary(neuro_evo):
     
     # Population statistics
     if neuro_evo.population:
-        print(f"\n🧬 Population Statistics (Generation {neuro_evo.generation}):")
+        print(f"\n Population Statistics (Generation {neuro_evo.generation}):")
         
         fitnesses = [ind.gene.fitness for ind in neuro_evo.population]
         hidden_dims = [ind.gene.hidden_dim for ind in neuro_evo.population]
