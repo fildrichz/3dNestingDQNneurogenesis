@@ -353,7 +353,7 @@ class MultiBinPackingEnv:
             if affinity_violations > 0:
                 reward -= 0.1 * affinity_violations
                 info["affinity_violations"] = affinity_violations
-                print(f"⚠️  WARNING: Affinity violation despite proactive blocking!")
+                print(f" WARNING: Affinity violation despite proactive blocking!")
             
             info["utilization"] = util_next
             info["bins_used"] = bins_used

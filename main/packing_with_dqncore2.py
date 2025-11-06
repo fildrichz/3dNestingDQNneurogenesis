@@ -503,7 +503,7 @@ def train_multibin_pack_dqn(
     
     W, D, H = problem.bin_dimensions
     
-    print(f"\n📦 PROBLEM SPECIFICATION:")
+    print(f"\n PROBLEM SPECIFICATION:")
     print(f"   Container: {W}×{D}×{H} (volume: {W*D*H:,})")
     print(f"   Max weight per bin: {problem.max_weight}")
     print(f"   Max bins available: {problem.max_bins}")

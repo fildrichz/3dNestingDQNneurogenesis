@@ -169,20 +169,20 @@ else:
 
 ########################### Instance definition
 using_dataset = False
-num_bins = 2                              # Number of bins n
-bins_dims = (1500,1500,1500)              # Bin dimensions: (L, W, H)
-CoM = (bins_dims[0]//2, bins_dims[1]//2)  # Center of mass: tuple of values or None
+num_bins = 5                              # Number of bins n
+bins_dims = (3000,3000,3000)              # Bin dimensions: (L, W, H)
+CoM = None #(bins_dims[0]//2, bins_dims[1]//2)  # Center of mass: tuple of values or None
 max_bin_capacity = None                   # Maximum capacity of each bin M
 mass_ratio = None                         # Mass ratio: float greater than 1 or None
-num_incompatibilities = 3                 # Number of incompatibilities: int >= 0
-num_positive_affinities = 2               # Number of compatibilities: int >= 0
+num_incompatibilities = 6                 # Number of incompatibilities: int >= 0
+num_positive_affinities = 6               # Number of compatibilities: int >= 0
 
-num_categories = 15               # Number of categories to play around
-min_width, max_width = 0, 1000    # Min and max value of w_i for each case
-min_depth, max_depth = 0, 1000    # Min and max value of l_i for each case
-min_height, max_height = 0, 1000  # Min and max value of h_i for each case
+num_categories = 20               # Number of categories to play around
+min_width, max_width = 0, 10000    # Min and max value of w_i for each case
+min_depth, max_depth = 0, 10000    # Min and max value of l_i for each case
+min_height, max_height = 0, 10000  # Min and max value of h_i for each case
 min_weight, max_weight = 20, 50   # Min and max value of mu_i for each case
-num_items = 50                    # Number of case ids
+num_items = 800                    # Number of case ids
 #################################################
 
 force_overload = force_overload
@@ -215,9 +215,9 @@ if using_dataset:
     items_df = items_df.astype(int)
 
 # Print input data file
-fname = './input/3dBPP_test_2.txt'
+fname = './input/3dBPP_test_13.txt'
 with open(fname, 'w') as f:
-    f.write('# Max num of bins : ' + str(num_bins) + '\n')
+    f.write('# Max num of bins: ' + str(num_bins) + '\n')
     f.write('# Bin dimensions (L * W * H): ' + str(bins_dims).replace(', ',',') + '\n')
 
     if max_bin_capacity is None:
