@@ -23,7 +23,7 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 from nesting.packing_core_enhanced import Container, box3d
-from dqn_core.dqn_base import DQNAgent, DQNConfig  # Keep for reference
+#from dqn_core.dqn_base import DQNAgent, DQNConfig  # Keep for reference
 from dqn_core.dqn_enhanced import DQNAgentEnhanced, DQNConfigEnhanced  # NEW: Enhanced architecture
 from nesting.heightmap_utils import extract_patches_for_actions, pad_patches  # NEW: Heightmap processing
 from nesting.dataset_loader import load_problem, BinPackingProblem
