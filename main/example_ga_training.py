@@ -205,6 +205,7 @@ def main():
     user_input = input("\nTrain full model (100+ episodes) with best architecture? [y/N]: ")
     if user_input.lower() == 'y':
         print("\nTraining full model with evolved architecture...")
+        print("toto")
         
         # Build config from best genome
         cfg = best_genome.to_dqn_config(
