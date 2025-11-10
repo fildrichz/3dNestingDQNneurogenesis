@@ -631,8 +631,8 @@ def train_multibin_pack_dqn(
     
     print(f"\n{'='*80}")
     print(f"MULTI-BIN PACKING DQN TRAINING (ENHANCED VERSION)")
-    print(f"   âœ… Heightmap CNN for spatial reasoning")
-    print(f"   âœ… Transformer attention for action relationships")
+    print(f" Heightmap CNN for spatial reasoning")
+    print(f" Transformer attention for action relationships")
     print(f"{'='*80}")
     print(f"Loading: {problem_path}")
     
@@ -641,7 +641,7 @@ def train_multibin_pack_dqn(
     
     W, D, H = problem.bin_dimensions
     
-    print(f"\nðŸ“¦ PROBLEM SPECIFICATION:")
+    print(f"\n“¦ PROBLEM SPECIFICATION:")
     print(f"   Container: {W}Ã—{D}Ã—{H} (volume: {W*D*H:,})")
     print(f"   Max weight per bin: {problem.max_weight}")
     print(f"   Max bins available: {problem.max_bins}")
@@ -678,7 +678,7 @@ def train_multibin_pack_dqn(
         batch_size=128,
         buffer_size=400_000,
         eps_start=1.0,
-        eps_end=0.15,
+        eps_end=0.05,
         eps_decay_steps=episodes * 30,
         target_update_interval=500,
         n_step=3,
@@ -803,11 +803,11 @@ def train_multibin_pack_dqn(
                           f"Items: {items_placed:2d}/{len(items)} ({items_placed/len(items)*100:.0f}%) | "
                           f"Util: {util:.3f} (MA:{ma_util:.3f}) | "
                           f"Best: {best_bins}bins/{best_items}items | "
-                          f"Îµ:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
+                          f"µ:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
                     
                     # Per-bin breakdown every 50 episodes
                     if (ep + 1) % 50 == 0 and "per_bin_utils" in info:
-                        print(f"  â””â”€ Bins breakdown:")
+                        print(f" Bins breakdown:")
                         for i, (u, w, n) in enumerate(zip(info["per_bin_utils"], 
                                                           info["per_bin_weights"], 
                                                           info["per_bin_items"])):
@@ -873,7 +873,7 @@ if __name__ == "__main__":
 
     agent, env, best_solution = train_multibin_pack_dqn(
         problem_path=full_datapath(problem),
-        episodes=100,
+        episodes=400,
         seed=42,
         max_actions=128,
         topk_eps=1000,
