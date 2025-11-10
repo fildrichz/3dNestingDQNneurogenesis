@@ -674,6 +674,9 @@ class Container(box3d):
 
         merged = survivors + cand
         self.eps = sorted(set(merged), key=lambda p: (p[2], p[1], p[0]))
+
+        #self.eps = self._pareto_prune_eps(self.eps)
+
         return self.eps
 
     def _pareto_prune_eps(self, points: list[tuple[int,int,int]]) -> list[tuple[int,int,int]]:
