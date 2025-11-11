@@ -244,11 +244,10 @@ class Container(box3d):
                 y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
 
                 if x_overlap and y_overlap:
-                    # Boxes overlap in XY - check if heavy item is above light item
-                    # Heavy item is "on top of" light if its bottom is at or above light's top surface
-                    if z >= light_box.z + light_box.h:
-                        # VIOLATION: Heavy item would be on top of or above light item
-                        return False
+                    # There's a light item in our XY footprint!
+                    # Gravity will make the heavy item land on (or above) it → VIOLATION
+                    # No need to check Z - if there's any light item in XY, we can't place here
+                    return False
 
         return True
     
@@ -310,45 +309,32 @@ class Container(box3d):
     def apply_gravity(self, x: int, y: int, z: int, w: int, d: int, h: int) -> int:
         """
         Apply gravity: drop box down until it hits ground or another box.
-        
-        This ensures no floating boxes - every box must be supported!
-        
+
+        EFFICIENT O(|placed|) implementation - finds the highest overlapping box
+        and places directly on top of it, rather than iterating down pixel by pixel.
+
         Args:
-            x, y, z: Initial position
+            x, y, z: Initial position (z is ignored, box drops from here)
             w, d, h: Box dimensions
-            
+
         Returns:
-            Final Z position after dropping
+            Final Z position after dropping (0 if ground, or top of highest overlapping box)
         """
-        # Start from the requested Z and drop down
-        current_z = z
-        
-        # Drop until we hit something
-        while current_z > 0:
-            # Check if placing at current_z-1 would collide with anything
-            test_z = current_z - 1
-            
-            # Check collision with all placed boxes
-            collision = False
-            for box in self.placed:
-                # Check if boxes would overlap
-                x_overlap = not (x + w <= box.x or box.x + box.w <= x)
-                y_overlap = not (y + d <= box.y or box.y + box.d <= y)
-                z_overlap = not (test_z + h <= box.z or box.z + box.h <= test_z)
-                
-                if x_overlap and y_overlap and z_overlap:
-                    collision = True
-                    break
-            
-            if collision:
-                # Can't go lower - stop at current_z
-                return current_z
-            
-            # No collision - can drop further
-            current_z = test_z
-        
-        # Reached ground (z=0)
-        return 0
+        # Find the highest box that overlaps in XY
+        max_z = 0
+
+        for box in self.placed:
+            # Check if box overlaps in XY with our target position
+            x_overlap = not (x + w <= box.x or box.x + box.w <= x)
+            y_overlap = not (y + d <= box.y or box.y + box.d <= y)
+
+            if x_overlap and y_overlap:
+                # This box overlaps in XY - check if it's the highest so far
+                box_top = box.z + box.h
+                if box_top > max_z:
+                    max_z = box_top
+
+        return max_z
     
     def find_support_surface(self, x: int, y: int, w: int, d: int) -> int:
         """
@@ -450,9 +436,22 @@ class Container(box3d):
 
         # === STEP 3: Re-check constraints at final position ===
         # Note: Collision check OMITTED - apply_gravity() already ensures no collision
-        if not (self._fits_container(final_ep, size) and
-                # self._fits_collision_free(final_ep, size) and  # REMOVED: redundant
-                self.check_relative_positioning(item_id, final_ep, size)):
+        fits_container_final = self._fits_container(final_ep, size)
+        relpos_ok_final = self.check_relative_positioning(item_id, final_ep, size)
+
+        if not (fits_container_final and relpos_ok_final):
+            # Debug: This should rarely happen if enumerate_actions checks gravity properly
+            print(f"⚠️  Placement failed constraint re-check at final position {final_ep}")
+            print(f"    Item: id={item_id}, size={size}")
+            print(f"    Initial EMS: ({ems.x}, {ems.y}, {ems.z})")
+            print(f"    After gravity: ({x}, {y}, {z}) -> ({x}, {y}, {final_z})")
+            print(f"    fits_container: {fits_container_final} (container: {self.w}×{self.d}×{self.h})")
+            if not fits_container_final:
+                print(f"      REASON: Box at ({x},{y},{final_z}) + size {size} exceeds container bounds!")
+                print(f"      final_z + h = {final_z} + {h} = {final_z + h} > {self.h}")
+            print(f"    relpos_ok: {relpos_ok_final}")
+            if not relpos_ok_final and item_id in self.relative_pos:
+                print(f"      REASON: Heavy item {item_id} would be on top of light items {self.relative_pos[item_id]}")
             return False
 
         # === STEP 4: Place the box ===
