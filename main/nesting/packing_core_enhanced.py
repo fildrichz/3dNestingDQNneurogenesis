@@ -310,45 +310,32 @@ class Container(box3d):
     def apply_gravity(self, x: int, y: int, z: int, w: int, d: int, h: int) -> int:
         """
         Apply gravity: drop box down until it hits ground or another box.
-        
-        This ensures no floating boxes - every box must be supported!
-        
+
+        EFFICIENT O(|placed|) implementation - finds the highest overlapping box
+        and places directly on top of it, rather than iterating down pixel by pixel.
+
         Args:
-            x, y, z: Initial position
+            x, y, z: Initial position (z is ignored, box drops from here)
             w, d, h: Box dimensions
-            
+
         Returns:
-            Final Z position after dropping
+            Final Z position after dropping (0 if ground, or top of highest overlapping box)
         """
-        # Start from the requested Z and drop down
-        current_z = z
-        
-        # Drop until we hit something
-        while current_z > 0:
-            # Check if placing at current_z-1 would collide with anything
-            test_z = current_z - 1
-            
-            # Check collision with all placed boxes
-            collision = False
-            for box in self.placed:
-                # Check if boxes would overlap
-                x_overlap = not (x + w <= box.x or box.x + box.w <= x)
-                y_overlap = not (y + d <= box.y or box.y + box.d <= y)
-                z_overlap = not (test_z + h <= box.z or box.z + box.h <= test_z)
-                
-                if x_overlap and y_overlap and z_overlap:
-                    collision = True
-                    break
-            
-            if collision:
-                # Can't go lower - stop at current_z
-                return current_z
-            
-            # No collision - can drop further
-            current_z = test_z
-        
-        # Reached ground (z=0)
-        return 0
+        # Find the highest box that overlaps in XY
+        max_z = 0
+
+        for box in self.placed:
+            # Check if box overlaps in XY with our target position
+            x_overlap = not (x + w <= box.x or box.x + box.w <= x)
+            y_overlap = not (y + d <= box.y or box.y + box.d <= y)
+
+            if x_overlap and y_overlap:
+                # This box overlaps in XY - check if it's the highest so far
+                box_top = box.z + box.h
+                if box_top > max_z:
+                    max_z = box_top
+
+        return max_z
     
     def find_support_surface(self, x: int, y: int, w: int, d: int) -> int:
         """
