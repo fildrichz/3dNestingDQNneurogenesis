@@ -17,6 +17,77 @@ def to_torch(x, device):
         return torch.from_numpy(x).to(device)
     return torch.as_tensor(x, device=device)
 
+
+class MAB(nn.Module):
+    """Multihead Attention Block for Set Transformer"""
+    def __init__(self, dim_Q, dim_K, dim_V, num_heads, ln=False):
+        super().__init__()
+        self.dim_V = dim_V
+        self.num_heads = num_heads
+        self.fc_q = nn.Linear(dim_Q, dim_V)
+        self.fc_k = nn.Linear(dim_K, dim_V)
+        self.fc_v = nn.Linear(dim_K, dim_V)
+        if ln:
+            self.ln0 = nn.LayerNorm(dim_V)
+            self.ln1 = nn.LayerNorm(dim_V)
+        self.fc_o = nn.Linear(dim_V, dim_V)
+        self.ln = ln
+
+    def forward(self, Q, K, key_padding_mask=None):
+        Q = self.fc_q(Q)
+        K, V = self.fc_k(K), self.fc_v(K)
+
+        dim_split = self.dim_V // self.num_heads
+        Q_ = torch.cat(Q.split(dim_split, 2), 0)
+        K_ = torch.cat(K.split(dim_split, 2), 0)
+        V_ = torch.cat(V.split(dim_split, 2), 0)
+
+        # Handle key padding mask for multi-head
+        if key_padding_mask is not None:
+            key_padding_mask = torch.cat([key_padding_mask for _ in range(self.num_heads)], 0)
+
+        A = torch.softmax(Q_.bmm(K_.transpose(1,2))/np.sqrt(self.dim_V), 2)
+
+        # Apply mask to attention weights
+        if key_padding_mask is not None:
+            A = A.masked_fill(key_padding_mask.unsqueeze(1), 0)
+
+        O = torch.cat((Q_ + A.bmm(V_)).split(Q.size(0), 0), 2)
+        O = O if getattr(self, 'ln0', None) is None else self.ln0(O)
+        O = O + F.relu(self.fc_o(O))
+        O = O if getattr(self, 'ln1', None) is None else self.ln1(O)
+        return O
+
+
+class ISAB(nn.Module):
+    """Induced Set Attention Block for Set Transformer"""
+    def __init__(self, dim_in, dim_out, num_heads, num_inds, ln=False):
+        super().__init__()
+        self.I = nn.Parameter(torch.Tensor(1, num_inds, dim_out))
+        nn.init.xavier_uniform_(self.I)
+        self.mab0 = MAB(dim_out, dim_in, dim_out, num_heads, ln=ln)
+        self.mab1 = MAB(dim_in, dim_out, dim_out, num_heads, ln=ln)
+
+    def forward(self, X, key_padding_mask=None):
+        H = self.mab0(self.I.repeat(X.size(0), 1, 1), X, key_padding_mask=key_padding_mask)
+        return self.mab1(X, H)
+
+
+class SetTransformer(nn.Module):
+    """Set Transformer encoder with induced attention for permutation-invariant processing"""
+    def __init__(self, dim_input, dim_output, num_heads=4, num_inds=32, ln=False):
+        super().__init__()
+        self.enc = nn.Sequential(
+            ISAB(dim_input, dim_output, num_heads, num_inds, ln=ln),
+            ISAB(dim_output, dim_output, num_heads, num_inds, ln=ln)
+        )
+
+    def forward(self, X, key_padding_mask=None):
+        # X: (B, A, dim_input)
+        # key_padding_mask: (B, A) - True for padding
+        return self.enc[0](X, key_padding_mask=key_padding_mask) + \
+               self.enc[1](X, key_padding_mask=key_padding_mask)
+
 class ReplayBuffer:
     """Enhanced replay buffer that stores heightmap patches"""
     def __init__(self, capacity: int, obs_dim: int, max_actions: int, action_feat_dim: int, 
@@ -172,35 +243,48 @@ class SimpleHead(nn.Module):
         return self.net(z)
 
 class QNetworkEnhanced(nn.Module):
-    """Enhanced Q-Network with heightmap CNN and Transformer attention"""
-    def __init__(self, obs_dim:int, action_feat_dim:int, hidden:int=256, enc_layers:int=2, 
-                 head_hidden:int=256, heightmap_patch_size:int=7, use_attention:bool=True):
+    """Enhanced Q-Network with heightmap CNN and Transformer/Set Transformer attention"""
+    def __init__(self, obs_dim:int, action_feat_dim:int, hidden:int=256, enc_layers:int=2,
+                 head_hidden:int=256, heightmap_patch_size:int=7, use_attention:bool=True,
+                 attention_type:str="standard", num_inducing_points:int=32):
         super().__init__()
         self.patch_size = heightmap_patch_size
         self.use_attention = use_attention
-        
+        self.attention_type = attention_type
+
         # State encoder
         self.state_enc = MLP(obs_dim, hidden=hidden, out_dim=hidden, layers=enc_layers)
-        
+
         # Heightmap CNN
         self.heightmap_cnn = HeightmapCNN(patch_size=heightmap_patch_size, out_dim=64)
-        
+
         # Action encoder (now takes action_feats + heightmap embedding)
         self.action_enc = MLP(action_feat_dim + 64, hidden=hidden, out_dim=hidden, layers=enc_layers)
-        
-        # Transformer for action relationships
+
+        # Attention mechanism for action relationships
         if use_attention:
-            encoder_layer = nn.TransformerEncoderLayer(
-                d_model=hidden, 
-                nhead=4, 
-                dim_feedforward=hidden*2, 
-                dropout=0.1,
-                batch_first=True
-            )
-            self.action_transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
+            if attention_type == "set_transformer":
+                # Set Transformer with induced attention (permutation invariant)
+                self.action_attention = SetTransformer(
+                    dim_input=hidden,
+                    dim_output=hidden,
+                    num_heads=4,
+                    num_inds=num_inducing_points,
+                    ln=True
+                )
+            else:
+                # Standard Transformer (default)
+                encoder_layer = nn.TransformerEncoderLayer(
+                    d_model=hidden,
+                    nhead=4,
+                    dim_feedforward=hidden*2,
+                    dropout=0.1,
+                    batch_first=True
+                )
+                self.action_attention = nn.TransformerEncoder(encoder_layer, num_layers=2)
         else:
-            self.action_transformer = None
-        
+            self.action_attention = None
+
         self.head = SimpleHead(2*hidden, hidden=head_hidden)
 
     def forward(self, s:torch.Tensor, action_feats:torch.Tensor, 
@@ -231,13 +315,18 @@ class QNetworkEnhanced(nn.Module):
         # Encode actions
         za = self.action_enc(combined)  # (B*A, hidden)
         za = za.view(B, A, -1)  # (B, A, hidden)
-        
-        # Apply transformer attention if enabled
-        if self.action_transformer is not None:
-            # Create attention mask (True = ignore)
+
+        # Apply attention if enabled
+        if self.action_attention is not None:
+            # Create attention mask (True = ignore padding)
             attn_mask = (action_mask < 0.5)  # (B, A)
-            # Apply transformer - actions attend to each other
-            za = self.action_transformer(za, src_key_padding_mask=attn_mask)  # (B, A, hidden)
+
+            if self.attention_type == "set_transformer":
+                # Set Transformer: permutation-invariant attention
+                za = self.action_attention(za, key_padding_mask=attn_mask)  # (B, A, hidden)
+            else:
+                # Standard Transformer: sequential attention
+                za = self.action_attention(za, src_key_padding_mask=attn_mask)  # (B, A, hidden)
         
         # Score each action
         za_flat = za.view(B*A, -1)
@@ -268,6 +357,8 @@ class DQNConfigEnhanced:
     head_hidden: int = 256
     heightmap_patch_size: int = 7
     use_attention: bool = True
+    attention_type: str = "standard"  # "standard" or "set_transformer"
+    num_inducing_points: int = 32  # For set_transformer only
     device: str = "cpu"
     double_dqn: bool = True
     warmup_steps: int = 1000
@@ -279,19 +370,23 @@ class DQNAgentEnhanced:
         
         # Initialize networks
         self.q = QNetworkEnhanced(
-            cfg.obs_dim, cfg.action_feat_dim, 
-            hidden=cfg.hidden, enc_layers=cfg.enc_layers, 
+            cfg.obs_dim, cfg.action_feat_dim,
+            hidden=cfg.hidden, enc_layers=cfg.enc_layers,
             head_hidden=cfg.head_hidden,
             heightmap_patch_size=cfg.heightmap_patch_size,
-            use_attention=cfg.use_attention
+            use_attention=cfg.use_attention,
+            attention_type=cfg.attention_type,
+            num_inducing_points=cfg.num_inducing_points
         ).to(self.device)
-        
+
         self.q_target = QNetworkEnhanced(
-            cfg.obs_dim, cfg.action_feat_dim, 
-            hidden=cfg.hidden, enc_layers=cfg.enc_layers, 
+            cfg.obs_dim, cfg.action_feat_dim,
+            hidden=cfg.hidden, enc_layers=cfg.enc_layers,
             head_hidden=cfg.head_hidden,
             heightmap_patch_size=cfg.heightmap_patch_size,
-            use_attention=cfg.use_attention
+            use_attention=cfg.use_attention,
+            attention_type=cfg.attention_type,
+            num_inducing_points=cfg.num_inducing_points
         ).to(self.device)
         
         self.q_target.load_state_dict(self.q.state_dict())
