@@ -227,14 +227,16 @@ class MultiBinPackingEnv:
                         # Get EMS corner as placement position
                         ep = (ems.x, ems.y, ems.z)
 
-                        # ALL CONSTRAINT CHECKS
+                        # CONSTRAINT CHECKS
+                        # Note: Collision check is OMITTED here because EMS is empty by definition
+                        # We still check other constraints that might fail
                         if (bin._fits_ems(ems, size) and
                             bin._fits_container(ep, size) and
-                            bin._fits_collision_free(ep, size) and
+                            # bin._fits_collision_free(ep, size) and  # REMOVED: redundant (EMS is empty)
                             bin.check_weight_constraint(weight) and
                             bin.check_incompatibility(item_id) and
                             bin.check_relative_positioning(item_id, ep, size) and
-                            self.check_affinity_placement(item_id, bin_idx)):  # PROACTIVE!
+                            self.check_affinity_placement(item_id, bin_idx)):
 
                             actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
 

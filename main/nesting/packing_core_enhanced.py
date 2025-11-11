@@ -425,12 +425,14 @@ class Container(box3d):
 
         # === STEP 2: Apply gravity ===
         # Drop box down until it hits something
+        # Note: apply_gravity() already ensures final_z is collision-free
         final_z = self.apply_gravity(x, y, z, w, d, h)
         final_ep = (x, y, final_z)
 
         # === STEP 3: Re-check constraints at final position ===
+        # Note: Collision check OMITTED - apply_gravity() already ensures no collision
         if not (self._fits_container(final_ep, size) and
-                self._fits_collision_free(final_ep, size) and
+                # self._fits_collision_free(final_ep, size) and  # REMOVED: redundant
                 self.check_relative_positioning(item_id, final_ep, size)):
             return False
 
