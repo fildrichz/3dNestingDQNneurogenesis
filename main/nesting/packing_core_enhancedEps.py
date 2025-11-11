@@ -1,45 +1,10 @@
-# packing_core_complete.py — Complete implementation with ALL constraints + gravity + EMS
+# packing_core_complete.py — Complete implementation with ALL constraints + gravity
 from typing import List, Tuple, Dict, Optional, Set
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import numpy as np
 
-
-class EMS:
-    """Empty Maximal Space - represents an available rectangular volume for placement."""
-    def __init__(self, x: int, y: int, z: int, w: int, d: int, h: int):
-        self.x, self.y, self.z = int(x), int(y), int(z)  # Corner position
-        self.w, self.d, self.h = int(w), int(d), int(h)  # Dimensions
-
-    def __repr__(self):
-        return f"EMS(pos=({self.x},{self.y},{self.z}), size=({self.w},{self.d},{self.h}), vol={self.volume()})"
-
-    def volume(self) -> int:
-        """Calculate volume of this space."""
-        return self.w * self.d * self.h
-
-    def dominates(self, other: 'EMS') -> bool:
-        """Check if this EMS completely contains another EMS."""
-        return (self.x <= other.x and self.y <= other.y and self.z <= other.z and
-                self.x + self.w >= other.x + other.w and
-                self.y + self.d >= other.y + other.d and
-                self.z + self.h >= other.z + other.h)
-
-    def intersects(self, box: 'box3d') -> bool:
-        """Check if this EMS intersects with a placed box."""
-        return not (
-            self.x + self.w <= box.x or box.x + box.w <= self.x or
-            self.y + self.d <= box.y or box.y + box.d <= self.y or
-            self.z + self.h <= box.z or box.z + box.h <= self.z
-        )
-
-    def as_tuple(self) -> Tuple[int, int, int, int, int, int]:
-        """Return as tuple (x, y, z, w, d, h)."""
-        return (self.x, self.y, self.z, self.w, self.d, self.h)
-
-    def corner(self) -> Tuple[int, int, int]:
-        """Get the corner position as tuple."""
-        return (self.x, self.y, self.z)
+EP = Tuple[int, int, int]
 
 class box3d:
     def __init__(self, w, d, h, weight: int = 0, item_id: int = -1):
@@ -71,21 +36,20 @@ class box3d:
 
 
 class Container(box3d):
-    def __init__(self, W, D, H, max_weight: Optional[int] = None,
-                 resolution: int = 10, max_ems: int = 50):
+    def __init__(self, W, D, H, max_weight: Optional[int] = None, 
+                 resolution: int = 10):
         """
-        Initialize container with all constraint support using Empty Maximal Spaces (EMS).
-
+        Initialize container with all constraint support.
+        
         Args:
             W, D, H: Container dimensions
             max_weight: Maximum weight capacity (optional)
             resolution: Grid resolution for heightmap
-            max_ems: Maximum number of EMS to maintain (for performance)
         """
         super().__init__(W, D, H)
         self.placed: List[box3d] = []
-        self.ems_list: List[EMS] = [EMS(0, 0, 0, W, D, H)]  # Start with one big space
-        self.max_ems = max_ems
+        self.eps: List[EP] = [(0, 0, 0)]
+        self.ep_rs: Dict[EP, Tuple[int, int, int]] = {}
         
         # Weight constraint
         self.max_weight = max_weight
@@ -185,7 +149,7 @@ class Container(box3d):
                 return False
         return True
     
-    def check_relative_positioning(self, item_id: int, ep: Tuple[int, int, int], size: Tuple[int, int, int]) -> bool:
+    def check_relative_positioning(self, item_id: int, ep: EP, size: Tuple[int, int, int]) -> bool:
         """
         Check if placing item would violate relative positioning constraints.
         
@@ -366,10 +330,12 @@ class Container(box3d):
     def _orientations(w: int, d: int, h: int):
         return ((w, d, h), (w, h, d), (d, w, h), (d, h, w), (h, w, d), (h, d, w))
 
-    def _fits_ems(self, ems: EMS, size: tuple[int, int, int]) -> bool:
-        """Check if item size fits within EMS dimensions."""
+    def _fits_caps(self, ep: tuple[int, int, int], size: tuple[int, int, int]) -> bool:
+        x, y, z = ep
         w, d, h = size
-        return (w <= ems.w) and (d <= ems.d) and (h <= ems.h)
+        caps = self.ep_rs.get(ep, (self.w - x, self.d - y, self.h - z))
+        xcap, ycap, zcap = caps
+        return (w <= xcap) and (d <= ycap) and (h <= zcap)
 
     def _fits_container(self, ep: tuple[int, int, int], size: tuple[int, int, int]) -> bool:
         x, y, z = ep
@@ -391,98 +357,91 @@ class Container(box3d):
                 return False
         return True
 
-    def place_at_ems(self, ems: EMS, size: tuple[int, int, int],
-                     weight: int = 0, item_id: int = -1) -> bool:
+    def place_at(self, ep: tuple[int, int, int], size: tuple[int, int, int], 
+                 weight: int = 0, item_id: int = -1) -> bool:
         """
-        Place a box using EMS with ALL constraint checking + gravity support.
-
+        Place a box with ALL constraint checking + gravity support.
+        
         Process:
-        1. Check all constraints at EMS corner
+        1. Check all constraints at requested position
         2. Apply gravity - drop box until it hits support
         3. Re-check constraints at final position
-        4. Place box and update EMS
-
+        4. Place box and update tracking
+        
         Args:
-            ems: Empty Maximal Space to place item in
+            ep: Requested extreme point (x, y, z)
             size: Box dimensions (w, d, h)
             weight: Weight of the box
             item_id: Item type identifier
-
+            
         Returns:
             True if placement successful, False otherwise
         """
-        # Use EMS corner as initial position
-        x, y, z = ems.x, ems.y, ems.z
+        x, y, z = ep
         w, d, h = size
-        ep = (x, y, z)
-
+        
         # === STEP 1: Initial constraint checks ===
-        if not (self._fits_ems(ems, size) and
-                self._fits_container(ep, size) and
+        if not (self._fits_container(ep, size) and
                 self.check_weight_constraint(weight) and
                 self.check_incompatibility(item_id)):
             return False
-
+        
         # === STEP 2: Apply gravity ===
         # Drop box down until it hits something
         final_z = self.apply_gravity(x, y, z, w, d, h)
         final_ep = (x, y, final_z)
-
+        
         # === STEP 3: Re-check constraints at final position ===
-        if not (self._fits_container(final_ep, size) and
-                #self._fits_collision_free(final_ep, size) and
+        if not (self._fits_caps(final_ep, size) and
+                self._fits_container(final_ep, size) and
+                self._fits_collision_free(final_ep, size) and
                 self.check_relative_positioning(item_id, final_ep, size)):
             return False
-
+        
         # === STEP 4: Place the box ===
         k = box3d(w, d, h, weight, item_id)
         k.set_position(x, y, final_z)
         self.placed.append(k)
-
+        
         # Update tracking
         self.current_weight += weight
         if item_id >= 0:
             self.item_ids_in_bin.add(item_id)
-
+        
         if item_id not in self.item_positions:
             self.item_positions[item_id] = []
         self.item_positions[item_id].append(k)
-
+        
         # Update heightmap
         self.update_heightmap(k)
-
+        
         if hasattr(self, "tops_by_z"):
             self.tops_by_z.setdefault(k.z + k.h, []).append(k)
-
-        # === STEP 5: Update EMS AFTER placement ===
-        self.update_ems(k)
-
+        
+        # === STEP 5: Update EPs AFTER placement ===
+        self.update_3depl(k)
+        if hasattr(self, "update_residual_space"):
+            self.update_residual_space(k)
+        if hasattr(self, "_prune_by_residual_caps"):
+            self._prune_by_residual_caps()
+        if hasattr(self, "_prune_smooth_ridges_x"):
+            self._prune_smooth_ridges_x(k)
+        if hasattr(self, "_prune_colinear_min"):
+            self._prune_colinear_min()
+        
         return True
-
-    def place_at(self, ep: tuple[int, int, int], size: tuple[int, int, int],
-                 weight: int = 0, item_id: int = -1) -> bool:
-        """
-        LEGACY: Place at an explicit position (for backward compatibility).
-        Creates a temporary EMS and calls place_at_ems.
-        """
-        x, y, z = ep
-        # Create a large temporary EMS at this position
-        temp_ems = EMS(x, y, z, self.w - x, self.d - y, self.h - z)
-        return self.place_at_ems(temp_ems, size, weight, item_id)
 
     def place(self, ep: tuple[int, int, int], w: int, d: int, h: int, 
               weight: int = 0, item_id: int = -1) -> bool:
         """Alternate placement method. Calls place_at internally."""
         return self.place_at(ep, (w, d, h), weight, item_id)
     
-    def place_first_fit(self, base_size: tuple[int, int, int],
+    def place_first_fit(self, base_size: tuple[int, int, int], 
                        weight: int = 0, item_id: int = -1) -> bool:
-        """Try to place a box using first-fit strategy with EMS."""
-        # Sort by volume (largest first) and then by z-coordinate
-        sorted_ems = sorted(self.ems_list, key=lambda e: (-e.volume(), e.z, e.y, e.x))
-        for ems in sorted_ems:
+        """Try to place a box using first-fit strategy."""
+        for ep in sorted(set(self.eps), key=lambda p: (p[2], p[1], p[0])):
             for size in self._orientations(*base_size):
-                if self.place_at_ems(ems, size, weight, item_id):
+                if self.place_at(ep, size, weight, item_id):
                     return True
         return False
 
@@ -536,14 +495,10 @@ class Container(box3d):
                                         linewidths=1.5, colors=color)
                 ax.add_collection3d(edges)
         
-        if self.ems_list:
-            # Visualize EMS as wireframe boxes
-            for ems in self.ems_list[:10]:  # Show top 10 EMS to avoid clutter
-                ems_edges = Line3DCollection(
-                    self._cuboid_edges(ems.x, ems.y, ems.z, ems.w, ems.d, ems.h),
-                    linewidths=0.5, colors='red', linestyles='dashed', alpha=0.3
-                )
-                ax.add_collection3d(ems_edges)
+        if self.eps:
+            eps_arr = np.array(self.eps)
+            ax.scatter(eps_arr[:,0], eps_arr[:,1], eps_arr[:,2], 
+                      c='red', marker='o', s=50, alpha=0.6, label='Extreme Points')
         
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
@@ -598,120 +553,148 @@ class Container(box3d):
         else:
             return fig
 
-    # ========== EMS UPDATE ==========
+    # ========== EP UPDATE (3DEPL) ==========
 
-    def update_ems(self, placed_box: box3d) -> None:
-        """
-        Update Empty Maximal Spaces after placing a box.
+    def _point_inside_box(self, p: EP, b: box3d) -> bool:
+        """Closed-box test."""
+        px, py, pz = p
+        return (b.x <= px <= b.x + b.w and
+                b.y <= py <= b.y + b.d and
+                b.z <= pz <= b.z + b.h)
 
-        For each EMS that intersects with the placed box:
-        1. Compute 6-way difference (up to 6 new sub-spaces)
-        2. Remove original EMS
-        3. Add valid new sub-spaces
+    @staticmethod
+    def _inside_strict(p: EP, b: box3d) -> bool:
+        """Strict interior."""
+        px, py, pz = p
+        return (b.x < px < b.x + b.w and
+                b.y < py < b.y + b.d and
+                b.z < pz < b.z + b.h)
 
-        Then prune:
-        - Remove dominated spaces (contained within others)
-        - Keep top-k by volume
-        """
-        new_ems_list = []
+    def CanTakeProjection(self, k: box3d, i: box3d, axis: str, *, strict_overlap=True) -> bool:
+        """Check if projection is valid."""
+        kx1, ky1, kz1 = k.x, k.y, k.z
+        kx2, ky2, kz2 = kx1 + k.w, ky1 + k.d, kz1 + k.h
 
-        for ems in self.ems_list:
-            if ems.intersects(placed_box):
-                # EMS intersects with placed box - split it
-                sub_spaces = self._compute_ems_difference(ems, placed_box)
-                new_ems_list.extend(sub_spaces)
-            else:
-                # EMS doesn't intersect - keep it
-                new_ems_list.append(ems)
+        ix1, iy1, iz1 = i.x, i.y, i.z
+        ix2, iy2, iz2 = ix1 + i.w, iy1 + i.d, iz1 + i.h
 
-        # Prune dominated spaces
-        new_ems_list = self._prune_dominated_ems(new_ems_list)
+        def overlap_1d(a1, a2, b1, b2):
+            return not (a2 <= b1 or b2 <= a1) if strict_overlap else not (a2 < b1 or b2 < a1)
 
-        # Sort by volume (descending) and keep top-k
-        new_ems_list.sort(key=lambda e: e.volume(), reverse=True)
-        self.ems_list = new_ems_list[:self.max_ems]
+        if axis in ("XY", "XZ"):
+            ahead = ix2 <= kx1
+            oy = overlap_1d(iy1, iy2, ky1, ky2)
+            oz = overlap_1d(iz1, iz2, kz1, kz2)
+            return ahead and oy and oz
 
-    def _compute_ems_difference(self, ems: EMS, box: box3d) -> List[EMS]:
-        """
-        Compute the difference between an EMS and a placed box.
+        if axis in ("YX", "YZ"):
+            ahead = iy2 <= ky1
+            ox = overlap_1d(ix1, ix2, kx1, kx2)
+            oz = overlap_1d(iz1, iz2, kz1, kz2)
+            return ahead and ox and oz
 
-        Returns up to 6 new sub-spaces (slices along each axis direction):
-        - Left slice (x < box.x)
-        - Right slice (x > box.x + box.w)
-        - Front slice (y < box.y)
-        - Back slice (y > box.y + box.d)
-        - Bottom slice (z < box.z)
-        - Top slice (z > box.z + box.h)
-        """
-        sub_spaces = []
+        if axis in ("ZX", "ZY"):
+            ahead = iz2 <= kz1
+            ox = overlap_1d(ix1, ix2, kx1, kx2)
+            oy = overlap_1d(iy1, iy2, ky1, ky2)
+            return ahead and ox and oy
 
-        # Define EMS bounds
-        ex1, ey1, ez1 = ems.x, ems.y, ems.z
-        ex2, ey2, ez2 = ems.x + ems.w, ems.y + ems.d, ems.z + ems.h
+        raise ValueError("Invalid axis label")
 
-        # Define box bounds
-        bx1, by1, bz1 = box.x, box.y, box.z
-        bx2, by2, bz2 = box.x + box.w, box.y + box.d, box.z + box.h
+    @staticmethod
+    def _in_bounds_static(p: EP, W: int, D: int, H: int) -> bool:
+        x, y, z = p
+        return (0 <= x <= W) and (0 <= y <= D) and (0 <= z <= H)
 
-        # Left slice: EMS region to the left of the box
-        if ex1 < bx1 < ex2:
-            w = bx1 - ex1
-            if w > 0:
-                sub_spaces.append(EMS(ex1, ey1, ez1, w, ems.d, ems.h))
+    def update_3depl(self, k) -> List[EP]:
+        """EP update with wall-fallback."""
+        xk, yk, zk = k.x, k.y, k.z
+        wk, dk, hk = k.w, k.d, k.h
 
-        # Right slice: EMS region to the right of the box
-        if ex1 < bx2 < ex2:
-            x = bx2
-            w = ex2 - bx2
-            if w > 0:
-                sub_spaces.append(EMS(x, ey1, ez1, w, ems.d, ems.h))
+        W, D, H = self.w, self.d, self.h
 
-        # Front slice: EMS region in front of the box
-        if ey1 < by1 < ey2:
-            d = by1 - ey1
-            if d > 0:
-                sub_spaces.append(EMS(ex1, ey1, ez1, ems.w, d, ems.h))
+        def in_bounds(p):
+            x, y, z = p
+            return 0 <= x <= W and 0 <= y <= D and 0 <= z <= H
 
-        # Back slice: EMS region behind the box
-        if ey1 < by2 < ey2:
-            y = by2
-            d = ey2 - by2
-            if d > 0:
-                sub_spaces.append(EMS(ex1, y, ez1, ems.w, d, ems.h))
+        def inside_strict(p, b):
+            px, py, pz = p
+            return (b.x < px < b.x + b.w and
+                    b.y < py < b.y + b.d and
+                    b.z < pz < b.z + b.h)
 
-        # Bottom slice: EMS region below the box
-        if ez1 < bz1 < ez2:
-            h = bz1 - ez1
-            if h > 0:
-                sub_spaces.append(EMS(ex1, ey1, ez1, ems.w, ems.d, h))
+        def line_overlaps_interval(v, a1, a2):
+            return not ((v + 1) <= a1 or a2 <= v)
 
-        # Top slice: EMS region above the box
-        if ez1 < bz2 < ez2:
-            z = bz2
-            h = ez2 - bz2
-            if h > 0:
-                sub_spaces.append(EMS(ex1, ey1, z, ems.w, ems.d, h))
+        survivors = [ep for ep in self.eps if not inside_strict(ep, k)]
 
-        return sub_spaces
+        def nearest_blocker_on_ray(axis, x0, y0, z0):
+            best = None
+            for i in self.placed:
+                if i is k: 
+                    continue
+                ix1, iy1, iz1 = i.x, i.y, i.z
+                ix2, iy2, iz2 = ix1 + i.w, iy1 + i.d, iz1 + i.h
 
-    def _prune_dominated_ems(self, ems_list: List[EMS]) -> List[EMS]:
-        """
-        Remove EMS that are completely contained within other EMS.
+                if axis == 'negX':
+                    if ix2 <= x0 and line_overlaps_interval(y0, iy1, iy2) and line_overlaps_interval(z0, iz1, iz2):
+                        if best is None or ix2 > best: 
+                            best = ix2
+                elif axis == 'negY':
+                    if iy2 <= y0 and line_overlaps_interval(x0, ix1, ix2) and line_overlaps_interval(z0, iz1, iz2):
+                        if best is None or iy2 > best: 
+                            best = iy2
+                elif axis == 'negZ':
+                    if iz2 <= z0 and line_overlaps_interval(x0, ix1, ix2) and line_overlaps_interval(y0, iy1, iy2):
+                        if best is None or iz2 > best: 
+                            best = iz2
+            return best
 
-        An EMS A dominates EMS B if A completely contains B.
-        """
-        if len(ems_list) <= 1:
-            return ems_list
+        cand = []
 
-        non_dominated = []
+        Rx, Ry, Rz = xk + wk, yk, zk
+        nbY = nearest_blocker_on_ray('negY', Rx, Ry, Rz)
+        cand.append((Rx, nbY if nbY is not None else 0,  Rz))
+        nbZ = nearest_blocker_on_ray('negZ', Rx, Ry, Rz)
+        cand.append((Rx, Ry,  nbZ if nbZ is not None else 0))
 
-        for i, ems_a in enumerate(ems_list):
+        Fx, Fy, Fz = xk, yk + dk, zk
+        nbX = nearest_blocker_on_ray('negX', Fx, Fy, Fz)
+        cand.append((nbX if nbX is not None else 0,  Fy, Fz))
+        nbZ = nearest_blocker_on_ray('negZ', Fx, Fy, Fz)
+        cand.append((Fx, Fy,  nbZ if nbZ is not None else 0))
+
+        Tx, Ty, Tz = xk, yk, zk + hk
+        nbX = nearest_blocker_on_ray('negX', Tx, Ty, Tz)
+        cand.append((nbX if nbX is not None else 0,  Ty, Tz))
+        nbY = nearest_blocker_on_ray('negY', Tx, Ty, Tz)
+        cand.append((Tx, nbY if nbY is not None else 0,  Tz))
+
+        cand = [ep for ep in cand if in_bounds(ep) and not inside_strict(ep, k)]
+
+        merged = survivors + cand
+        self.eps = sorted(set(merged), key=lambda p: (p[2], p[1], p[0]))
+
+        #self.eps = self._pareto_prune_eps(self.eps)
+
+        return self.eps
+
+    def _pareto_prune_eps(self, points: list[tuple[int,int,int]]) -> list[tuple[int,int,int]]:
+        """Keep only non-dominated EPs."""
+        pts = list(set(points))
+
+        def dominates(a, b):
+            return ((a[0] >= b[0]) and (a[1] >= b[1]) and (a[2] >= b[2]))
+
+        front = []
+        for i, p in enumerate(pts):
             dominated = False
-            for j, ems_b in enumerate(ems_list):
-                if i != j and ems_b.dominates(ems_a):
+            for j, q in enumerate(pts):
+                if i != j and dominates(q, p):
                     dominated = True
                     break
             if not dominated:
-                non_dominated.append(ems_a)
+                front.append(p)
 
-        return non_dominated
+        front.sort(key=lambda t: (t[2], t[1], t[0]))
+        return front

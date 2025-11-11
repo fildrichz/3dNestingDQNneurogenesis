@@ -144,9 +144,9 @@ def main():
     
     # GA parameters
     ga_config = {
-        'population_size': 3,      # Small for quick testing (use 20+ for real)
-        'generations': 2,            # Small for quick testing (use 10+ for real)
-        'episodes_per_eval': 15,     # Episodes to train each architecture
+        'population_size': 10,      # Small for quick testing (use 20+ for real)
+        'generations': 5,            # Small for quick testing (use 10+ for real)
+        'episodes_per_eval': 50,     # Episodes to train each architecture
         'elite_size': 2,             # Keep top 2 genomes
         'mutation_rate': 0.2,        # 20% mutation rate
         'crossover_method': 'uniform',

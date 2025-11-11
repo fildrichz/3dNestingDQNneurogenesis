@@ -81,9 +81,9 @@ class MultiBinPackingEnv:
         """Create a new empty bin with all constraints."""
         W, D, H = self.bin_size
         adaptive_resolution = max(1, min(W, D) // 20)
-
-        C = Container(*self.bin_size, max_weight=self.max_weight,
-                     resolution=adaptive_resolution, max_ems=50)
+        
+        C = Container(*self.bin_size, max_weight=self.max_weight, 
+                     resolution=adaptive_resolution)
         if self.problem is not None:
             C.set_constraints(
                 incompatibilities=self.incompatibilities,
@@ -91,7 +91,7 @@ class MultiBinPackingEnv:
                 center_of_mass=self.center_of_mass_constraint,
                 relative_pos=self.relative_pos
             )
-        # EMS is initialized automatically in Container.__init__
+        C.eps = [(0,0,0)]
         C.placed = []
         return C
 
@@ -133,11 +133,11 @@ class MultiBinPackingEnv:
                 best_capacity = remaining_vol
                 best_bin = bin
         
-        if best_bin and best_bin.ems_list:
-            # Get max capacity from largest EMS
-            cx = max(ems.w for ems in best_bin.ems_list) / W
-            cy = max(ems.d for ems in best_bin.ems_list) / D
-            cz = max(ems.h for ems in best_bin.ems_list) / H
+        if best_bin and best_bin.eps:
+            caps = [best_bin.ep_rs.get(ep, (W-ep[0], D-ep[1], H-ep[2])) for ep in best_bin.eps]
+            cx = max(c[0] for c in caps) / W
+            cy = max(c[1] for c in caps) / D
+            cz = max(c[2] for c in caps) / H
             
             hm_stats = best_bin.get_heightmap_stats()
             avg_h_norm = hm_stats['avg_height'] / H
@@ -204,8 +204,7 @@ class MultiBinPackingEnv:
 
     def enumerate_actions(self):
         """
-        Enumerate all feasible actions using EMS with ALL constraint checks including:
-        - Fits within EMS dimensions
+        Enumerate all feasible actions with ALL constraint checks including:
         - Basic placement (fits, collision-free)
         - Weight constraint
         - Incompatibility
@@ -213,31 +212,27 @@ class MultiBinPackingEnv:
         - PROACTIVE affinity (prevents splitting pairs)
         """
         actions = []
-
+        
         for bin_idx, bin in enumerate(self.bins):
-            # Sort EMS by volume (largest first) and take top-k
-            ems_sorted = sorted(bin.ems_list, key=lambda e: (-e.volume(), e.z, e.y, e.x))[:self.topk_eps]
-
-            for ems_idx, ems in enumerate(ems_sorted):
+            eps_sorted = sorted(set(bin.eps), key=lambda p:(p[2], p[1], p[0]))[:self.topk_eps]
+            
+            for ep_idx, ep in enumerate(eps_sorted):
                 for item_idx, item in enumerate(self.items):
                     w, d, h, weight, item_id = item
                     rots = ((w,d,h), (w,h,d), (d,w,h), (d,h,w), (h,w,d), (h,d,w))
-
+                    
                     for rot_idx, size in enumerate(rots):
-                        # Get EMS corner as placement position
-                        ep = (ems.x, ems.y, ems.z)
-
                         # ALL CONSTRAINT CHECKS
-                        if (bin._fits_ems(ems, size) and
-                            bin._fits_container(ep, size) and
-                            #bin._fits_collision_free(ep, size) and
+                        if (bin._fits_caps(ep, size) and 
+                            bin._fits_container(ep, size) and 
+                            bin._fits_collision_free(ep, size) and
                             bin.check_weight_constraint(weight) and
                             bin.check_incompatibility(item_id) and
                             bin.check_relative_positioning(item_id, ep, size) and
                             self.check_affinity_placement(item_id, bin_idx)):  # PROACTIVE!
-
-                            actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
-
+                            
+                            actions.append((bin_idx, item_idx, ep_idx, rot_idx, ep, size, weight, item_id))
+        
         return actions
 
     def action_space(self):
@@ -316,11 +311,11 @@ class MultiBinPackingEnv:
             return self._obs(), reward, self.done, info
         
         # Place item in specified bin
-        bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id = action
+        bin_idx, item_idx, ep_idx, rot_idx, pos, size, weight, item_id = action
         target_bin = self.bins[bin_idx]
-
-        # NOTE: place_at_ems applies gravity automatically!
-        ok = target_bin.place_at_ems(ems, size, weight=weight, item_id=item_id)
+        
+        # NOTE: place_at now applies gravity automatically!
+        ok = target_bin.place_at(pos, size, weight=weight, item_id=item_id)
         
         if not ok:
             self.done = True
@@ -382,101 +377,96 @@ class MultiBinPackingEnv:
 
 
 # Action features now include bin_idx
-ACTION_FEAT_DIM = 25  # Same dimension, but different semantics
+ACTION_FEAT_DIM = 25  # +1 for bin_idx
+
+def _safe_caps(C, ep):
+    """Get residual capacities with fallback."""
+    x, y, z = ep
+    return C.ep_rs.get(ep, (C.w - x, C.d - y, C.h - z))
 
 
 def build_action_features(env: MultiBinPackingEnv, actions):
-    """
-    Build action features for multi-bin environment using EMS.
-
-    NEW (EMS-based):
-    - Features 6-8: EMS corner position (sx, sy, sz)
-    - Features 9-11: EMS dimensions (ew, ed, eh) - BETTER than residual capacity!
-    - Features 12-14: Slack space after placement (ew-rw, ed-rd, eh-rh)
-    """
+    """Build action features for multi-bin environment."""
     W, D, H = env.bin_size
     binV = float(env.bin_volume)
     rows = []
-
+    
     for a in actions:
         if a is None:
             rows.append([0.0] * ACTION_FEAT_DIM)
             continue
-
-        bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id = a
+        
+        bin_idx, item_idx, ep_idx, rot_idx, ep, size, weight, item_id = a
         target_bin = env.bins[bin_idx]
-
+        
         iw, id_, ih, _, _ = env.items[item_idx]
         rw, rd, rh = size
-
-        # EMS features
-        sx, sy, sz = ems.x, ems.y, ems.z  # EMS corner position
-        ew, ed, eh = ems.w, ems.d, ems.h  # EMS dimensions
-
+        ex, ey, ez = ep
+        cx, cy, cz = _safe_caps(target_bin, ep)
+        
         # Normalized features
         rw_n, rd_n, rh_n = rw/W, rd/D, rh/H
-        sx_n, sy_n, sz_n = sx/W, sy/D, sz/H  # EMS corner
-        ew_n, ed_n, eh_n = ew/W, ed/D, eh/H  # EMS dimensions
-
-        # Slack space after placing item in EMS
-        slack_x, slack_y, slack_z = max(0, ew-rw), max(0, ed-rd), max(0, eh-rh)
-        slack_x_n, slack_y_n, slack_z_n = slack_x/W, slack_y/D, slack_z/H
-
+        ex_n, ey_n, ez_n = ex/W, ey/D, ez/H
+        cx_n, cy_n, cz_n = cx/W, cy/D, cz/H
+        
+        sx, sy, sz = max(0, cx-rw), max(0, cy-rd), max(0, cz-rh)
+        sx_n, sy_n, sz_n = sx/W, sy/D, sz/H
+        
         vol = float(rw * rd * rh)
         delta_u = vol / binV
-        tight = float((slack_x==0) + (slack_y==0) + (slack_z==0))  # How many dimensions are tight
-
+        tight = float((sx==0) + (sy==0) + (sz==0))
+        
         # Heightmap features
         h_at_ep_norm = 0.0
         local_avg = 0.0
         try:
-            h_at_ep = target_bin.get_heightmap_at(sx, sy)
+            h_at_ep = target_bin.get_heightmap_at(ex, ey)
             h_at_ep_norm = h_at_ep / H
-
+            
             resolution = target_bin.resolution
-            gx = min(sx // resolution, target_bin.heightmap.shape[0] - 1)
-            gy = min(sy // resolution, target_bin.heightmap.shape[1] - 1)
-
+            gx = min(ex // resolution, target_bin.heightmap.shape[0] - 1)
+            gy = min(ey // resolution, target_bin.heightmap.shape[1] - 1)
+            
             local_heights = []
             for dx in [-1, 0, 1]:
                 for dy in [-1, 0, 1]:
                     ngx, ngy = gx + dx, gy + dy
                     if 0 <= ngx < target_bin.heightmap.shape[0] and 0 <= ngy < target_bin.heightmap.shape[1]:
                         local_heights.append(target_bin.heightmap[ngx, ngy])
-
+            
             if local_heights:
                 local_avg = np.mean(local_heights) / H
         except:
             pass
-
+        
         # Weight features
         item_weight_ratio = weight / env.max_weight if (env.max_weight and env.max_weight > 0) else 0.0
         remaining_weight_capacity = 0.0
         if env.max_weight is not None and env.max_weight > 0:
             remaining_weight_capacity = (env.max_weight - target_bin.current_weight) / env.max_weight
-
+        
         # Bin features
         bin_idx_norm = bin_idx / env.max_bins
         bin_current_util = sum(b.w * b.d * b.h for b in target_bin.placed) / binV
-
+        
         row = [
-            iw/W, id_/D, ih/H,          # 0-2: Original item size
-            rw_n, rd_n, rh_n,            # 3-5: Rotated item size
-            sx_n, sy_n, sz_n,            # 6-8: EMS corner position
-            ew_n, ed_n, eh_n,            # 9-11: EMS dimensions (available space)
-            slack_x_n, slack_y_n, slack_z_n,  # 12-14: Slack after placement
-            delta_u, tight,              # 15-16: Volume utilization, tightness
-            W/D, D/H,                    # 17-18: Container aspect ratios
-            h_at_ep_norm,                # 19: Height at placement position
-            local_avg,                   # 20: Local average height
-            item_weight_ratio,           # 21: Item weight / max weight
-            remaining_weight_capacity,   # 22: Available weight capacity
-            bin_idx_norm,                # 23: Which bin
-            bin_current_util,            # 24: Bin utilization
+            iw/W, id_/D, ih/H,        # 0-2
+            rw_n, rd_n, rh_n,          # 3-5
+            ex_n, ey_n, ez_n,          # 6-8
+            cx_n, cy_n, cz_n,          # 9-11
+            sx_n, sy_n, sz_n,          # 12-14
+            delta_u, tight,            # 15-16
+            W/D, D/H,                  # 17-18
+            h_at_ep_norm,              # 19
+            local_avg,                 # 20
+            item_weight_ratio,         # 21
+            remaining_weight_capacity, # 22
+            bin_idx_norm,              # 23: which bin (0 to max_bins-1, normalized)
+            bin_current_util,          # 24: how full is this bin already
         ]
-
+        
         rows.append(row)
-
+    
     return np.asarray(rows, dtype=np.float32)
 
 
@@ -651,7 +641,7 @@ def train_multibin_pack_dqn(
     
     W, D, H = problem.bin_dimensions
     
-    print(f"\n“ PROBLEM SPECIFICATION:")
+    print(f"\n“¦ PROBLEM SPECIFICATION:")
     print(f"   Container: {W}Ã—{D}Ã—{H} (volume: {W*D*H:,})")
     print(f"   Max weight per bin: {problem.max_weight}")
     print(f"   Max bins available: {problem.max_bins}")
