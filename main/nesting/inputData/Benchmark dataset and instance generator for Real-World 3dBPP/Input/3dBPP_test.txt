@@ -1,4 +1,4 @@
-# Max num of bins : 2
+# Max num of bins: 2
 # Bin dimensions (L * W * H): (1500,1500,1500)
 # Max weight: 1000
 # Relative pos: {6: [(1, 8), (2, 8), (3, 8), (4, 8), 

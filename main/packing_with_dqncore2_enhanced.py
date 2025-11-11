@@ -226,17 +226,28 @@ class MultiBinPackingEnv:
                     for rot_idx, size in enumerate(rots):
                         # Get EMS corner as placement position
                         ep = (ems.x, ems.y, ems.z)
+                        w_rot, d_rot, h_rot = size
 
-                        # ALL CONSTRAINT CHECKS
-                        if (bin._fits_ems(ems, size) and
-                            bin._fits_container(ep, size) and
-                            #bin._fits_collision_free(ep, size) and
-                            bin.check_weight_constraint(weight) and
-                            bin.check_incompatibility(item_id) and
-                            bin.check_relative_positioning(item_id, ep, size) and
-                            self.check_affinity_placement(item_id, bin_idx)):  # PROACTIVE!
+                        # CONSTRAINT CHECKS AT EMS POSITION
+                        # Note: Collision check OMITTED - EMS is empty by definition
+                        # Relative positioning check looks at XY footprint only (gravity-independent)
+                        if not (bin._fits_ems(ems, size) and
+                                bin._fits_container(ep, size) and
+                                bin.check_weight_constraint(weight) and
+                                bin.check_incompatibility(item_id) and
+                                bin.check_relative_positioning(item_id, ep, size) and
+                                self.check_affinity_placement(item_id, bin_idx)):
+                            continue
 
-                            actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
+                        # CRITICAL: Check if box will fit after gravity is applied
+                        # Gravity can drop the box onto tall boxes, potentially exceeding container height
+                        final_z = bin.apply_gravity(ems.x, ems.y, ems.z, w_rot, d_rot, h_rot)
+                        if final_z + h_rot > bin.h:
+                            # Box would exceed container height after gravity - SKIP this action
+                            continue
+
+                        # All checks passed - add to valid actions
+                        actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
 
         return actions
 
@@ -651,7 +662,7 @@ def train_multibin_pack_dqn(
     
     W, D, H = problem.bin_dimensions
     
-    print(f"\n“ PROBLEM SPECIFICATION:")
+    print(f"\n“¦ PROBLEM SPECIFICATION:")
     print(f"   Container: {W}Ã—{D}Ã—{H} (volume: {W*D*H:,})")
     print(f"   Max weight per bin: {problem.max_weight}")
     print(f"   Max bins available: {problem.max_bins}")
@@ -682,7 +693,6 @@ def train_multibin_pack_dqn(
         obs_dim=OBS_DIM,
         action_feat_dim=ACTION_FEAT_DIM,
         max_actions=max_actions,
-        attention_type="set_transformer",  # Enable Set Transformer
         device="cuda" if __import__("torch").cuda.is_available() else "cpu",
         gamma=0.992,
         lr=1e-4,
@@ -888,8 +898,8 @@ if __name__ == "__main__":
         seed=42,
         max_actions=128,
         topk_eps=1000,
-        train_freq=50,
-        num_train_steps=3,
+        train_freq=1,
+        num_train_steps=1,
         log_interval=10,
         save_path=f"multibin_dqn_{problem.replace('.txt','')}.pth"
     )
