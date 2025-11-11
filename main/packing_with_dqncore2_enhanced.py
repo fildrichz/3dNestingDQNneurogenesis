@@ -224,18 +224,24 @@ class MultiBinPackingEnv:
                     rots = ((w,d,h), (w,h,d), (d,w,h), (d,h,w), (h,w,d), (h,d,w))
 
                     for rot_idx, size in enumerate(rots):
-                        # Get EMS corner as placement position
-                        ep = (ems.x, ems.y, ems.z)
+                        # Get EMS corner as initial placement position
+                        x, y, z = ems.x, ems.y, ems.z
 
-                        # CONSTRAINT CHECKS
-                        # Note: Collision check is OMITTED here because EMS is empty by definition
-                        # We still check other constraints that might fail
-                        if (bin._fits_ems(ems, size) and
-                            bin._fits_container(ep, size) and
-                            # bin._fits_collision_free(ep, size) and  # REMOVED: redundant (EMS is empty)
-                            bin.check_weight_constraint(weight) and
-                            bin.check_incompatibility(item_id) and
-                            bin.check_relative_positioning(item_id, ep, size) and
+                        # EARLY CHECKS (before gravity)
+                        if not (bin._fits_ems(ems, size) and
+                                bin._fits_container((x, y, z), size) and
+                                bin.check_weight_constraint(weight) and
+                                bin.check_incompatibility(item_id)):
+                            continue
+
+                        # APPLY GRAVITY to find final Z position
+                        # This is critical - relative positioning must be checked at final position!
+                        final_z = bin.apply_gravity(x, y, z, size[0], size[1], size[2])
+                        final_ep = (x, y, final_z)
+
+                        # CHECKS AT FINAL POSITION (after gravity)
+                        if (bin._fits_container(final_ep, size) and
+                            bin.check_relative_positioning(item_id, final_ep, size) and
                             self.check_affinity_placement(item_id, bin_idx)):
 
                             actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
