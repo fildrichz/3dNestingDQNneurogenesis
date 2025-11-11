@@ -223,12 +223,12 @@ class Container(box3d):
                 # Check if boxes overlap in XY plane
                 x_overlap = not (x + w <= light_box.x or light_box.x + light_box.w <= x)
                 y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
-                
+
                 if x_overlap and y_overlap:
                     # Boxes overlap in XY - check if heavy item is above light item
-                    # Heavy item would be above if its Z position is at or above light item's top
-                    if z >= light_box.z + light_box.h - 1:
-                        # VIOLATION: Heavy item would be on top of light item
+                    # Heavy item is "on top of" light if its bottom is at or above light's top surface
+                    if z >= light_box.z + light_box.h:
+                        # VIOLATION: Heavy item would be on top of or above light item
                         return False
         
         return True
@@ -518,6 +518,93 @@ class Container(box3d):
         ax.set_zlabel('Z')
         ax.set_title(title)
         ax.set_box_aspect([W, D, H])
+
+    def get_item_color_mapping(self) -> dict:
+        """
+        Get mapping of item_id to RGB color for all items in bin.
+
+        Returns:
+            dict: {item_id: (r, g, b, a)} mapping using tab20 colormap
+        """
+        colors = plt.cm.tab20(np.linspace(0, 1, 20))
+        unique_ids = sorted(set(b.item_id for b in self.placed if b.item_id >= 0))
+        return {item_id: tuple(colors[item_id % 20]) for item_id in unique_ids}
+
+    def print_item_legend(self):
+        """Print color legend showing which colors represent which item IDs."""
+        if not self.placed:
+            print("No items placed yet.")
+            return
+
+        color_map = self.get_item_color_mapping()
+        print("\n" + "="*60)
+        print("ITEM COLOR LEGEND")
+        print("="*60)
+
+        # Group items by ID to show counts
+        item_counts = {}
+        for box in self.placed:
+            if box.item_id >= 0:
+                if box.item_id not in item_counts:
+                    item_counts[box.item_id] = 0
+                item_counts[box.item_id] += 1
+
+        for item_id in sorted(color_map.keys()):
+            rgb = color_map[item_id]
+            # Convert RGB to hex for display
+            hex_color = '#{:02x}{:02x}{:02x}'.format(
+                int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
+            )
+            count = item_counts.get(item_id, 0)
+            print(f"  Item ID {item_id:2d}: Color {hex_color} (tab20[{item_id % 20:2d}]) - {count} boxes")
+
+        print("="*60 + "\n")
+
+    def print_constraint_info(self):
+        """Print information about active constraints."""
+        print("\n" + "="*60)
+        print("CONSTRAINT INFORMATION")
+        print("="*60)
+
+        # Incompatibilities
+        if self.incompatibilities:
+            print(f"\nIncompatibilities ({len(self.incompatibilities)} pairs):")
+            for a, b in self.incompatibilities:
+                print(f"  Items {a} and {b} cannot be in same bin")
+        else:
+            print("\nIncompatibilities: None")
+
+        # Positive affinities
+        if self.positive_affinities:
+            print(f"\nPositive Affinities ({len(self.positive_affinities)} pairs):")
+            for a, b in self.positive_affinities:
+                print(f"  Items {a} and {b} should be together")
+        else:
+            print("\nPositive Affinities: None")
+
+        # Relative positioning
+        if self.relative_pos:
+            print(f"\nRelative Positioning ({len(self.relative_pos)} constraints):")
+            for heavy_id, light_list in self.relative_pos.items():
+                light_ids = [light_id for light_id, _ in light_list]
+                print(f"  Item {heavy_id} (heavy) cannot be placed ON TOP of items: {light_ids}")
+        else:
+            print("\nRelative Positioning: None")
+
+        # Center of mass
+        if self.center_of_mass_constraint:
+            print(f"\nCenter of Mass constraint: {self.center_of_mass_constraint}")
+        else:
+            print("\nCenter of Mass: None")
+
+        # Weight constraint
+        if self.max_weight:
+            print(f"\nMax Weight per bin: {self.max_weight}")
+            print(f"Current weight: {self.current_weight}")
+        else:
+            print("\nWeight constraint: None")
+
+        print("="*60 + "\n")
 
     def plot3d(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
