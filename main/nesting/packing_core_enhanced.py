@@ -436,9 +436,22 @@ class Container(box3d):
 
         # === STEP 3: Re-check constraints at final position ===
         # Note: Collision check OMITTED - apply_gravity() already ensures no collision
-        if not (self._fits_container(final_ep, size) and
-                # self._fits_collision_free(final_ep, size) and  # REMOVED: redundant
-                self.check_relative_positioning(item_id, final_ep, size)):
+        fits_container_final = self._fits_container(final_ep, size)
+        relpos_ok_final = self.check_relative_positioning(item_id, final_ep, size)
+
+        if not (fits_container_final and relpos_ok_final):
+            # Debug: This should rarely happen if enumerate_actions checks gravity properly
+            print(f"⚠️  Placement failed constraint re-check at final position {final_ep}")
+            print(f"    Item: id={item_id}, size={size}")
+            print(f"    Initial EMS: ({ems.x}, {ems.y}, {ems.z})")
+            print(f"    After gravity: ({x}, {y}, {z}) -> ({x}, {y}, {final_z})")
+            print(f"    fits_container: {fits_container_final} (container: {self.w}×{self.d}×{self.h})")
+            if not fits_container_final:
+                print(f"      REASON: Box at ({x},{y},{final_z}) + size {size} exceeds container bounds!")
+                print(f"      final_z + h = {final_z} + {h} = {final_z + h} > {self.h}")
+            print(f"    relpos_ok: {relpos_ok_final}")
+            if not relpos_ok_final and item_id in self.relative_pos:
+                print(f"      REASON: Heavy item {item_id} would be on top of light items {self.relative_pos[item_id]}")
             return False
 
         # === STEP 4: Place the box ===

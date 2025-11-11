@@ -226,18 +226,28 @@ class MultiBinPackingEnv:
                     for rot_idx, size in enumerate(rots):
                         # Get EMS corner as placement position
                         ep = (ems.x, ems.y, ems.z)
+                        w_rot, d_rot, h_rot = size
 
-                        # CONSTRAINT CHECKS
+                        # CONSTRAINT CHECKS AT EMS POSITION
                         # Note: Collision check OMITTED - EMS is empty by definition
                         # Relative positioning check looks at XY footprint only (gravity-independent)
-                        if (bin._fits_ems(ems, size) and
-                            bin._fits_container(ep, size) and
-                            bin.check_weight_constraint(weight) and
-                            bin.check_incompatibility(item_id) and
-                            bin.check_relative_positioning(item_id, ep, size) and
-                            self.check_affinity_placement(item_id, bin_idx)):
+                        if not (bin._fits_ems(ems, size) and
+                                bin._fits_container(ep, size) and
+                                bin.check_weight_constraint(weight) and
+                                bin.check_incompatibility(item_id) and
+                                bin.check_relative_positioning(item_id, ep, size) and
+                                self.check_affinity_placement(item_id, bin_idx)):
+                            continue
 
-                            actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
+                        # CRITICAL: Check if box will fit after gravity is applied
+                        # Gravity can drop the box onto tall boxes, potentially exceeding container height
+                        final_z = bin.apply_gravity(ems.x, ems.y, ems.z, w_rot, d_rot, h_rot)
+                        if final_z + h_rot > bin.h:
+                            # Box would exceed container height after gravity - SKIP this action
+                            continue
+
+                        # All checks passed - add to valid actions
+                        actions.append((bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id))
 
         return actions
 
