@@ -580,6 +580,8 @@ class Container(box3d):
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
                 ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
         
+
+
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -588,6 +590,7 @@ class Container(box3d):
             info_text += f"\nCoM: ({cx:.1f}, {cy:.1f})"
         ax.text2D(0.05, 0.95, info_text, transform=ax.transAxes, fontsize=10,
                  verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
         
         if save_path:
             fig.savefig(save_path, dpi=140, bbox_inches="tight")

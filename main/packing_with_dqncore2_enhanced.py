@@ -682,6 +682,7 @@ def train_multibin_pack_dqn(
         obs_dim=OBS_DIM,
         action_feat_dim=ACTION_FEAT_DIM,
         max_actions=max_actions,
+        attention_type="set_transformer",  # Enable Set Transformer
         device="cuda" if __import__("torch").cuda.is_available() else "cpu",
         gamma=0.992,
         lr=1e-4,
