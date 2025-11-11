@@ -209,6 +209,8 @@ if __name__ == "__main__":
     print(f"Max bins: {problem.max_bins}")
     print(f"Bin dimensions: {problem.bin_dimensions}")
     print(f"Max weight: {problem.max_weight}")
+    #relative_pos
+    print(f"Relative positioning constraints: {problem.relative_pos}")
     print(f"Number of item types: {len(problem.items)}")
     print(f"Total items to pack: {sum(item.quantity for item in problem.items)}")
     print(f"Incompatibilities: {problem.incompatibilities}")
