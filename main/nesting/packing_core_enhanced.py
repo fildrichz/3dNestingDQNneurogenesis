@@ -105,12 +105,19 @@ class Container(box3d):
         # Track item positions for constraint checking
         self.item_positions: Dict[int, List[box3d]] = {}
 
-    def set_constraints(self, 
+    def set_constraints(self,
                        incompatibilities: List[Tuple[int, int]] = None,
                        positive_affinities: List[Tuple[int, int]] = None,
                        center_of_mass: Optional[Tuple[int, int]] = None,
                        relative_pos: Dict[int, List[Tuple[int, int]]] = None):
-        """Set problem constraints."""
+        """
+        Set problem constraints.
+
+        Args:
+            relative_pos: Dict where values are lists of (light_id, heavy_id) tuples.
+                         The dict key is just for grouping and has no semantic meaning.
+                         Each tuple (L, H) means: "item H cannot be placed on top of item L"
+        """
         if incompatibilities:
             self.incompatibilities = incompatibilities
         if positive_affinities:
@@ -118,7 +125,15 @@ class Container(box3d):
         if center_of_mass:
             self.center_of_mass_constraint = center_of_mass
         if relative_pos:
-            self.relative_pos = relative_pos
+            # Convert from {grouping_key: [(light, heavy), ...]} to {heavy: [light, ...]}
+            # This allows O(1) lookup when placing a heavy item
+            self.relative_pos = {}
+            for _, tuple_list in relative_pos.items():
+                for light_id, heavy_id in tuple_list:
+                    if heavy_id not in self.relative_pos:
+                        self.relative_pos[heavy_id] = []
+                    if light_id not in self.relative_pos[heavy_id]:
+                        self.relative_pos[heavy_id].append(light_id)
 
     def get_heightmap_at(self, x: int, y: int) -> int:
         """Get the height at a specific (x, y) coordinate."""
@@ -188,36 +203,40 @@ class Container(box3d):
     def check_relative_positioning(self, item_id: int, ep: Tuple[int, int, int], size: Tuple[int, int, int]) -> bool:
         """
         Check if placing item would violate relative positioning constraints.
-        
-        Relative positioning format: {heavy_id: [(light_id, code), ...]}
-        Interpretation: heavy_id cannot be placed ON TOP of light_id
-        
-        Example: {1: [(7, 0), (7, 1)]}
-        - Item 1 is heavier than item 7
-        - Item 1 cannot be placed above item 7
-        
+
+        After conversion in set_constraints(), self.relative_pos has format:
+            {heavy_id: [light_id1, light_id2, ...]}
+
+        Meaning: heavy_id cannot be placed ON TOP of any of the light items
+
+        Example input: {6: [(2, 0), (3, 0), (4, 0)]}
+            where tuples are (light_id, heavy_id)
+
+        Becomes: {0: [2, 3, 4]}
+            meaning item 0 cannot be placed on top of items 2, 3, or 4
+
         Args:
-            item_id: ID of item to place
+            item_id: ID of item to place (potentially a heavy item)
             ep: Position where item would be placed (x, y, z)
             size: Size of item (w, d, h)
-            
+
         Returns:
             True if placement allowed, False if violates constraint
         """
         if not self.relative_pos or item_id not in self.relative_pos:
             return True
-        
+
         x, y, z = ep
         w, d, h = size
-        
-        # Get constraints for this item (heavy item)
-        constraints = self.relative_pos[item_id]
-        
-        for light_id, position_code in constraints:
+
+        # Get list of light items that this heavy item cannot be placed on top of
+        light_items = self.relative_pos[item_id]
+
+        for light_id in light_items:
             # Check if light item exists in bin
             if light_id not in self.item_positions:
                 continue
-            
+
             # Check all instances of the light item
             for light_box in self.item_positions[light_id]:
                 # Check if boxes overlap in XY plane
@@ -230,7 +249,7 @@ class Container(box3d):
                     if z >= light_box.z + light_box.h:
                         # VIOLATION: Heavy item would be on top of or above light item
                         return False
-        
+
         return True
     
     def check_positive_affinity_before_completion(self) -> bool:
@@ -584,10 +603,9 @@ class Container(box3d):
 
         # Relative positioning
         if self.relative_pos:
-            print(f"\nRelative Positioning ({len(self.relative_pos)} constraints):")
+            print(f"\nRelative Positioning ({len(self.relative_pos)} heavy items with constraints):")
             for heavy_id, light_list in self.relative_pos.items():
-                light_ids = [light_id for light_id, _ in light_list]
-                print(f"  Item {heavy_id} (heavy) cannot be placed ON TOP of items: {light_ids}")
+                print(f"  Item {heavy_id} (heavy) cannot be placed ON TOP of items: {light_list}")
         else:
             print("\nRelative Positioning: None")
 
