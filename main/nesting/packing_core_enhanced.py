@@ -244,11 +244,10 @@ class Container(box3d):
                 y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
 
                 if x_overlap and y_overlap:
-                    # Boxes overlap in XY - check if heavy item is above light item
-                    # Heavy item is "on top of" light if its bottom is at or above light's top surface
-                    if z >= light_box.z + light_box.h:
-                        # VIOLATION: Heavy item would be on top of or above light item
-                        return False
+                    # There's a light item in our XY footprint!
+                    # Gravity will make the heavy item land on (or above) it → VIOLATION
+                    # No need to check Z - if there's any light item in XY, we can't place here
+                    return False
 
         return True
     
