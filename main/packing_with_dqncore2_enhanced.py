@@ -344,39 +344,10 @@ class MultiBinPackingEnv:
         
         util_next = self.total_placed_volume / total_available_volume
 
-        # Potential-based shaping
+        # Potential-based shaping (theoretically sound - doesn't change optimal policy)
         reward = (self.gamma * util_next) - util_prev
 
-        # === COMPACTNESS REWARDS ===
-        # Encourage tight, compact packing (not just volume utilization)
-        w_rot, d_rot, h_rot = size
-
-        # 1. Height penalty: prefer placing boxes low (fill bottom-up)
-        # Calculate where box actually landed after gravity
-        placed_box = target_bin.placed[-1]  # Just placed
-        final_z = placed_box.z
-        height_penalty = (final_z / target_bin.h) * 0.05  # 5% penalty at max height
-        reward -= height_penalty
-
-        # 2. Slack penalty: prefer tight fits in EMS
-        # Penalize wasted space in the EMS
-        slack_x = max(0, ems.w - w_rot)
-        slack_y = max(0, ems.d - d_rot)
-        slack_z = max(0, ems.h - h_rot)
-        total_slack = slack_x + slack_y + slack_z
-        slack_penalty = (total_slack / (target_bin.w + target_bin.d + target_bin.h)) * 0.03
-        reward -= slack_penalty
-
-        # 3. Tightness bonus: reward perfect fits
-        # Count how many dimensions fit exactly
-        tight_dims = 0
-        if slack_x == 0: tight_dims += 1
-        if slack_y == 0: tight_dims += 1
-        if slack_z == 0: tight_dims += 1
-        if tight_dims >= 2:  # At least 2 dimensions tight
-            reward += 0.02
-
-        # Small bonus for balancing
+        # Small bonus for balancing bins
         current_bin_items = len(target_bin.placed)
         avg_items_per_used_bin = sum(len(b.placed) for b in self.bins) / max(1, self._get_bins_used())
         if current_bin_items < avg_items_per_used_bin:
@@ -731,7 +702,7 @@ def train_multibin_pack_dqn(
         eps_end=0.05,
         eps_decay_steps=episodes * 30,
         target_update_interval=500,
-        n_step=3,
+        n_step=15,  # INCREASED from 3: Better credit assignment for final rewards
         double_dqn=True,
         warmup_steps=1500,
         heightmap_patch_size=7,  # NEW: Size of heightmap patches
