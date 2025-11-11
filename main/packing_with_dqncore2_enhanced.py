@@ -888,8 +888,8 @@ if __name__ == "__main__":
         seed=42,
         max_actions=128,
         topk_eps=1000,
-        train_freq=1,
-        num_train_steps=1,
+        train_freq=50,
+        num_train_steps=3,
         log_interval=10,
         save_path=f"multibin_dqn_{problem.replace('.txt','')}.pth"
     )

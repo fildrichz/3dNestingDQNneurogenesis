@@ -105,12 +105,19 @@ class Container(box3d):
         # Track item positions for constraint checking
         self.item_positions: Dict[int, List[box3d]] = {}
 
-    def set_constraints(self, 
+    def set_constraints(self,
                        incompatibilities: List[Tuple[int, int]] = None,
                        positive_affinities: List[Tuple[int, int]] = None,
                        center_of_mass: Optional[Tuple[int, int]] = None,
                        relative_pos: Dict[int, List[Tuple[int, int]]] = None):
-        """Set problem constraints."""
+        """
+        Set problem constraints.
+
+        Args:
+            relative_pos: Dict where values are lists of (light_id, heavy_id) tuples.
+                         The dict key is just for grouping and has no semantic meaning.
+                         Each tuple (L, H) means: "item H cannot be placed on top of item L"
+        """
         if incompatibilities:
             self.incompatibilities = incompatibilities
         if positive_affinities:
@@ -118,7 +125,15 @@ class Container(box3d):
         if center_of_mass:
             self.center_of_mass_constraint = center_of_mass
         if relative_pos:
-            self.relative_pos = relative_pos
+            # Convert from {grouping_key: [(light, heavy), ...]} to {heavy: [light, ...]}
+            # This allows O(1) lookup when placing a heavy item
+            self.relative_pos = {}
+            for _, tuple_list in relative_pos.items():
+                for light_id, heavy_id in tuple_list:
+                    if heavy_id not in self.relative_pos:
+                        self.relative_pos[heavy_id] = []
+                    if light_id not in self.relative_pos[heavy_id]:
+                        self.relative_pos[heavy_id].append(light_id)
 
     def get_heightmap_at(self, x: int, y: int) -> int:
         """Get the height at a specific (x, y) coordinate."""
@@ -188,49 +203,53 @@ class Container(box3d):
     def check_relative_positioning(self, item_id: int, ep: Tuple[int, int, int], size: Tuple[int, int, int]) -> bool:
         """
         Check if placing item would violate relative positioning constraints.
-        
-        Relative positioning format: {heavy_id: [(light_id, code), ...]}
-        Interpretation: heavy_id cannot be placed ON TOP of light_id
-        
-        Example: {1: [(7, 0), (7, 1)]}
-        - Item 1 is heavier than item 7
-        - Item 1 cannot be placed above item 7
-        
+
+        After conversion in set_constraints(), self.relative_pos has format:
+            {heavy_id: [light_id1, light_id2, ...]}
+
+        Meaning: heavy_id cannot be placed ON TOP of any of the light items
+
+        Example input: {6: [(2, 0), (3, 0), (4, 0)]}
+            where tuples are (light_id, heavy_id)
+
+        Becomes: {0: [2, 3, 4]}
+            meaning item 0 cannot be placed on top of items 2, 3, or 4
+
         Args:
-            item_id: ID of item to place
+            item_id: ID of item to place (potentially a heavy item)
             ep: Position where item would be placed (x, y, z)
             size: Size of item (w, d, h)
-            
+
         Returns:
             True if placement allowed, False if violates constraint
         """
         if not self.relative_pos or item_id not in self.relative_pos:
             return True
-        
+
         x, y, z = ep
         w, d, h = size
-        
-        # Get constraints for this item (heavy item)
-        constraints = self.relative_pos[item_id]
-        
-        for light_id, position_code in constraints:
+
+        # Get list of light items that this heavy item cannot be placed on top of
+        light_items = self.relative_pos[item_id]
+
+        for light_id in light_items:
             # Check if light item exists in bin
             if light_id not in self.item_positions:
                 continue
-            
+
             # Check all instances of the light item
             for light_box in self.item_positions[light_id]:
                 # Check if boxes overlap in XY plane
                 x_overlap = not (x + w <= light_box.x or light_box.x + light_box.w <= x)
                 y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
-                
+
                 if x_overlap and y_overlap:
                     # Boxes overlap in XY - check if heavy item is above light item
-                    # Heavy item would be above if its Z position is at or above light item's top
-                    if z >= light_box.z + light_box.h - 1:
-                        # VIOLATION: Heavy item would be on top of light item
+                    # Heavy item is "on top of" light if its bottom is at or above light's top surface
+                    if z >= light_box.z + light_box.h:
+                        # VIOLATION: Heavy item would be on top of or above light item
                         return False
-        
+
         return True
     
     def check_positive_affinity_before_completion(self) -> bool:
@@ -425,12 +444,14 @@ class Container(box3d):
 
         # === STEP 2: Apply gravity ===
         # Drop box down until it hits something
+        # Note: apply_gravity() already ensures final_z is collision-free
         final_z = self.apply_gravity(x, y, z, w, d, h)
         final_ep = (x, y, final_z)
 
         # === STEP 3: Re-check constraints at final position ===
+        # Note: Collision check OMITTED - apply_gravity() already ensures no collision
         if not (self._fits_container(final_ep, size) and
-                #self._fits_collision_free(final_ep, size) and
+                # self._fits_collision_free(final_ep, size) and  # REMOVED: redundant
                 self.check_relative_positioning(item_id, final_ep, size)):
             return False
 
@@ -517,6 +538,92 @@ class Container(box3d):
         ax.set_title(title)
         ax.set_box_aspect([W, D, H])
 
+    def get_item_color_mapping(self) -> dict:
+        """
+        Get mapping of item_id to RGB color for all items in bin.
+
+        Returns:
+            dict: {item_id: (r, g, b, a)} mapping using tab20 colormap
+        """
+        colors = plt.cm.tab20(np.linspace(0, 1, 20))
+        unique_ids = sorted(set(b.item_id for b in self.placed if b.item_id >= 0))
+        return {item_id: tuple(colors[item_id % 20]) for item_id in unique_ids}
+
+    def print_item_legend(self):
+        """Print color legend showing which colors represent which item IDs."""
+        if not self.placed:
+            print("No items placed yet.")
+            return
+
+        color_map = self.get_item_color_mapping()
+        print("\n" + "="*60)
+        print("ITEM COLOR LEGEND")
+        print("="*60)
+
+        # Group items by ID to show counts
+        item_counts = {}
+        for box in self.placed:
+            if box.item_id >= 0:
+                if box.item_id not in item_counts:
+                    item_counts[box.item_id] = 0
+                item_counts[box.item_id] += 1
+
+        for item_id in sorted(color_map.keys()):
+            rgb = color_map[item_id]
+            # Convert RGB to hex for display
+            hex_color = '#{:02x}{:02x}{:02x}'.format(
+                int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)
+            )
+            count = item_counts.get(item_id, 0)
+            print(f"  Item ID {item_id:2d}: Color {hex_color} (tab20[{item_id % 20:2d}]) - {count} boxes")
+
+        print("="*60 + "\n")
+
+    def print_constraint_info(self):
+        """Print information about active constraints."""
+        print("\n" + "="*60)
+        print("CONSTRAINT INFORMATION")
+        print("="*60)
+
+        # Incompatibilities
+        if self.incompatibilities:
+            print(f"\nIncompatibilities ({len(self.incompatibilities)} pairs):")
+            for a, b in self.incompatibilities:
+                print(f"  Items {a} and {b} cannot be in same bin")
+        else:
+            print("\nIncompatibilities: None")
+
+        # Positive affinities
+        if self.positive_affinities:
+            print(f"\nPositive Affinities ({len(self.positive_affinities)} pairs):")
+            for a, b in self.positive_affinities:
+                print(f"  Items {a} and {b} should be together")
+        else:
+            print("\nPositive Affinities: None")
+
+        # Relative positioning
+        if self.relative_pos:
+            print(f"\nRelative Positioning ({len(self.relative_pos)} heavy items with constraints):")
+            for heavy_id, light_list in self.relative_pos.items():
+                print(f"  Item {heavy_id} (heavy) cannot be placed ON TOP of items: {light_list}")
+        else:
+            print("\nRelative Positioning: None")
+
+        # Center of mass
+        if self.center_of_mass_constraint:
+            print(f"\nCenter of Mass constraint: {self.center_of_mass_constraint}")
+        else:
+            print("\nCenter of Mass: None")
+
+        # Weight constraint
+        if self.max_weight:
+            print(f"\nMax Weight per bin: {self.max_weight}")
+            print(f"Current weight: {self.current_weight}")
+        else:
+            print("\nWeight constraint: None")
+
+        print("="*60 + "\n")
+
     def plot3d(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
         """Visualize the packing with boxes and extreme points."""
@@ -580,8 +687,6 @@ class Container(box3d):
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
                 ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
         
-
-
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -590,7 +695,6 @@ class Container(box3d):
             info_text += f"\nCoM: ({cx:.1f}, {cy:.1f})"
         ax.text2D(0.05, 0.95, info_text, transform=ax.transAxes, fontsize=10,
                  verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
         
         if save_path:
             fig.savefig(save_path, dpi=140, bbox_inches="tight")
