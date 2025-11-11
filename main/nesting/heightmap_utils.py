@@ -49,37 +49,41 @@ def extract_heightmap_patch(heightmap: np.ndarray, ex: int, ey: int,
 def extract_patches_for_actions(env, actions, patch_size: int = 7):
     """
     Extract heightmap patches for all actions in the current action space.
-    
+
     Args:
         env: MultiBinPackingEnv instance
         actions: List of action tuples from env.enumerate_actions()
+                 Format: (bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id)
         patch_size: Size of patches to extract
-    
+
     Returns:
         patches: (num_actions, patch_size, patch_size) array of patches
     """
     W, D, H = env.bin_size
     patches = []
-    
+
     for action in actions:
         if action is None:
             # Padding action - return zero patch
             patches.append(np.zeros((patch_size, patch_size), dtype=np.float32))
         else:
-            bin_idx, item_idx, ep_idx, rot_idx, ep, size, weight, item_id = action
+            # Unpack EMS-based action format
+            bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id = action
             target_bin = env.bins[bin_idx]
-            ex, ey, ez = ep
-            
+
+            # Get EMS corner position
+            ex, ey, ez = ems.x, ems.y, ems.z
+
             # Extract patch from this bin's heightmap
             patch = extract_heightmap_patch(
-                target_bin.heightmap, 
-                ex, ey, 
-                patch_size, 
+                target_bin.heightmap,
+                ex, ey,
+                patch_size,
                 target_bin.resolution,
                 W, D, H
             )
             patches.append(patch)
-    
+
     return np.array(patches, dtype=np.float32)
 
 
