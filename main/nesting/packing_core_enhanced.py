@@ -627,22 +627,40 @@ class Container(box3d):
     def plot3d(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
         """Visualize the packing with boxes and extreme points."""
-        fig = plt.figure(figsize=(10, 8))
+        from matplotlib.patches import Patch
+
+        fig = plt.figure(figsize=(12, 8))
         ax = fig.add_subplot(111, projection="3d")
         self._setup_axes(ax, self.w, self.d, self.h, title)
-        
+
         cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
                                 linewidths=0.8, colors='black')
         ax.add_collection3d(cont)
-        
+
+        legend_elements = []
         if self.placed:
             colors = plt.cm.tab20(np.linspace(0, 1, 20))
+
+            # Count items by ID for legend
+            item_counts = {}
+            for b in self.placed:
+                if b.item_id >= 0:
+                    item_counts[b.item_id] = item_counts.get(b.item_id, 0) + 1
+
+            # Draw boxes
             for b in self.placed:
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
                 edges = Line3DCollection(self._cuboid_edges(b.x, b.y, b.z, b.w, b.d, b.h),
                                         linewidths=1.5, colors=color)
                 ax.add_collection3d(edges)
-        
+
+            # Create legend entries
+            for item_id in sorted(item_counts.keys()):
+                color = colors[item_id % 20]
+                count = item_counts[item_id]
+                legend_elements.append(Patch(facecolor=color, edgecolor='black',
+                                            label=f'Item {item_id} (n={count})'))
+
         if self.ems_list:
             # Visualize EMS as wireframe boxes
             for ems in self.ems_list[:10]:  # Show top 10 EMS to avoid clutter
@@ -651,7 +669,16 @@ class Container(box3d):
                     linewidths=0.5, colors='red', linestyles='dashed', alpha=0.3
                 )
                 ax.add_collection3d(ems_edges)
-        
+
+            # Add EMS to legend
+            legend_elements.append(Patch(facecolor='none', edgecolor='red',
+                                        linestyle='--', label='EMS (top 10)'))
+
+        # Add legend
+        if legend_elements:
+            ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.05, 1),
+                     fontsize=9, framealpha=0.9)
+
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -660,7 +687,7 @@ class Container(box3d):
             info_text += f"\nCoM: ({cx:.1f}, {cy:.1f})"
         ax.text2D(0.05, 0.95, info_text, transform=ax.transAxes, fontsize=10,
                  verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
+
         if save_path:
             fig.savefig(save_path, dpi=140, bbox_inches="tight")
             plt.close(fig)
@@ -673,20 +700,43 @@ class Container(box3d):
     def plot3d_filled(self, *, save_path: str | None = None,
                show: bool = True, title: str = "Packing state") -> None:
         """Visualize with filled boxes."""
-        fig = plt.figure(figsize=(10, 8))
+        from matplotlib.patches import Patch
+
+        fig = plt.figure(figsize=(12, 8))
         ax = fig.add_subplot(111, projection="3d")
         self._setup_axes(ax, self.w, self.d, self.h, title)
-        
+
         cont = Line3DCollection(self._cuboid_edges(0,0,0, self.w, self.d, self.h),
                                 linewidths=0.8, colors='black')
         ax.add_collection3d(cont)
-        
+
+        legend_elements = []
         if self.placed:
             colors = plt.cm.tab20(np.linspace(0, 1, 20))
+
+            # Count items by ID for legend
+            item_counts = {}
+            for b in self.placed:
+                if b.item_id >= 0:
+                    item_counts[b.item_id] = item_counts.get(b.item_id, 0) + 1
+
+            # Draw boxes
             for b in self.placed:
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
                 ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
-        
+
+            # Create legend entries
+            for item_id in sorted(item_counts.keys()):
+                color = colors[item_id % 20]
+                count = item_counts[item_id]
+                legend_elements.append(Patch(facecolor=color, edgecolor='black',
+                                            label=f'Item {item_id} (n={count})'))
+
+        # Add legend
+        if legend_elements:
+            ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.05, 1),
+                     fontsize=9, framealpha=0.9)
+
         info_text = f"Weight: {self.current_weight}"
         if self.max_weight:
             info_text += f"/{self.max_weight}"
@@ -695,7 +745,7 @@ class Container(box3d):
             info_text += f"\nCoM: ({cx:.1f}, {cy:.1f})"
         ax.text2D(0.05, 0.95, info_text, transform=ax.transAxes, fontsize=10,
                  verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
+
         if save_path:
             fig.savefig(save_path, dpi=140, bbox_inches="tight")
             plt.close(fig)
