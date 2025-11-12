@@ -243,7 +243,7 @@ class Container(box3d):
                 x_overlap = not (x + w <= light_box.x or light_box.x + light_box.w <= x)
                 y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
 
-                if x_overlap and y_overlap:
+                if x_overlap and y_overlap and (z < light_box.z + light_box.h):
                     # There's a light item in our XY footprint!
                     # Gravity will make the heavy item land on (or above) it → VIOLATION
                     # No need to check Z - if there's any light item in XY, we can't place here
@@ -441,7 +441,7 @@ class Container(box3d):
 
         if not (fits_container_final and relpos_ok_final):
             # Debug: This should rarely happen if enumerate_actions checks gravity properly
-            print(f"⚠️  Placement failed constraint re-check at final position {final_ep}")
+            print(f"  Placement failed constraint re-check at final position {final_ep}")
             print(f"    Item: id={item_id}, size={size}")
             print(f"    Initial EMS: ({ems.x}, {ems.y}, {ems.z})")
             print(f"    After gravity: ({x}, {y}, {z}) -> ({x}, {y}, {final_z})")
