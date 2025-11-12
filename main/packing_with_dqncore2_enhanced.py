@@ -120,14 +120,14 @@ class MultiBinPackingEnv:
         """
         Compute EMS quality for potential-based reward shaping.
 
-        Uses cube root of sum of top-3 largest EMS volumes.
+        Uses cube root of AVERAGE of top-3 largest EMS volumes.
         This provides intermediate feedback about packing quality:
         - High quality: Large usable spaces remain (good for future placements)
         - Low quality: Fragmented space (hard to fit remaining items)
 
         Returns:
-            float: Cube root of (sum of top-3 EMS volumes / bin volume)
-                   Range: 0.0 to ~1.4 (∛(3) when all 3 EMS = bin volume)
+            float: Cube root of (average of top-3 EMS volumes / bin volume)
+                   Range: 0.0 to ~1.0 (naturally bounded, comparable to utilization)
         """
         if not bin.ems_list:
             return 0.0
@@ -136,13 +136,13 @@ class MultiBinPackingEnv:
         volumes = sorted([ems.volume() for ems in bin.ems_list], reverse=True)
         top_3 = volumes[:min(3, len(volumes))]
 
-        # Sum and normalize by bin volume
-        sum_top_3 = sum(top_3)
-        normalized_sum = sum_top_3 / self.bin_volume
+        # Average and normalize by bin volume (keeps it in 0-1 range like utilization)
+        avg_top_3 = sum(top_3) / len(top_3)
+        normalized_avg = avg_top_3 / self.bin_volume
 
         # Cube root to get diminishing returns for larger spaces
         # This makes the metric less sensitive to exactly which EMS split occurred
-        ems_quality = normalized_sum ** (1.0/3.0)
+        ems_quality = normalized_avg ** (1.0/3.0)
 
         return ems_quality
 
@@ -258,9 +258,9 @@ class MultiBinPackingEnv:
                         ep = (ems.x, ems.y, ems.z)
                         w_rot, d_rot, h_rot = size
 
-                        # CONSTRAINT CHECKS AT EMS POSITION
+                        # CONSTRAINT CHECKS AT EMS POSITION (Z-independent checks)
                         # Note: Collision check OMITTED - EMS is empty by definition
-                        # Relative positioning check looks at XY footprint only (gravity-independent)
+                        # Relative positioning only checks XY footprint overlap (Z irrelevant)
                         if not (bin._fits_ems(ems, size) and
                                 bin._fits_container(ep, size) and
                                 bin.check_weight_constraint(weight) and
@@ -361,9 +361,12 @@ class MultiBinPackingEnv:
         target_bin = self.bins[bin_idx]
 
         # === COMPUTE POTENTIAL BEFORE PLACEMENT ===
-        # Potential-based shaping: Φ(s) = utilization + β * EMS_quality
+        # Potential-based shaping: Φ(s) = bin_utilization + β * EMS_quality
+        # Use TARGET BIN's utilization (not global) for meaningful per-step rewards
+        bin_vol_prev = sum(b.w * b.d * b.h for b in target_bin.placed)
+        bin_util_prev = bin_vol_prev / self.bin_volume
         ems_quality_prev = self._compute_ems_quality(target_bin)
-        potential_prev = util_prev + 0.3 * ems_quality_prev
+        potential_prev = bin_util_prev + 0.3 * ems_quality_prev
 
         # NOTE: place_at_ems applies gravity automatically and updates EMS!
         ok = target_bin.place_at_ems(ems, size, weight=weight, item_id=item_id)
@@ -380,11 +383,14 @@ class MultiBinPackingEnv:
         util_next = self.total_placed_volume / total_available_volume
 
         # === COMPUTE POTENTIAL AFTER PLACEMENT ===
+        bin_vol_next = sum(b.w * b.d * b.h for b in target_bin.placed)
+        bin_util_next = bin_vol_next / self.bin_volume
         ems_quality_next = self._compute_ems_quality(target_bin)
-        potential_next = util_next + 0.3 * ems_quality_next
+        potential_next = bin_util_next + 0.3 * ems_quality_next
 
         # Potential-based shaped reward (theoretically sound - doesn't change optimal policy)
         # F(s,a,s') = r + γ*Φ(s') - Φ(s)
+        # Using per-bin utilization gives ~0.01-0.05 per step instead of ~0.001
         reward = (self.gamma * potential_next) - potential_prev
 
         # Small bonus for balancing bins
@@ -934,7 +940,7 @@ if __name__ == "__main__":
 
     agent, env, best_solution = train_multibin_pack_dqn(
         problem_path=full_datapath(problem),
-        episodes=400,
+        episodes=100,
         seed=42,
         max_actions=128,
         topk_eps=1000,
