@@ -100,7 +100,8 @@ class Container(box3d):
         self.incompatibilities: List[Tuple[int, int]] = []
         self.positive_affinities: List[Tuple[int, int]] = []
         self.center_of_mass_constraint: Optional[Tuple[int, int]] = None
-        self.relative_pos: Dict[int, List[Tuple[int, int]]] = {}
+        self.relative_pos: Dict[int, List[Tuple[int, int]]] = {}  # {heavy: [light, ...]}
+        self.relative_pos_reverse: Dict[int, List[int]] = {}  # {light: [heavy, ...]}
         
         # Track item positions for constraint checking
         self.item_positions: Dict[int, List[box3d]] = {}
@@ -125,15 +126,25 @@ class Container(box3d):
         if center_of_mass:
             self.center_of_mass_constraint = center_of_mass
         if relative_pos:
-            # Convert from {grouping_key: [(light, heavy), ...]} to {heavy: [light, ...]}
-            # This allows O(1) lookup when placing a heavy item
+            # Convert from {grouping_key: [(light, heavy), ...]} to two mappings:
+            # 1. {heavy: [light, ...]} - for checking when placing heavy items
+            # 2. {light: [heavy, ...]} - for checking when placing light items
             self.relative_pos = {}
+            self.relative_pos_reverse = {}
+
             for _, tuple_list in relative_pos.items():
                 for light_id, heavy_id in tuple_list:
+                    # Heavy -> Light mapping (check when placing heavy)
                     if heavy_id not in self.relative_pos:
                         self.relative_pos[heavy_id] = []
                     if light_id not in self.relative_pos[heavy_id]:
                         self.relative_pos[heavy_id].append(light_id)
+
+                    # Light -> Heavy mapping (check when placing light)
+                    if light_id not in self.relative_pos_reverse:
+                        self.relative_pos_reverse[light_id] = []
+                    if heavy_id not in self.relative_pos_reverse[light_id]:
+                        self.relative_pos_reverse[light_id].append(heavy_id)
 
     def get_heightmap_at(self, x: int, y: int) -> int:
         """Get the height at a specific (x, y) coordinate."""
@@ -204,56 +215,65 @@ class Container(box3d):
         """
         Check if placing item would violate relative positioning constraints.
 
-        After conversion in set_constraints(), self.relative_pos has format:
-            {heavy_id: [light_id1, light_id2, ...]}
+        The constraint works bidirectionally:
+        - When placing heavy item: Check no light items exist with XY overlap
+        - When placing light item: Check no heavy items exist with XY overlap
 
-        Meaning: heavy_id cannot be placed ON TOP of any of the light items
-
-        Example input: {6: [(2, 0), (3, 0), (4, 0)]}
-            where tuples are (light_id, heavy_id)
-
-        Becomes: {0: [2, 3, 4]}
-            meaning item 0 cannot be placed on top of items 2, 3, or 4
+        After conversion in set_constraints():
+            self.relative_pos = {heavy_id: [light_id1, light_id2, ...]}
+            self.relative_pos_reverse = {light_id: [heavy_id1, heavy_id2, ...]}
 
         Args:
-            item_id: ID of item to place (potentially a heavy item)
-            ep: Position where item would be placed (x, y, z) - BEFORE gravity
+            item_id: ID of item to place
+            ep: Position where item would be placed (x, y, z)
             size: Size of item (w, d, h)
 
         Returns:
             True if placement allowed, False if violates constraint
-
-        Note:
-            This function applies gravity internally to determine the final resting
-            position and checks if the heavy item would be on top of any light items.
         """
-        if not self.relative_pos or item_id not in self.relative_pos:
-            return True
-
         x, y, z = ep
         w, d, h = size
 
-        # The constraint is: heavy items cannot occupy ANY XY position where light items exist
+        # The constraint is: heavy and light items cannot occupy same XY position
         # Z position is irrelevant - this prevents weight distribution issues
 
-        # Get list of light items that this heavy item cannot overlap with in XY
-        light_items = self.relative_pos[item_id]
+        # CASE 1: Placing a HEAVY item - check no light items below
+        if self.relative_pos and item_id in self.relative_pos:
+            light_items = self.relative_pos[item_id]
 
-        for light_id in light_items:
-            # Check if light item exists in bin
-            if light_id not in self.item_positions:
-                continue
+            for light_id in light_items:
+                # Check if light item exists in bin
+                if light_id not in self.item_positions:
+                    continue
 
-            # Check all instances of the light item
-            for light_box in self.item_positions[light_id]:
-                # Check if boxes overlap in XY plane
-                x_overlap = not (x + w <= light_box.x or light_box.x + light_box.w <= x)
-                y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
+                # Check all instances of the light item
+                for light_box in self.item_positions[light_id]:
+                    # Check if boxes overlap in XY plane
+                    x_overlap = not (x + w <= light_box.x or light_box.x + light_box.w <= x)
+                    y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
 
-                if x_overlap and y_overlap:
-                    # VIOLATION: Heavy item XY footprint overlaps with light item
-                    # Z position doesn't matter
-                    return False
+                    if x_overlap and y_overlap:
+                        # VIOLATION: Heavy item XY footprint overlaps with light item
+                        return False
+
+        # CASE 2: Placing a LIGHT item - check no heavy items above
+        if self.relative_pos_reverse and item_id in self.relative_pos_reverse:
+            heavy_items = self.relative_pos_reverse[item_id]
+
+            for heavy_id in heavy_items:
+                # Check if heavy item exists in bin
+                if heavy_id not in self.item_positions:
+                    continue
+
+                # Check all instances of the heavy item
+                for heavy_box in self.item_positions[heavy_id]:
+                    # Check if boxes overlap in XY plane
+                    x_overlap = not (x + w <= heavy_box.x or heavy_box.x + heavy_box.w <= x)
+                    y_overlap = not (y + d <= heavy_box.y or heavy_box.y + heavy_box.d <= y)
+
+                    if x_overlap and y_overlap:
+                        # VIOLATION: Light item XY footprint overlaps with heavy item
+                        return False
 
         return True
     
