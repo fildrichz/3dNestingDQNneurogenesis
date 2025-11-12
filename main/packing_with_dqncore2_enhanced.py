@@ -258,9 +258,9 @@ class MultiBinPackingEnv:
                         ep = (ems.x, ems.y, ems.z)
                         w_rot, d_rot, h_rot = size
 
-                        # CONSTRAINT CHECKS AT EMS POSITION
+                        # CONSTRAINT CHECKS AT EMS POSITION (Z-independent checks)
                         # Note: Collision check OMITTED - EMS is empty by definition
-                        # Relative positioning check looks at XY footprint only (gravity-independent)
+                        # Relative positioning only checks XY footprint overlap (Z irrelevant)
                         if not (bin._fits_ems(ems, size) and
                                 bin._fits_container(ep, size) and
                                 bin.check_weight_constraint(weight) and

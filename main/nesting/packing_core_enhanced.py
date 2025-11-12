@@ -217,11 +217,15 @@ class Container(box3d):
 
         Args:
             item_id: ID of item to place (potentially a heavy item)
-            ep: Position where item would be placed (x, y, z)
+            ep: Position where item would be placed (x, y, z) - BEFORE gravity
             size: Size of item (w, d, h)
 
         Returns:
             True if placement allowed, False if violates constraint
+
+        Note:
+            This function applies gravity internally to determine the final resting
+            position and checks if the heavy item would be on top of any light items.
         """
         if not self.relative_pos or item_id not in self.relative_pos:
             return True
@@ -229,7 +233,10 @@ class Container(box3d):
         x, y, z = ep
         w, d, h = size
 
-        # Get list of light items that this heavy item cannot be placed on top of
+        # The constraint is: heavy items cannot occupy ANY XY position where light items exist
+        # Z position is irrelevant - this prevents weight distribution issues
+
+        # Get list of light items that this heavy item cannot overlap with in XY
         light_items = self.relative_pos[item_id]
 
         for light_id in light_items:
@@ -244,9 +251,8 @@ class Container(box3d):
                 y_overlap = not (y + d <= light_box.y or light_box.y + light_box.d <= y)
 
                 if x_overlap and y_overlap:
-                    # There's a light item in our XY footprint!
-                    # Gravity will make the heavy item land on (or above) it → VIOLATION
-                    # No need to check Z - if there's any light item in XY, we can't place here
+                    # VIOLATION: Heavy item XY footprint overlaps with light item
+                    # Z position doesn't matter
                     return False
 
         return True
