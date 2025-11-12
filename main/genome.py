@@ -86,9 +86,12 @@ class NetworkGenome:
     @classmethod
     def random_genes(cls) -> Dict[str, Any]:
         """Generate random genome with valid gene values."""
+        import random
         genes = {}
         for gene_name, space in cls.GENE_SPACES.items():
-            value = np.random.choice(space)
+            # Use random.choice for nested lists (like cnn_channels)
+            # np.random.choice doesn't work with 2D lists
+            value = random.choice(space)
             # Convert to native Python types immediately
             genes[gene_name] = cls._convert_to_python(value)
         return genes
@@ -139,13 +142,15 @@ class NetworkGenome:
 
     def mutate(self, mutation_rate: float = 0.2) -> 'NetworkGenome':
         """Create mutated copy of genome."""
+        import random
         new_genes = self.genes.copy()
-        
+
         for gene_name, space in self.GENE_SPACES.items():
             if np.random.rand() < mutation_rate:
-                value = np.random.choice(space)
+                # Use random.choice for nested lists (like cnn_channels)
+                value = random.choice(space)
                 new_genes[gene_name] = self._convert_to_python(value)
-        
+
         return NetworkGenome(new_genes)
     
     @staticmethod
