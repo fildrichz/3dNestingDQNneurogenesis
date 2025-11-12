@@ -116,6 +116,36 @@ class MultiBinPackingEnv:
         """Get number of bins that have items in them."""
         return sum(1 for bin in self.bins if len(bin.placed) > 0)
 
+    def _compute_ems_quality(self, bin) -> float:
+        """
+        Compute EMS quality for potential-based reward shaping.
+
+        Uses cube root of sum of top-3 largest EMS volumes.
+        This provides intermediate feedback about packing quality:
+        - High quality: Large usable spaces remain (good for future placements)
+        - Low quality: Fragmented space (hard to fit remaining items)
+
+        Returns:
+            float: Cube root of (sum of top-3 EMS volumes / bin volume)
+                   Range: 0.0 to ~1.4 (∛(3) when all 3 EMS = bin volume)
+        """
+        if not bin.ems_list:
+            return 0.0
+
+        # Get top-3 largest EMS by volume
+        volumes = sorted([ems.volume() for ems in bin.ems_list], reverse=True)
+        top_3 = volumes[:min(3, len(volumes))]
+
+        # Sum and normalize by bin volume
+        sum_top_3 = sum(top_3)
+        normalized_sum = sum_top_3 / self.bin_volume
+
+        # Cube root to get diminishing returns for larger spaces
+        # This makes the metric less sensitive to exactly which EMS split occurred
+        ems_quality = normalized_sum ** (1.0/3.0)
+
+        return ems_quality
+
     def _obs(self) -> np.ndarray:
         """Observation state."""
         W, D, H = self.bin_size
@@ -330,22 +360,32 @@ class MultiBinPackingEnv:
         bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id = action
         target_bin = self.bins[bin_idx]
 
-        # NOTE: place_at_ems applies gravity automatically!
+        # === COMPUTE POTENTIAL BEFORE PLACEMENT ===
+        # Potential-based shaping: Φ(s) = utilization + β * EMS_quality
+        ems_quality_prev = self._compute_ems_quality(target_bin)
+        potential_prev = util_prev + 0.3 * ems_quality_prev
+
+        # NOTE: place_at_ems applies gravity automatically and updates EMS!
         ok = target_bin.place_at_ems(ems, size, weight=weight, item_id=item_id)
-        
+
         if not ok:
             self.done = True
             return self._obs(), -1.0, True, {"invalid": True}
-        
+
         # Update tracking
         v = int(size[0] * size[1] * size[2])
         self.total_placed_volume += v
         del self.items[item_idx]
-        
+
         util_next = self.total_placed_volume / total_available_volume
 
-        # Potential-based shaping (theoretically sound - doesn't change optimal policy)
-        reward = (self.gamma * util_next) - util_prev
+        # === COMPUTE POTENTIAL AFTER PLACEMENT ===
+        ems_quality_next = self._compute_ems_quality(target_bin)
+        potential_next = util_next + 0.3 * ems_quality_next
+
+        # Potential-based shaped reward (theoretically sound - doesn't change optimal policy)
+        # F(s,a,s') = r + γ*Φ(s') - Φ(s)
+        reward = (self.gamma * potential_next) - potential_prev
 
         # Small bonus for balancing bins
         current_bin_items = len(target_bin.placed)
