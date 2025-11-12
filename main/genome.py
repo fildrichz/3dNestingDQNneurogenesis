@@ -33,13 +33,21 @@ class NetworkGenome:
         'hidden_dim': [128, 192, 256, 320, 384, 512],      # Number of neurons
         'enc_layers': [1, 2, 3, 4],                         # Number of encoder layers
         'head_hidden': [128, 192, 256, 320, 384],          # Head layer size
-        
+
         # Attention mechanism
-        'use_attention': [True, False],                     # Enable/disable attention
+        'attention_type': ['standard', 'set_transformer', 'none'],  # Attention type
         'attention_heads': [2, 4, 8],                      # Number of attention heads
-        
+        'num_inducing_points': [16, 32, 64],               # Inducing points for set_transformer
+
         # Spatial feature extraction
         'patch_size': [5, 7, 9],                           # Heightmap patch size
+        'cnn_channels': [[8, 16], [16, 32], [32, 64], [16, 48]],  # CNN channel progression
+
+        # Regularization
+        'dropout': [0.0, 0.05, 0.1, 0.15, 0.2],           # Dropout rate
+
+        # Activation function
+        'activation': ['relu', 'gelu', 'silu'],            # Activation function type
     }
     
     # Fixed parameters (not evolved)
@@ -85,36 +93,45 @@ class NetworkGenome:
             genes[gene_name] = cls._convert_to_python(value)
         return genes
 
-    def to_dqn_config(self, obs_dim: int, action_feat_dim: int, 
+    def to_dqn_config(self, obs_dim: int, action_feat_dim: int,
                      max_actions: int, device: str = "cpu") -> DQNConfigEnhanced:
         """
         Decode genome into DQN configuration.
-        
+
         This converts the genotype (gene representation) to phenotype
         (actual network configuration).
-        
+
         Args:
             obs_dim: Observation dimension
             action_feat_dim: Action feature dimension
             max_actions: Maximum number of actions
             device: Device to run on
-            
+
         Returns:
             DQNConfigEnhanced instance
         """
+        # Determine if attention should be used
+        attention_type = self.genes['attention_type']
+        use_attention = attention_type != 'none'
+
         return DQNConfigEnhanced(
             obs_dim=obs_dim,
             action_feat_dim=action_feat_dim,
             max_actions=max_actions,
             device=device,
-            
+
             # EVOLVED PARAMETERS (Section 3.2)
             hidden=self.genes['hidden_dim'],
             enc_layers=self.genes['enc_layers'],
             head_hidden=self.genes['head_hidden'],
-            use_attention=self.genes['use_attention'],
+            use_attention=use_attention,
+            attention_type=attention_type if use_attention else 'standard',
+            num_inducing_points=self.genes['num_inducing_points'],
             heightmap_patch_size=self.genes['patch_size'],
-            
+            cnn_channels=self.genes['cnn_channels'],
+            dropout=self.genes['dropout'],
+            activation=self.genes['activation'],
+
             # FIXED PARAMETERS (not part of Section 3.2 evolution)
             **self.FIXED_PARAMS
         )
@@ -138,6 +155,9 @@ class NetworkGenome:
             return int(value)
         elif isinstance(value, np.bool_):
             return bool(value)
+        elif isinstance(value, (list, np.ndarray)):
+            # Handle list-type genes (e.g., cnn_channels)
+            return [int(v) if isinstance(v, np.integer) else v for v in value]
         return value
     
     @classmethod
@@ -187,10 +207,10 @@ class NetworkGenome:
     def get_network_complexity(self) -> float:
         """
         Estimate network complexity for parsimony pressure.
-        
+
         Complexity is roughly proportional to number of parameters.
         Used in fitness calculation to prefer smaller networks.
-        
+
         Returns:
             Complexity score (higher = more complex)
         """
@@ -198,17 +218,31 @@ class NetworkGenome:
         hidden = self.genes['hidden_dim']
         layers = self.genes['enc_layers']
         head = self.genes['head_hidden']
-        attention = self.genes['use_attention']
-        
-        # Base MLP parameters
+        attention_type = self.genes['attention_type']
+
+        # Base MLP parameters (state encoder + action encoder)
         complexity = hidden * layers * 2  # Encoder parameters
         complexity += head  # Head parameters
-        
+
+        # CNN parameters
+        cnn_channels = self.genes['cnn_channels']
+        patch_size = self.genes['patch_size']
+        # Conv layers: 1 -> ch[0] -> ch[1], then FC to 64
+        cnn_params = (1 * cnn_channels[0] * 9) + (cnn_channels[0] * cnn_channels[1] * 9) + (cnn_channels[1] * 64)
+        complexity += cnn_params
+
         # Attention adds significant parameters
-        if attention:
+        if attention_type == 'standard':
             heads = self.genes['attention_heads']
+            # Transformer encoder layer parameters
             complexity += hidden * hidden * heads * 2  # Attention parameters
-        
+            complexity += hidden * hidden * 4  # FFN parameters (2x hidden FFN)
+        elif attention_type == 'set_transformer':
+            heads = self.genes['attention_heads']
+            num_inds = self.genes['num_inducing_points']
+            # Set transformer has inducing points + 2 ISAB blocks
+            complexity += (hidden * hidden * heads * 2) + (num_inds * hidden * 2)
+
         return complexity / 1e6  # Normalize to millions of parameters
     
     def to_dict(self) -> Dict[str, Any]:
