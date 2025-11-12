@@ -129,6 +129,7 @@ class NetworkGenome:
             head_hidden=self.genes['head_hidden'],
             use_attention=use_attention,
             attention_type=attention_type if use_attention else 'standard',
+            attention_heads=self.genes['attention_heads'],  # ✅ Now passed to config
             num_inducing_points=self.genes['num_inducing_points'],
             heightmap_patch_size=self.genes['patch_size'],
             cnn_channels=self.genes['cnn_channels'],
@@ -170,43 +171,45 @@ class NetworkGenome:
                  method: str = 'uniform') -> 'NetworkGenome':
         """
         Create child genome through crossover of two parents.
-        
+
         Supports:
         - 'uniform': Each gene randomly chosen from either parent
         - 'single_point': Single crossover point
-        
+
         Args:
             parent1: First parent genome
             parent2: Second parent genome
             method: Crossover method ('uniform' or 'single_point')
-            
+
         Returns:
             New child NetworkGenome
         """
+        import copy
         gene_names = list(cls.GENE_SPACES.keys())
         child_genes = {}
-        
+
         if method == 'uniform':
             # Uniform crossover: randomly choose each gene from either parent
             for gene_name in gene_names:
                 if np.random.rand() < 0.5:
-                    child_genes[gene_name] = parent1.genes[gene_name]
+                    # Deep copy to avoid aliasing issues with list genes
+                    child_genes[gene_name] = copy.deepcopy(parent1.genes[gene_name])
                 else:
-                    child_genes[gene_name] = parent2.genes[gene_name]
-        
+                    child_genes[gene_name] = copy.deepcopy(parent2.genes[gene_name])
+
         elif method == 'single_point':
             # Single-point crossover
             crossover_point = np.random.randint(1, len(gene_names))
-            
+
             for i, gene_name in enumerate(gene_names):
                 if i < crossover_point:
-                    child_genes[gene_name] = parent1.genes[gene_name]
+                    child_genes[gene_name] = copy.deepcopy(parent1.genes[gene_name])
                 else:
-                    child_genes[gene_name] = parent2.genes[gene_name]
-        
+                    child_genes[gene_name] = copy.deepcopy(parent2.genes[gene_name])
+
         else:
             raise ValueError(f"Unknown crossover method: {method}")
-        
+
         return NetworkGenome(child_genes)
     
     def get_network_complexity(self) -> float:
@@ -219,34 +222,59 @@ class NetworkGenome:
         Returns:
             Complexity score (higher = more complex)
         """
-        # Rough parameter count estimate
         hidden = self.genes['hidden_dim']
         layers = self.genes['enc_layers']
-        head = self.genes['head_hidden']
+        head_hidden = self.genes['head_hidden']
         attention_type = self.genes['attention_type']
 
-        # Base MLP parameters (state encoder + action encoder)
-        complexity = hidden * layers * 2  # Encoder parameters
-        complexity += head  # Head parameters
+        complexity = 0
+
+        # State encoder MLP (obs_dim=8 -> hidden, with 'layers' hidden layers)
+        # Layer 1: 8 -> hidden
+        complexity += 8 * hidden
+        # Intermediate layers: hidden -> hidden
+        for _ in range(max(0, layers - 1)):
+            complexity += hidden * hidden
+
+        # Action encoder MLP (action_feat_dim+64 -> hidden, with 'layers' hidden layers)
+        # Layer 1: (25+64)=89 -> hidden
+        complexity += 89 * hidden
+        # Intermediate layers: hidden -> hidden
+        for _ in range(max(0, layers - 1)):
+            complexity += hidden * hidden
 
         # CNN parameters
         cnn_channels = self.genes['cnn_channels']
-        patch_size = self.genes['patch_size']
-        # Conv layers: 1 -> ch[0] -> ch[1], then FC to 64
-        cnn_params = (1 * cnn_channels[0] * 9) + (cnn_channels[0] * cnn_channels[1] * 9) + (cnn_channels[1] * 64)
-        complexity += cnn_params
+        # Conv1: 1 -> cnn_channels[0], kernel 3x3
+        complexity += 1 * cnn_channels[0] * 9
+        # Conv2: cnn_channels[0] -> cnn_channels[1], kernel 3x3
+        complexity += cnn_channels[0] * cnn_channels[1] * 9
+        # FC: cnn_channels[1] -> 64
+        complexity += cnn_channels[1] * 64
 
-        # Attention adds significant parameters
+        # Attention parameters
         if attention_type == 'standard':
-            heads = self.genes['attention_heads']
-            # Transformer encoder layer parameters
-            complexity += hidden * hidden * heads * 2  # Attention parameters
-            complexity += hidden * hidden * 4  # FFN parameters (2x hidden FFN)
+            # TransformerEncoder with 2 layers
+            # Each layer: Q,K,V projections + output proj + FFN
+            for _ in range(2):
+                # Multi-head attention (4 projections: Q, K, V, O)
+                complexity += 4 * (hidden * hidden)
+                # FFN: hidden -> 2*hidden -> hidden
+                complexity += hidden * (2 * hidden) + (2 * hidden) * hidden
+
         elif attention_type == 'set_transformer':
-            heads = self.genes['attention_heads']
             num_inds = self.genes['num_inducing_points']
-            # Set transformer has inducing points + 2 ISAB blocks
-            complexity += (hidden * hidden * heads * 2) + (num_inds * hidden * 2)
+            # 2 ISAB blocks, each with 2 MAB modules
+            # Simplified estimate: 4 MAB modules total
+            for _ in range(4):
+                # Q, K, V, O projections
+                complexity += 4 * (hidden * hidden)
+                # Inducing points
+                complexity += num_inds * hidden
+
+        # Head: (2*hidden) -> head_hidden -> 1
+        complexity += (2 * hidden) * head_hidden
+        complexity += head_hidden * 1
 
         return complexity / 1e6  # Normalize to millions of parameters
     

@@ -92,14 +92,19 @@ def evaluate_genome_fitness(genome: NetworkGenome,
 
     # Normalize bins (assume max 5 bins based on problem)
     max_bins = 5.0
-    bins_penalty = avg_bins / max_bins
+    bins_penalty = min(avg_bins / max_bins, 1.0)  # Cap at 1.0
+
+    # Normalize complexity (typical range: 0.5M - 5M params)
+    # Use sigmoid-like normalization to handle outliers
+    max_complexity = 5.0  # 5M params
+    complexity_penalty = min(complexity / max_complexity, 1.0)  # Cap at 1.0
 
     # Multi-objective fitness with weighted components
     # Weights: 70% utilization, 20% bins efficiency, 10% complexity
     fitness = (
-        0.70 * avg_util +                    # Maximize utilization (0-1)
-        0.20 * (1.0 - bins_penalty) +        # Minimize bins used (0-1)
-        0.10 * (1.0 - complexity / 10.0)     # Parsimony (smaller = better)
+        0.70 * avg_util +                      # Maximize utilization (0-1)
+        0.20 * (1.0 - bins_penalty) +          # Minimize bins used (0-1)
+        0.10 * (1.0 - complexity_penalty)      # Parsimony (smaller = better)
     )
 
     # Store metrics in genome

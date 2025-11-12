@@ -262,7 +262,7 @@ class QNetworkEnhanced(nn.Module):
     """Enhanced Q-Network with heightmap CNN and Transformer/Set Transformer attention"""
     def __init__(self, obs_dim:int, action_feat_dim:int, hidden:int=256, enc_layers:int=2,
                  head_hidden:int=256, heightmap_patch_size:int=7, use_attention:bool=True,
-                 attention_type:str="standard", num_inducing_points:int=32,
+                 attention_type:str="standard", attention_heads:int=4, num_inducing_points:int=32,
                  cnn_channels:list=None, dropout:float=0.0, activation:str="relu"):
         super().__init__()
         self.patch_size = heightmap_patch_size
@@ -291,7 +291,7 @@ class QNetworkEnhanced(nn.Module):
                 self.action_attention = SetTransformer(
                     dim_input=hidden,
                     dim_output=hidden,
-                    num_heads=4,
+                    num_heads=attention_heads,  # ✅ Now uses evolved parameter
                     num_inds=num_inducing_points,
                     ln=True
                 )
@@ -299,7 +299,7 @@ class QNetworkEnhanced(nn.Module):
                 # Standard Transformer (default)
                 encoder_layer = nn.TransformerEncoderLayer(
                     d_model=hidden,
-                    nhead=4,
+                    nhead=attention_heads,  # ✅ Now uses evolved parameter
                     dim_feedforward=hidden*2,
                     dropout=dropout if dropout > 0 else 0.1,
                     batch_first=True
@@ -381,6 +381,7 @@ class DQNConfigEnhanced:
     heightmap_patch_size: int = 7
     use_attention: bool = True
     attention_type: str = "standard"  # "standard", "set_transformer", or "none"
+    attention_heads: int = 4  # Number of attention heads (NEW: now configurable)
     num_inducing_points: int = 32  # For set_transformer only
     cnn_channels: list = None  # CNN channel progression, e.g., [16, 32]
     dropout: float = 0.0  # Dropout rate
@@ -393,6 +394,13 @@ class DQNConfigEnhanced:
         """Set default values for mutable defaults"""
         if self.cnn_channels is None:
             self.cnn_channels = [16, 32]
+
+        # Validate attention_heads divisibility
+        if self.use_attention and self.hidden % self.attention_heads != 0:
+            raise ValueError(
+                f"hidden ({self.hidden}) must be divisible by attention_heads ({self.attention_heads}). "
+                f"Got remainder: {self.hidden % self.attention_heads}"
+            )
 
 class DQNAgentEnhanced:
     def __init__(self, cfg: DQNConfigEnhanced):
@@ -407,6 +415,7 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
+            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
             num_inducing_points=cfg.num_inducing_points,
             cnn_channels=cfg.cnn_channels,
             dropout=cfg.dropout,
@@ -420,6 +429,7 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
+            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
             num_inducing_points=cfg.num_inducing_points,
             cnn_channels=cfg.cnn_channels,
             dropout=cfg.dropout,
