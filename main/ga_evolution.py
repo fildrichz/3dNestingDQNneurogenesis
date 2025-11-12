@@ -215,7 +215,9 @@ def evolve_architecture(problem,
                 print(f"\n[{i+1}/{population_size}] Evaluating genome {genome.genome_id}...")
                 print(f"  Architecture: hidden={genome.genes['hidden_dim']}, "
                       f"layers={genome.genes['enc_layers']}, "
-                      f"attention={genome.genes['use_attention']}, "
+                      f"attention={genome.genes['attention_type']}, "
+                      f"activation={genome.genes['activation']}, "
+                      f"dropout={genome.genes['dropout']}, "
                       f"patch={genome.genes['patch_size']}")
             
             fitness, metrics = evaluate_genome_fitness(
