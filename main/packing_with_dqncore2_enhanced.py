@@ -361,9 +361,12 @@ class MultiBinPackingEnv:
         target_bin = self.bins[bin_idx]
 
         # === COMPUTE POTENTIAL BEFORE PLACEMENT ===
-        # Potential-based shaping: Φ(s) = utilization + β * EMS_quality
+        # Potential-based shaping: Φ(s) = bin_utilization + β * EMS_quality
+        # Use TARGET BIN's utilization (not global) for meaningful per-step rewards
+        bin_vol_prev = sum(b.w * b.d * b.h for b in target_bin.placed)
+        bin_util_prev = bin_vol_prev / self.bin_volume
         ems_quality_prev = self._compute_ems_quality(target_bin)
-        potential_prev = util_prev + 0.3 * ems_quality_prev
+        potential_prev = bin_util_prev + 0.3 * ems_quality_prev
 
         # NOTE: place_at_ems applies gravity automatically and updates EMS!
         ok = target_bin.place_at_ems(ems, size, weight=weight, item_id=item_id)
@@ -380,11 +383,14 @@ class MultiBinPackingEnv:
         util_next = self.total_placed_volume / total_available_volume
 
         # === COMPUTE POTENTIAL AFTER PLACEMENT ===
+        bin_vol_next = sum(b.w * b.d * b.h for b in target_bin.placed)
+        bin_util_next = bin_vol_next / self.bin_volume
         ems_quality_next = self._compute_ems_quality(target_bin)
-        potential_next = util_next + 0.3 * ems_quality_next
+        potential_next = bin_util_next + 0.3 * ems_quality_next
 
         # Potential-based shaped reward (theoretically sound - doesn't change optimal policy)
         # F(s,a,s') = r + γ*Φ(s') - Φ(s)
+        # Using per-bin utilization gives ~0.01-0.05 per step instead of ~0.001
         reward = (self.gamma * potential_next) - potential_prev
 
         # Small bonus for balancing bins
