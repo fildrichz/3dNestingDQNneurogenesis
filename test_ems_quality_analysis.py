@@ -7,15 +7,15 @@ sys.path.insert(0, 'main')
 from nesting.packing_core_enhanced import Container, EMS
 
 def compute_ems_quality(bin, bin_volume):
-    """Same as in packing_with_dqncore2_enhanced.py"""
+    """Same as in packing_with_dqncore2_enhanced.py - UPDATED to use average"""
     if not bin.ems_list:
         return 0.0
 
     volumes = sorted([ems.volume() for ems in bin.ems_list], reverse=True)
     top_3 = volumes[:min(3, len(volumes))]
-    sum_top_3 = sum(top_3)
-    normalized_sum = sum_top_3 / bin_volume
-    ems_quality = normalized_sum ** (1.0/3.0)
+    avg_top_3 = sum(top_3) / len(top_3)
+    normalized_avg = avg_top_3 / bin_volume
+    ems_quality = normalized_avg ** (1.0/3.0)
     return ems_quality
 
 print("="*80)

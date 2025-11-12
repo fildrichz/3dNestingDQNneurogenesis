@@ -120,14 +120,14 @@ class MultiBinPackingEnv:
         """
         Compute EMS quality for potential-based reward shaping.
 
-        Uses cube root of sum of top-3 largest EMS volumes.
+        Uses cube root of AVERAGE of top-3 largest EMS volumes.
         This provides intermediate feedback about packing quality:
         - High quality: Large usable spaces remain (good for future placements)
         - Low quality: Fragmented space (hard to fit remaining items)
 
         Returns:
-            float: Cube root of (sum of top-3 EMS volumes / bin volume)
-                   Range: 0.0 to ~1.4 (∛(3) when all 3 EMS = bin volume)
+            float: Cube root of (average of top-3 EMS volumes / bin volume)
+                   Range: 0.0 to ~1.0 (naturally bounded, comparable to utilization)
         """
         if not bin.ems_list:
             return 0.0
@@ -136,13 +136,13 @@ class MultiBinPackingEnv:
         volumes = sorted([ems.volume() for ems in bin.ems_list], reverse=True)
         top_3 = volumes[:min(3, len(volumes))]
 
-        # Sum and normalize by bin volume
-        sum_top_3 = sum(top_3)
-        normalized_sum = sum_top_3 / self.bin_volume
+        # Average and normalize by bin volume (keeps it in 0-1 range like utilization)
+        avg_top_3 = sum(top_3) / len(top_3)
+        normalized_avg = avg_top_3 / self.bin_volume
 
         # Cube root to get diminishing returns for larger spaces
         # This makes the metric less sensitive to exactly which EMS split occurred
-        ems_quality = normalized_sum ** (1.0/3.0)
+        ems_quality = normalized_avg ** (1.0/3.0)
 
         return ems_quality
 
