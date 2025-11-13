@@ -17,6 +17,16 @@ def to_torch(x, device):
         return torch.from_numpy(x).to(device)
     return torch.as_tensor(x, device=device)
 
+def get_activation(name: str):
+    """Get activation class from string name"""
+    activations = {
+        'relu': nn.ReLU,
+        'gelu': nn.GELU,
+        'silu': nn.SiLU,
+        'tanh': nn.Tanh,
+    }
+    return activations.get(name.lower(), nn.ReLU)
+
 
 class MAB(nn.Module):
     """Multihead Attention Block for Set Transformer"""
@@ -85,8 +95,10 @@ class SetTransformer(nn.Module):
     def forward(self, X, key_padding_mask=None):
         # X: (B, A, dim_input)
         # key_padding_mask: (B, A) - True for padding
-        return self.enc[0](X, key_padding_mask=key_padding_mask) + \
-               self.enc[1](X, key_padding_mask=key_padding_mask)
+        # Properly chain the ISAB blocks (not parallel addition)
+        out = self.enc[0](X, key_padding_mask=key_padding_mask)
+        out = self.enc[1](out, key_padding_mask=key_padding_mask)
+        return out
 
 class ReplayBuffer:
     """Enhanced replay buffer that stores heightmap patches"""
@@ -199,12 +211,15 @@ class ReplayBuffer:
         )
 
 class MLP(nn.Module):
-    def __init__(self, in_dim:int, hidden:int=256, out_dim:int=256, layers:int=2, activation=nn.ReLU):
+    def __init__(self, in_dim:int, hidden:int=256, out_dim:int=256, layers:int=2,
+                 activation=nn.ReLU, dropout:float=0.0):
         super().__init__()
         mods = []
         d = in_dim
         for _ in range(max(0,layers-1)):
             mods += [nn.Linear(d, hidden), activation()]
+            if dropout > 0:
+                mods += [nn.Dropout(dropout)]
             d = hidden
         mods += [nn.Linear(d, out_dim)]
         self.net = nn.Sequential(*mods)
@@ -214,31 +229,36 @@ class MLP(nn.Module):
 
 class HeightmapCNN(nn.Module):
     """CNN encoder for heightmap patches around placement positions"""
-    def __init__(self, patch_size:int=7, out_dim:int=64):
+    def __init__(self, patch_size:int=7, out_dim:int=64, channels:list=None, activation=nn.ReLU):
         super().__init__()
         self.patch_size = patch_size
+        if channels is None:
+            channels = [16, 32]
+
         self.cnn = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.Conv2d(1, channels[0], kernel_size=3, padding=1),
+            activation(),
+            nn.Conv2d(channels[0], channels[1], kernel_size=3, padding=1),
+            activation(),
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(32, out_dim),
-            nn.ReLU()
+            nn.Linear(channels[1], out_dim),
+            activation()
         )
-    
+
     def forward(self, patches):
         # patches: (B, 1, patch_size, patch_size)
         return self.cnn(patches)
 
 class SimpleHead(nn.Module):
-    def __init__(self, in_dim:int, hidden:int=256):
+    def __init__(self, in_dim:int, hidden:int=256, dropout:float=0.0):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, 1)
-        )
+        layers = [nn.Linear(in_dim, hidden), nn.ReLU()]
+        if dropout > 0:
+            layers.append(nn.Dropout(dropout))
+        layers.append(nn.Linear(hidden, 1))
+        self.net = nn.Sequential(*layers)
+
     def forward(self, z):
         return self.net(z)
 
@@ -246,20 +266,27 @@ class QNetworkEnhanced(nn.Module):
     """Enhanced Q-Network with heightmap CNN and Transformer/Set Transformer attention"""
     def __init__(self, obs_dim:int, action_feat_dim:int, hidden:int=256, enc_layers:int=2,
                  head_hidden:int=256, heightmap_patch_size:int=7, use_attention:bool=True,
-                 attention_type:str="standard", num_inducing_points:int=32):
+                 attention_type:str="standard", attention_heads:int=4, num_inducing_points:int=32,
+                 cnn_channels:list=None, dropout:float=0.0, activation:str="relu"):
         super().__init__()
         self.patch_size = heightmap_patch_size
         self.use_attention = use_attention
         self.attention_type = attention_type
 
+        # Get activation function
+        act_fn = get_activation(activation)
+
         # State encoder
-        self.state_enc = MLP(obs_dim, hidden=hidden, out_dim=hidden, layers=enc_layers)
+        self.state_enc = MLP(obs_dim, hidden=hidden, out_dim=hidden, layers=enc_layers,
+                           activation=act_fn, dropout=dropout)
 
         # Heightmap CNN
-        self.heightmap_cnn = HeightmapCNN(patch_size=heightmap_patch_size, out_dim=64)
+        self.heightmap_cnn = HeightmapCNN(patch_size=heightmap_patch_size, out_dim=64,
+                                        channels=cnn_channels, activation=act_fn)
 
         # Action encoder (now takes action_feats + heightmap embedding)
-        self.action_enc = MLP(action_feat_dim + 64, hidden=hidden, out_dim=hidden, layers=enc_layers)
+        self.action_enc = MLP(action_feat_dim + 64, hidden=hidden, out_dim=hidden,
+                            layers=enc_layers, activation=act_fn, dropout=dropout)
 
         # Attention mechanism for action relationships
         if use_attention:
@@ -268,7 +295,7 @@ class QNetworkEnhanced(nn.Module):
                 self.action_attention = SetTransformer(
                     dim_input=hidden,
                     dim_output=hidden,
-                    num_heads=4,
+                    num_heads=attention_heads,  # ✅ Now uses evolved parameter
                     num_inds=num_inducing_points,
                     ln=True
                 )
@@ -276,16 +303,16 @@ class QNetworkEnhanced(nn.Module):
                 # Standard Transformer (default)
                 encoder_layer = nn.TransformerEncoderLayer(
                     d_model=hidden,
-                    nhead=4,
+                    nhead=attention_heads,  # ✅ Now uses evolved parameter
                     dim_feedforward=hidden*2,
-                    dropout=0.1,
+                    dropout=dropout,  # Use evolved dropout value directly
                     batch_first=True
                 )
                 self.action_attention = nn.TransformerEncoder(encoder_layer, num_layers=2)
         else:
             self.action_attention = None
 
-        self.head = SimpleHead(2*hidden, hidden=head_hidden)
+        self.head = SimpleHead(2*hidden, hidden=head_hidden, dropout=dropout)
 
     def forward(self, s:torch.Tensor, action_feats:torch.Tensor, 
                 heightmap_patches:torch.Tensor, action_mask:torch.Tensor) -> torch.Tensor:
@@ -357,17 +384,33 @@ class DQNConfigEnhanced:
     head_hidden: int = 256
     heightmap_patch_size: int = 7
     use_attention: bool = True
-    attention_type: str = "standard"  # "standard" or "set_transformer"
+    attention_type: str = "standard"  # "standard", "set_transformer", or "none"
+    attention_heads: int = 4  # Number of attention heads (NEW: now configurable)
     num_inducing_points: int = 32  # For set_transformer only
+    cnn_channels: list = None  # CNN channel progression, e.g., [16, 32]
+    dropout: float = 0.0  # Dropout rate
+    activation: str = "relu"  # Activation function: "relu", "gelu", or "silu"
     device: str = "cpu"
     double_dqn: bool = True
     warmup_steps: int = 1000
+
+    def __post_init__(self):
+        """Set default values for mutable defaults"""
+        if self.cnn_channels is None:
+            self.cnn_channels = [16, 32]
+
+        # Validate attention_heads divisibility
+        if self.use_attention and self.hidden % self.attention_heads != 0:
+            raise ValueError(
+                f"hidden ({self.hidden}) must be divisible by attention_heads ({self.attention_heads}). "
+                f"Got remainder: {self.hidden % self.attention_heads}"
+            )
 
 class DQNAgentEnhanced:
     def __init__(self, cfg: DQNConfigEnhanced):
         self.cfg = cfg
         self.device = torch.device(cfg.device)
-        
+
         # Initialize networks
         self.q = QNetworkEnhanced(
             cfg.obs_dim, cfg.action_feat_dim,
@@ -376,7 +419,11 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
-            num_inducing_points=cfg.num_inducing_points
+            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
+            num_inducing_points=cfg.num_inducing_points,
+            cnn_channels=cfg.cnn_channels,
+            dropout=cfg.dropout,
+            activation=cfg.activation
         ).to(self.device)
 
         self.q_target = QNetworkEnhanced(
@@ -386,7 +433,11 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
-            num_inducing_points=cfg.num_inducing_points
+            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
+            num_inducing_points=cfg.num_inducing_points,
+            cnn_channels=cfg.cnn_channels,
+            dropout=cfg.dropout,
+            activation=cfg.activation
         ).to(self.device)
         
         self.q_target.load_state_dict(self.q.state_dict())

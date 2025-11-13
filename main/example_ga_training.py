@@ -67,9 +67,13 @@ def compare_architectures(problem_path: str,
         'hidden_dim': 256,
         'enc_layers': 2,
         'head_hidden': 256,
-        'use_attention': True,
+        'attention_type': 'standard',  # Changed from use_attention: True
         'attention_heads': 4,
+        'num_inducing_points': 32,     # Required for set_transformer
         'patch_size': 7,
+        'cnn_channels': [16, 32],      # Default CNN channels
+        'dropout': 0.0,                # No dropout in baseline
+        'activation': 'relu',          # ReLU activation
     })
     
     baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device)
@@ -148,7 +152,8 @@ def main():
         'generations': 5,            # Small for quick testing (use 10+ for real)
         'episodes_per_eval': 50,     # Episodes to train each architecture
         'elite_size': 2,             # Keep top 2 genomes
-        'mutation_rate': 0.2,        # 20% mutation rate
+        'mutation_rate': 0.2,        # Initial mutation rate (will decay if adaptive)
+        'adaptive_mutation': True,   # Enable adaptive mutation rate
         'crossover_method': 'uniform',
         'tournament_size': 3,
         'save_dir': 'output_data/ga_evolution',
@@ -223,8 +228,13 @@ def main():
         print(f"  hidden_dim={best_genome.genes['hidden_dim']}")
         print(f"  enc_layers={best_genome.genes['enc_layers']}")
         print(f"  head_hidden={best_genome.genes['head_hidden']}")
-        print(f"  use_attention={best_genome.genes['use_attention']}")
+        print(f"  attention_type={best_genome.genes['attention_type']}")
+        print(f"  attention_heads={best_genome.genes['attention_heads']}")
+        print(f"  num_inducing_points={best_genome.genes['num_inducing_points']}")
         print(f"  patch_size={best_genome.genes['patch_size']}")
+        print(f"  cnn_channels={best_genome.genes['cnn_channels']}")
+        print(f"  dropout={best_genome.genes['dropout']}")
+        print(f"  activation={best_genome.genes['activation']}")
 
 
 if __name__ == "__main__":
