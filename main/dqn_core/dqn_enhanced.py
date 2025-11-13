@@ -95,8 +95,10 @@ class SetTransformer(nn.Module):
     def forward(self, X, key_padding_mask=None):
         # X: (B, A, dim_input)
         # key_padding_mask: (B, A) - True for padding
-        return self.enc[0](X, key_padding_mask=key_padding_mask) + \
-               self.enc[1](X, key_padding_mask=key_padding_mask)
+        # Properly chain the ISAB blocks (not parallel addition)
+        out = self.enc[0](X, key_padding_mask=key_padding_mask)
+        out = self.enc[1](out, key_padding_mask=key_padding_mask)
+        return out
 
 class ReplayBuffer:
     """Enhanced replay buffer that stores heightmap patches"""

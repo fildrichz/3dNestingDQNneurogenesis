@@ -113,7 +113,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     genome.metrics['fitness_components'] = {
         'utilization': avg_util,
         'bins_efficiency': 1.0 - bins_penalty,
-        'parsimony': 1.0 - complexity / 10.0,
+        'parsimony': 1.0 - complexity_penalty,  # Fixed: now matches actual fitness calculation
         'complexity_params': complexity
     }
 
@@ -220,10 +220,14 @@ def evolve_architecture(problem,
                 print(f"\n[{i+1}/{population_size}] Evaluating genome {genome.genome_id}...")
                 print(f"  Architecture: hidden={genome.genes['hidden_dim']}, "
                       f"layers={genome.genes['enc_layers']}, "
-                      f"attention={genome.genes['attention_type']}, "
-                      f"activation={genome.genes['activation']}, "
-                      f"dropout={genome.genes['dropout']}, "
-                      f"patch={genome.genes['patch_size']}")
+                      f"head={genome.genes['head_hidden']}")
+                print(f"  Attention: type={genome.genes['attention_type']}, "
+                      f"heads={genome.genes['attention_heads']}, "
+                      f"inds={genome.genes['num_inducing_points']}")
+                print(f"  Features: patch={genome.genes['patch_size']}, "
+                      f"cnn={genome.genes['cnn_channels']}, "
+                      f"act={genome.genes['activation']}, "
+                      f"drop={genome.genes['dropout']}")
             
             fitness, metrics = evaluate_genome_fitness(
                 genome=genome,
