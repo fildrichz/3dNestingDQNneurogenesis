@@ -83,7 +83,7 @@ class MultiBinPackingEnv:
         adaptive_resolution = max(1, min(W, D) // 20)
 
         C = Container(*self.bin_size, max_weight=self.max_weight,
-                     resolution=adaptive_resolution, max_ems=50)
+                     resolution=adaptive_resolution, max_ems=1000)
         if self.problem is not None:
             C.set_constraints(
                 incompatibilities=self.incompatibilities,

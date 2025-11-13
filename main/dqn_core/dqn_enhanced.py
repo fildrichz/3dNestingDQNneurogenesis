@@ -52,15 +52,18 @@ class MAB(nn.Module):
         K_ = torch.cat(K.split(dim_split, 2), 0)
         V_ = torch.cat(V.split(dim_split, 2), 0)
 
-        # Handle key padding mask for multi-head
+        # Compute attention scores
+        scores = Q_.bmm(K_.transpose(1,2)) / np.sqrt(self.dim_V)
+
+        # Apply mask BEFORE softmax (critical fix: mask with -inf, not after softmax)
         if key_padding_mask is not None:
+            # Replicate mask for multi-head
             key_padding_mask = torch.cat([key_padding_mask for _ in range(self.num_heads)], 0)
+            # Mask invalid positions with -inf so they get zero probability after softmax
+            scores = scores.masked_fill(key_padding_mask.unsqueeze(1), float('-inf'))
 
-        A = torch.softmax(Q_.bmm(K_.transpose(1,2))/np.sqrt(self.dim_V), 2)
-
-        # Apply mask to attention weights
-        if key_padding_mask is not None:
-            A = A.masked_fill(key_padding_mask.unsqueeze(1), 0)
+        # Now softmax produces properly normalized attention weights (sum to 1)
+        A = torch.softmax(scores, 2)
 
         O = torch.cat((Q_ + A.bmm(V_)).split(Q.size(0), 0), 2)
         O = O if getattr(self, 'ln0', None) is None else self.ln0(O)
@@ -523,6 +526,7 @@ class DQNAgentEnhanced:
         # Compute target
         with torch.no_grad():
             if self.cfg.double_dqn:
+                # Double DQN: use online network to select action, target network to evaluate
                 q_next_online = self.q(s_next, next_feats, next_patches, next_mask)
                 q_next_online_masked = torch.where(
                     next_mask > 0.5,
@@ -530,12 +534,14 @@ class DQNAgentEnhanced:
                     torch.tensor(float('-inf'), device=self.device)
                 )
                 next_a = torch.argmax(q_next_online_masked, dim=1, keepdim=True)
-                
+
                 q_next_target = self.q_target(s_next, next_feats, next_patches, next_mask)
                 max_next = q_next_target.gather(1, next_a).squeeze(1)
-                
-                action_was_valid = next_mask.gather(1, next_a).squeeze(1) > 0.5
-                max_next = torch.where(action_was_valid, max_next, torch.zeros_like(max_next))
+
+                # Check if ANY valid actions exist (not just whether selected action is valid)
+                # If no valid actions, this is effectively a terminal state
+                has_valid_actions = (next_mask.sum(dim=1) > 0.5)
+                max_next = torch.where(has_valid_actions, max_next, torch.zeros_like(max_next))
             else:
                 q_next = self.q_target(s_next, next_feats, next_patches, next_mask)
                 q_next_masked = torch.where(
@@ -545,19 +551,23 @@ class DQNAgentEnhanced:
                 )
                 max_next = torch.max(q_next_masked, dim=1)[0]
 
+                # Check if ANY valid actions exist
+                has_valid_actions = (next_mask.sum(dim=1) > 0.5)
+                max_next = torch.where(has_valid_actions, max_next, torch.zeros_like(max_next))
+
             target_all = r + (1.0 - done) * self.cfg.gamma * max_next
 
         target = target_all[valid]
 
         # Optimize
         loss = F.smooth_l1_loss(q_sa, target)
-        
+
         self.opt.zero_grad()
         loss.backward()
-        
-        if self.cfg.grad_clip and self.cfg.grad_clip > 0:
+
+        if self.cfg.grad_clip > 0:
             nn.utils.clip_grad_norm_(self.q.parameters(), self.cfg.grad_clip)
-        
+
         self.opt.step()
         
         self.training_steps += 1

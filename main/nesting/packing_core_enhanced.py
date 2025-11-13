@@ -353,6 +353,7 @@ class Container(box3d):
             # Check if box overlaps in XY with our target position
             x_overlap = not (x + w <= box.x or box.x + box.w <= x)
             y_overlap = not (y + d <= box.y or box.y + box.d <= y)
+            
 
             if x_overlap and y_overlap:
                 # This box overlaps in XY - check if it's the highest so far
@@ -748,7 +749,7 @@ class Container(box3d):
             # Draw boxes
             for b in self.placed:
                 color = colors[b.item_id % 20] if b.item_id >= 0 else 'blue'
-                ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=0.6, edgecolor='k')
+                ax.bar3d(b.x, b.y, b.z, b.w, b.d, b.h, color=color, alpha=1, edgecolor='k')
 
             # Create legend entries
             for item_id in sorted(item_counts.keys()):

@@ -130,11 +130,11 @@ def compare_architectures(problem_path: str,
     print(f"Complexity difference: {complexity_diff:+.2f}M params")
     
     if util_improvement > 0:
-        print(f"\n✅ Evolved architecture is BETTER!")
+        print(f"\n Evolved architecture is BETTER!")
     elif util_improvement > -2:
-        print(f"\n≈ Evolved architecture is COMPARABLE")
+        print(f"\n Evolved architecture is COMPARABLE")
     else:
-        print(f"\n❌ Baseline is better (GA may need more generations)")
+        print(f"\n Baseline is better (GA may need more generations)")
     
     print(f"{'='*80}\n")
 
