@@ -251,12 +251,14 @@ class HeightmapCNN(nn.Module):
         return self.cnn(patches)
 
 class SimpleHead(nn.Module):
-    def __init__(self, in_dim:int, hidden:int=256):
+    def __init__(self, in_dim:int, hidden:int=256, dropout:float=0.0):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, 1)
-        )
+        layers = [nn.Linear(in_dim, hidden), nn.ReLU()]
+        if dropout > 0:
+            layers.append(nn.Dropout(dropout))
+        layers.append(nn.Linear(hidden, 1))
+        self.net = nn.Sequential(*layers)
+
     def forward(self, z):
         return self.net(z)
 
@@ -303,14 +305,14 @@ class QNetworkEnhanced(nn.Module):
                     d_model=hidden,
                     nhead=attention_heads,  # ✅ Now uses evolved parameter
                     dim_feedforward=hidden*2,
-                    dropout=dropout if dropout > 0 else 0.1,
+                    dropout=dropout,  # Use evolved dropout value directly
                     batch_first=True
                 )
                 self.action_attention = nn.TransformerEncoder(encoder_layer, num_layers=2)
         else:
             self.action_attention = None
 
-        self.head = SimpleHead(2*hidden, hidden=head_hidden)
+        self.head = SimpleHead(2*hidden, hidden=head_hidden, dropout=dropout)
 
     def forward(self, s:torch.Tensor, action_feats:torch.Tensor, 
                 heightmap_patches:torch.Tensor, action_mask:torch.Tensor) -> torch.Tensor:

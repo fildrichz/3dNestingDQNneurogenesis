@@ -55,7 +55,7 @@ class NetworkGenome:
         'lr': 1e-4,
         'batch_size': 128,
         'gamma': 0.992,
-        'n_step': 3,
+        'n_step': 15,  # Match main training (was 3) - better credit assignment for sparse rewards
         'eps_start': 1.0,
         'eps_end': 0.15,
         'eps_decay_steps': 20_000,

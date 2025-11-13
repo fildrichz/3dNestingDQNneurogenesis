@@ -129,6 +129,7 @@ def evolve_architecture(problem,
                        adaptive_mutation: bool = True,
                        crossover_method: str = 'uniform',
                        tournament_size: int = 3,
+                       seed: Optional[int] = None,
                        save_dir: Optional[str] = None,
                        verbose: bool = True) -> Tuple[NetworkGenome, List[NetworkGenome]]:
     """
@@ -144,6 +145,7 @@ def evolve_architecture(problem,
         adaptive_mutation: If True, decay mutation rate over generations
         crossover_method: 'uniform' or 'single_point'
         tournament_size: Size of tournament for selection
+        seed: Random seed for reproducibility (None = random)
         save_dir: Directory to save results (None = don't save)
         verbose: Print progress
 
@@ -152,7 +154,15 @@ def evolve_architecture(problem,
     """
     # Setup
     from packing_with_dqncore2_enhanced import load_problem_as_items, MultiBinPackingEnv
-    
+    import random
+
+    # Set random seeds for reproducibility
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        if verbose:
+            print(f"Random seed set to: {seed}")
+
     items = load_problem_as_items(problem)
     W, D, H = problem.bin_dimensions
     
