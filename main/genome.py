@@ -33,13 +33,21 @@ class NetworkGenome:
         'hidden_dim': [128, 192, 256, 320, 384, 512],      # Number of neurons
         'enc_layers': [1, 2, 3, 4],                         # Number of encoder layers
         'head_hidden': [128, 192, 256, 320, 384],          # Head layer size
-        
+
         # Attention mechanism
-        'use_attention': [True, False],                     # Enable/disable attention
+        'attention_type': ['standard', 'set_transformer', 'none'],  # Attention type
         'attention_heads': [2, 4, 8],                      # Number of attention heads
-        
+        'num_inducing_points': [16, 32, 64],               # Inducing points for set_transformer
+
         # Spatial feature extraction
         'patch_size': [5, 7, 9],                           # Heightmap patch size
+        'cnn_channels': [[8, 16], [16, 32], [32, 64], [16, 48]],  # CNN channel progression
+
+        # Regularization
+        'dropout': [0.0, 0.05, 0.1, 0.15, 0.2],           # Dropout rate
+
+        # Activation function
+        'activation': ['relu', 'gelu', 'silu'],            # Activation function type
     }
     
     # Fixed parameters (not evolved)
@@ -47,7 +55,7 @@ class NetworkGenome:
         'lr': 1e-4,
         'batch_size': 128,
         'gamma': 0.992,
-        'n_step': 3,
+        'n_step': 15,  # Match main training (was 3) - better credit assignment for sparse rewards
         'eps_start': 1.0,
         'eps_end': 0.15,
         'eps_decay_steps': 20_000,
@@ -78,43 +86,56 @@ class NetworkGenome:
     @classmethod
     def random_genes(cls) -> Dict[str, Any]:
         """Generate random genome with valid gene values."""
+        import random
         genes = {}
         for gene_name, space in cls.GENE_SPACES.items():
-            value = np.random.choice(space)
+            # Use random.choice for nested lists (like cnn_channels)
+            # np.random.choice doesn't work with 2D lists
+            value = random.choice(space)
             # Convert to native Python types immediately
             genes[gene_name] = cls._convert_to_python(value)
         return genes
 
-    def to_dqn_config(self, obs_dim: int, action_feat_dim: int, 
+    def to_dqn_config(self, obs_dim: int, action_feat_dim: int,
                      max_actions: int, device: str = "cpu") -> DQNConfigEnhanced:
         """
         Decode genome into DQN configuration.
-        
+
         This converts the genotype (gene representation) to phenotype
         (actual network configuration).
-        
+
         Args:
             obs_dim: Observation dimension
             action_feat_dim: Action feature dimension
             max_actions: Maximum number of actions
             device: Device to run on
-            
+
         Returns:
             DQNConfigEnhanced instance
         """
+        # Determine if attention should be used
+        attention_type = self.genes['attention_type']
+        use_attention = attention_type != 'none'
+
         return DQNConfigEnhanced(
             obs_dim=obs_dim,
             action_feat_dim=action_feat_dim,
             max_actions=max_actions,
             device=device,
-            
+
             # EVOLVED PARAMETERS (Section 3.2)
             hidden=self.genes['hidden_dim'],
             enc_layers=self.genes['enc_layers'],
             head_hidden=self.genes['head_hidden'],
-            use_attention=self.genes['use_attention'],
+            use_attention=use_attention,
+            attention_type=attention_type if use_attention else 'standard',
+            attention_heads=self.genes['attention_heads'],  # ✅ Now passed to config
+            num_inducing_points=self.genes['num_inducing_points'],
             heightmap_patch_size=self.genes['patch_size'],
-            
+            cnn_channels=self.genes['cnn_channels'],
+            dropout=self.genes['dropout'],
+            activation=self.genes['activation'],
+
             # FIXED PARAMETERS (not part of Section 3.2 evolution)
             **self.FIXED_PARAMS
         )
@@ -122,13 +143,15 @@ class NetworkGenome:
 
     def mutate(self, mutation_rate: float = 0.2) -> 'NetworkGenome':
         """Create mutated copy of genome."""
+        import random
         new_genes = self.genes.copy()
-        
+
         for gene_name, space in self.GENE_SPACES.items():
             if np.random.rand() < mutation_rate:
-                value = np.random.choice(space)
+                # Use random.choice for nested lists (like cnn_channels)
+                value = random.choice(space)
                 new_genes[gene_name] = self._convert_to_python(value)
-        
+
         return NetworkGenome(new_genes)
     
     @staticmethod
@@ -138,6 +161,9 @@ class NetworkGenome:
             return int(value)
         elif isinstance(value, np.bool_):
             return bool(value)
+        elif isinstance(value, (list, np.ndarray)):
+            # Handle list-type genes (e.g., cnn_channels)
+            return [int(v) if isinstance(v, np.integer) else v for v in value]
         return value
     
     @classmethod
@@ -145,70 +171,111 @@ class NetworkGenome:
                  method: str = 'uniform') -> 'NetworkGenome':
         """
         Create child genome through crossover of two parents.
-        
+
         Supports:
         - 'uniform': Each gene randomly chosen from either parent
         - 'single_point': Single crossover point
-        
+
         Args:
             parent1: First parent genome
             parent2: Second parent genome
             method: Crossover method ('uniform' or 'single_point')
-            
+
         Returns:
             New child NetworkGenome
         """
+        import copy
         gene_names = list(cls.GENE_SPACES.keys())
         child_genes = {}
-        
+
         if method == 'uniform':
             # Uniform crossover: randomly choose each gene from either parent
             for gene_name in gene_names:
                 if np.random.rand() < 0.5:
-                    child_genes[gene_name] = parent1.genes[gene_name]
+                    # Deep copy to avoid aliasing issues with list genes
+                    child_genes[gene_name] = copy.deepcopy(parent1.genes[gene_name])
                 else:
-                    child_genes[gene_name] = parent2.genes[gene_name]
-        
+                    child_genes[gene_name] = copy.deepcopy(parent2.genes[gene_name])
+
         elif method == 'single_point':
             # Single-point crossover
             crossover_point = np.random.randint(1, len(gene_names))
-            
+
             for i, gene_name in enumerate(gene_names):
                 if i < crossover_point:
-                    child_genes[gene_name] = parent1.genes[gene_name]
+                    child_genes[gene_name] = copy.deepcopy(parent1.genes[gene_name])
                 else:
-                    child_genes[gene_name] = parent2.genes[gene_name]
-        
+                    child_genes[gene_name] = copy.deepcopy(parent2.genes[gene_name])
+
         else:
             raise ValueError(f"Unknown crossover method: {method}")
-        
+
         return NetworkGenome(child_genes)
     
     def get_network_complexity(self) -> float:
         """
         Estimate network complexity for parsimony pressure.
-        
+
         Complexity is roughly proportional to number of parameters.
         Used in fitness calculation to prefer smaller networks.
-        
+
         Returns:
             Complexity score (higher = more complex)
         """
-        # Rough parameter count estimate
         hidden = self.genes['hidden_dim']
         layers = self.genes['enc_layers']
-        head = self.genes['head_hidden']
-        attention = self.genes['use_attention']
-        
-        # Base MLP parameters
-        complexity = hidden * layers * 2  # Encoder parameters
-        complexity += head  # Head parameters
-        
-        # Attention adds significant parameters
-        if attention:
-            heads = self.genes['attention_heads']
-            complexity += hidden * hidden * heads * 2  # Attention parameters
-        
+        head_hidden = self.genes['head_hidden']
+        attention_type = self.genes['attention_type']
+
+        complexity = 0
+
+        # State encoder MLP (obs_dim=8 -> hidden, with 'layers' hidden layers)
+        # Layer 1: 8 -> hidden
+        complexity += 8 * hidden
+        # Intermediate layers: hidden -> hidden
+        for _ in range(max(0, layers - 1)):
+            complexity += hidden * hidden
+
+        # Action encoder MLP (action_feat_dim+64 -> hidden, with 'layers' hidden layers)
+        # Layer 1: (25+64)=89 -> hidden
+        complexity += 89 * hidden
+        # Intermediate layers: hidden -> hidden
+        for _ in range(max(0, layers - 1)):
+            complexity += hidden * hidden
+
+        # CNN parameters
+        cnn_channels = self.genes['cnn_channels']
+        # Conv1: 1 -> cnn_channels[0], kernel 3x3
+        complexity += 1 * cnn_channels[0] * 9
+        # Conv2: cnn_channels[0] -> cnn_channels[1], kernel 3x3
+        complexity += cnn_channels[0] * cnn_channels[1] * 9
+        # FC: cnn_channels[1] -> 64
+        complexity += cnn_channels[1] * 64
+
+        # Attention parameters
+        if attention_type == 'standard':
+            # TransformerEncoder with 2 layers
+            # Each layer: Q,K,V projections + output proj + FFN
+            for _ in range(2):
+                # Multi-head attention (4 projections: Q, K, V, O)
+                complexity += 4 * (hidden * hidden)
+                # FFN: hidden -> 2*hidden -> hidden
+                complexity += hidden * (2 * hidden) + (2 * hidden) * hidden
+
+        elif attention_type == 'set_transformer':
+            num_inds = self.genes['num_inducing_points']
+            # 2 ISAB blocks, each with 2 MAB modules
+            # Simplified estimate: 4 MAB modules total
+            for _ in range(4):
+                # Q, K, V, O projections
+                complexity += 4 * (hidden * hidden)
+                # Inducing points
+                complexity += num_inds * hidden
+
+        # Head: (2*hidden) -> head_hidden -> 1
+        complexity += (2 * hidden) * head_hidden
+        complexity += head_hidden * 1
+
         return complexity / 1e6  # Normalize to millions of parameters
     
     def to_dict(self) -> Dict[str, Any]:
