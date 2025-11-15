@@ -28,26 +28,28 @@ class NetworkGenome:
     """
     
     # Define search spaces for each gene (Section 3.2 parameters only)
+    # Multiplicative genes: {'type': 'multiplicative', 'base': X, 'min': Y, 'max': Z}
+    # Discrete genes: list of valid values
     GENE_SPACES = {
-        # Core architecture
-        'hidden_dim': [128, 192, 256, 320, 384, 512],      # Number of neurons
-        'enc_layers': [1, 2, 3, 4],                         # Number of encoder layers
-        'head_hidden': [128, 192, 256, 320, 384],          # Head layer size
+        # Core architecture - multiplicative scaling (unbounded search)
+        'hidden_dim': {'type': 'multiplicative', 'base': 256, 'min': 64, 'max': 1024},
+        'enc_layers': {'type': 'multiplicative', 'base': 2, 'min': 1, 'max': 8},
+        'head_hidden': {'type': 'multiplicative', 'base': 256, 'min': 64, 'max': 1024},
 
         # Attention mechanism
-        'attention_type': ['standard', 'set_transformer', 'none'],  # Attention type
-        'attention_heads': [2, 4, 8],                      # Number of attention heads
-        'num_inducing_points': [16, 32, 64],               # Inducing points for set_transformer
+        'attention_type': ['standard', 'set_transformer', 'none'],  # Discrete
+        'attention_heads': {'type': 'multiplicative', 'base': 4, 'min': 2, 'max': 16},
+        'num_inducing_points': {'type': 'multiplicative', 'base': 32, 'min': 8, 'max': 128},
 
         # Spatial feature extraction
-        'patch_size': [5, 7, 9],                           # Heightmap patch size
-        'cnn_channels': [[8, 16], [16, 32], [32, 64], [16, 48]],  # CNN channel progression
+        'patch_size': {'type': 'multiplicative', 'base': 7, 'min': 3, 'max': 15},
+        'cnn_channels': [[8, 16], [16, 32], [32, 64], [16, 48]],  # Discrete (complex structure)
 
-        # Regularization
-        'dropout': [0.0, 0.05, 0.1, 0.15, 0.2],           # Dropout rate
+        # Regularization - discrete (non-integer floats)
+        'dropout': [0.0, 0.05, 0.1, 0.15, 0.2],
 
-        # Activation function
-        'activation': ['relu', 'gelu', 'silu'],            # Activation function type
+        # Activation function - discrete (categorical)
+        'activation': ['relu', 'gelu', 'silu'],
     }
     
     # Fixed parameters (not evolved)
@@ -89,11 +91,29 @@ class NetworkGenome:
         import random
         genes = {}
         for gene_name, space in cls.GENE_SPACES.items():
-            # Use random.choice for nested lists (like cnn_channels)
-            # np.random.choice doesn't work with 2D lists
-            value = random.choice(space)
-            # Convert to native Python types immediately
-            genes[gene_name] = cls._convert_to_python(value)
+            if isinstance(space, dict) and space.get('type') == 'multiplicative':
+                # Multiplicative gene: randomly initialize within bounds
+                # Generate valid powers of 2 within the range
+                min_val, max_val = space['min'], space['max']
+
+                # Find all valid powers of 2 in range
+                valid_values = []
+                current = min_val
+                while current <= max_val:
+                    valid_values.append(current)
+                    current *= 2
+
+                # If we don't have any valid powers of 2, use min/max bounds
+                if not valid_values:
+                    valid_values = [min_val, max_val]
+
+                # Randomly select from valid values
+                genes[gene_name] = random.choice(valid_values)
+            else:
+                # Discrete gene: random choice from list
+                value = random.choice(space)
+                # Convert to native Python types immediately
+                genes[gene_name] = cls._convert_to_python(value)
         return genes
 
     def to_dqn_config(self, obs_dim: int, action_feat_dim: int,
@@ -142,15 +162,34 @@ class NetworkGenome:
     
 
     def mutate(self, mutation_rate: float = 0.2) -> 'NetworkGenome':
-        """Create mutated copy of genome."""
+        """
+        Create mutated copy of genome.
+
+        For multiplicative genes: randomly multiply or divide by 2, clamped to bounds
+        For discrete genes: randomly select from available options
+        """
         import random
         new_genes = self.genes.copy()
 
         for gene_name, space in self.GENE_SPACES.items():
             if np.random.rand() < mutation_rate:
-                # Use random.choice for nested lists (like cnn_channels)
-                value = random.choice(space)
-                new_genes[gene_name] = self._convert_to_python(value)
+                if isinstance(space, dict) and space.get('type') == 'multiplicative':
+                    # Multiplicative mutation: randomly *2 or /2
+                    current_value = new_genes[gene_name]
+                    if np.random.rand() < 0.5:
+                        # Multiply by 2
+                        new_value = current_value * 2
+                    else:
+                        # Divide by 2
+                        new_value = current_value // 2  # Integer division
+
+                    # Clamp to bounds
+                    new_value = max(space['min'], min(space['max'], new_value))
+                    new_genes[gene_name] = int(new_value)
+                else:
+                    # Discrete mutation: random choice from list
+                    value = random.choice(space)
+                    new_genes[gene_name] = self._convert_to_python(value)
 
         return NetworkGenome(new_genes)
     
