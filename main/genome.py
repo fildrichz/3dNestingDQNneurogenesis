@@ -92,8 +92,23 @@ class NetworkGenome:
         genes = {}
         for gene_name, space in cls.GENE_SPACES.items():
             if isinstance(space, dict) and space.get('type') == 'multiplicative':
-                # Multiplicative gene: initialize to base value
-                genes[gene_name] = space['base']
+                # Multiplicative gene: randomly initialize within bounds
+                # Generate valid powers of 2 within the range
+                min_val, max_val = space['min'], space['max']
+
+                # Find all valid powers of 2 in range
+                valid_values = []
+                current = min_val
+                while current <= max_val:
+                    valid_values.append(current)
+                    current *= 2
+
+                # If we don't have any valid powers of 2, use min/max bounds
+                if not valid_values:
+                    valid_values = [min_val, max_val]
+
+                # Randomly select from valid values
+                genes[gene_name] = random.choice(valid_values)
             else:
                 # Discrete gene: random choice from list
                 value = random.choice(space)
