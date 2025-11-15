@@ -11,6 +11,7 @@ Based on: "Using Genetic Algorithms to Optimize Artificial Neural Networks"
 """
 
 import torch
+import numpy as np
 from pathlib import Path
 
 from nesting.dataset_loader import load_problem
@@ -18,10 +19,14 @@ from ga_evolution import evolve_architecture, load_best_genome, plot_evolution_h
 from genome import NetworkGenome
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
 from packing_with_dqncore2_enhanced import (
-    train_multibin_pack_dqn, 
+    train_multibin_pack_dqn,
     load_problem_as_items,
-    MultiBinPackingEnv
+    MultiBinPackingEnv,
+    build_action_features,
+    pad_feats_mask,
+    ACTION_FEAT_DIM
 )
+from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
 
 
 def full_datapath(filename: str) -> str:
@@ -223,6 +228,8 @@ def train_with_evolved_genome(problem_path: str,
     best_util = 0.0
 
     # Training loop
+    patch_size = genome.genes['patch_size']
+
     for ep in range(episodes):
         obs = env.reset(items=items.copy())
         ep_ret = 0.0
@@ -231,33 +238,64 @@ def train_with_evolved_genome(problem_path: str,
 
         while True:
             # Get available actions
-            action_feats, action_heightmaps, action_metadata = env.get_action_features(
-                patch_size=genome.genes['patch_size']
-            )
-
-            if len(action_feats) == 0:
-                break
+            actions, mask_short = env.action_space()
+            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
             # Select action
-            action_idx = agent.select_action(obs, action_feats, action_heightmaps)
+            act_idx = agent.select_action(
+                obs,
+                feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+            )
+            act = None if (act_idx is None or actions == [] or actions[act_idx] is None) else actions[act_idx]
 
-            # Execute action
-            next_obs, reward, done, info = env.step(action_idx, action_metadata)
-
-            # Store transition
-            agent.store_transition(
-                obs, action_feats, action_heightmaps, action_idx,
-                reward, next_obs, done
+            # Pad current state features
+            currF, currM = pad_feats_mask(
+                feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            currP = pad_patches(
+                patches if patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                env.max_actions,
+                patch_size
             )
 
+            # Execute action
+            nobs, rew, done, info = env.step(act)
+
+            # Get next state actions
+            n_actions, n_mask_short = env.action_space()
+            n_feats = build_action_features(env, n_actions) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            n_patches = extract_patches_for_actions(env, n_actions, patch_size=patch_size) if len(n_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+            # Pad next state features
+            nextF, nextM = pad_feats_mask(
+                n_feats,
+                n_mask_short if n_mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            nextP = pad_patches(
+                n_patches if n_patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                env.max_actions,
+                patch_size
+            )
+
+            # Store transition
+            agent.store(obs, act_idx, rew, nobs, done,
+                       curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                       next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
+
             # Train
-            if len(agent.memory) > agent.config.warmup_steps and steps % 1 == 0:
+            if steps % 1 == 0:
                 loss = agent.train_step()
                 if loss is not None:
                     losses.append(loss)
 
-            ep_ret += reward
-            obs = next_obs
+            ep_ret += rew
+            obs = nobs
             steps += 1
 
             if done:
