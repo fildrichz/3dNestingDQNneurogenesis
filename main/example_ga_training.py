@@ -139,6 +139,190 @@ def compare_architectures(problem_path: str,
     print(f"{'='*80}\n")
 
 
+def train_with_evolved_genome(problem_path: str,
+                              genome: NetworkGenome,
+                              episodes: int = 200,
+                              save_path: str = None):
+    """
+    Train a full model using the evolved genome architecture.
+
+    Args:
+        problem_path: Path to problem file
+        genome: Evolved genome with best architecture
+        episodes: Number of training episodes
+        save_path: Path to save trained model
+    """
+    import collections
+    from pathlib import Path
+
+    print(f"\n{'='*80}")
+    print("FULL TRAINING WITH EVOLVED ARCHITECTURE")
+    print(f"{'='*80}\n")
+
+    # Load problem
+    problem = load_problem(problem_path)
+    items = load_problem_as_items(problem)
+    W, D, H = problem.bin_dimensions
+
+    print("Problem Specification:")
+    print(f"  Container: {W}×{D}×{H} (volume: {W*D*H:,})")
+    print(f"  Max weight per bin: {problem.max_weight}")
+    print(f"  Max bins available: {problem.max_bins}")
+    print(f"  Items to pack: {len(items)}")
+    print(f"\nEvolved Architecture:")
+    print(genome)
+    print(f"  Complexity: {genome.get_network_complexity():.3f}M params")
+    print(f"\nTraining Configuration:")
+    print(f"  Episodes: {episodes}")
+    print(f"  Save path: {save_path}")
+    print(f"{'='*80}\n")
+
+    # Create environment
+    env = MultiBinPackingEnv(
+        W, D, H,
+        items=items,
+        max_actions=128,
+        topk_eps=1000,
+        seed=42,
+        gamma=0.992,
+        problem=problem
+    )
+
+    obs = env.reset()
+    OBS_DIM = obs.shape[0]
+    ACTION_FEAT_DIM = 25  # Standard action feature dimension
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Build config from evolved genome
+    cfg = genome.to_dqn_config(
+        obs_dim=OBS_DIM,
+        action_feat_dim=ACTION_FEAT_DIM,
+        max_actions=128,
+        device=device
+    )
+
+    # Override epsilon decay for longer training
+    cfg.eps_decay_steps = episodes * 30
+
+    # Create agent
+    agent = DQNAgentEnhanced(cfg)
+
+    print(f"Agent initialized on {device}")
+    print(f"  Heightmap patches: {cfg.heightmap_patch_size}×{cfg.heightmap_patch_size}")
+    print(f"  Attention: {cfg.attention_type if cfg.use_attention else 'None'}")
+    print(f"Starting training...\n")
+
+    # Training tracking
+    util_hist = collections.deque(maxlen=50)
+    bins_hist = collections.deque(maxlen=50)
+    items_hist = collections.deque(maxlen=50)
+    returns_hist = collections.deque(maxlen=50)
+    best_bins = float('inf')
+    best_items = 0
+    best_util = 0.0
+
+    # Training loop
+    for ep in range(episodes):
+        obs = env.reset(items=items.copy())
+        ep_ret = 0.0
+        steps = 0
+        losses = []
+
+        while True:
+            # Get available actions
+            action_feats, action_heightmaps, action_metadata = env.get_action_features(
+                patch_size=genome.genes['patch_size']
+            )
+
+            if len(action_feats) == 0:
+                break
+
+            # Select action
+            action_idx = agent.select_action(obs, action_feats, action_heightmaps)
+
+            # Execute action
+            next_obs, reward, done, info = env.step(action_idx, action_metadata)
+
+            # Store transition
+            agent.store_transition(
+                obs, action_feats, action_heightmaps, action_idx,
+                reward, next_obs, done
+            )
+
+            # Train
+            if len(agent.memory) > agent.config.warmup_steps and steps % 1 == 0:
+                loss = agent.train_step()
+                if loss is not None:
+                    losses.append(loss)
+
+            ep_ret += reward
+            obs = next_obs
+            steps += 1
+
+            if done:
+                break
+
+        # Episode statistics
+        util_hist.append(info['utilization'])
+        bins_hist.append(info['bins_used'])
+        items_hist.append(info['items_packed'])
+        returns_hist.append(ep_ret)
+
+        # Track best solution
+        if info['items_packed'] > best_items or \
+           (info['items_packed'] == best_items and info['bins_used'] < best_bins):
+            best_items = info['items_packed']
+            best_bins = info['bins_used']
+            best_util = info['utilization']
+
+        # Logging
+        if (ep + 1) % 10 == 0:
+            avg_util = sum(util_hist) / len(util_hist) if util_hist else 0
+            avg_bins = sum(bins_hist) / len(bins_hist) if bins_hist else 0
+            avg_items = sum(items_hist) / len(items_hist) if items_hist else 0
+            avg_return = sum(returns_hist) / len(returns_hist) if returns_hist else 0
+            avg_loss = sum(losses) / len(losses) if losses else 0
+
+            print(f"Ep {ep+1:4d}/{episodes} | "
+                  f"Items: {avg_items:.1f}/{len(items)} | "
+                  f"Bins: {avg_bins:.1f} | "
+                  f"Util: {avg_util:.3f} | "
+                  f"Return: {avg_return:+.2f} | "
+                  f"Loss: {avg_loss:.4f} | "
+                  f"ε: {agent.epsilon:.3f}")
+
+    # Final results
+    print(f"\n{'='*80}")
+    print("TRAINING COMPLETE")
+    print(f"{'='*80}")
+    print(f"Best Performance:")
+    print(f"  Items packed: {best_items}/{len(items)}")
+    print(f"  Bins used: {best_bins}")
+    print(f"  Utilization: {best_util:.3f}")
+    print(f"\nFinal 50-episode average:")
+    print(f"  Items packed: {sum(items_hist)/len(items_hist):.1f}/{len(items)}")
+    print(f"  Bins used: {sum(bins_hist)/len(bins_hist):.1f}")
+    print(f"  Utilization: {sum(util_hist)/len(util_hist):.3f}")
+
+    # Save model
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            'model_state_dict': agent.policy_net.state_dict(),
+            'genome': genome.to_dict(),
+            'config': cfg.__dict__,
+            'best_bins': best_bins,
+            'best_items': best_items,
+            'best_util': best_util
+        }, save_path)
+        print(f"\nModel saved to: {save_path}")
+
+    print(f"{'='*80}\n")
+
+    return agent
+
+
 def main():
     """Main workflow: Evolve architecture → Train final model → Compare"""
     
@@ -210,31 +394,12 @@ def main():
     user_input = input("\nTrain full model (100+ episodes) with best architecture? [y/N]: ")
     if user_input.lower() == 'y':
         print("\nTraining full model with evolved architecture...")
-        print("todo")
-        
-        # Build config from best genome
-        cfg = best_genome.to_dqn_config(
-            obs_dim=8,
-            action_feat_dim=25,
-            max_actions=128,
-            device="cuda" if torch.cuda.is_available() else "cpu"
+        train_with_evolved_genome(
+            problem_path=problem_path,
+            genome=best_genome,
+            episodes=200,  # Full training run
+            save_path='output_data/evolved_model.pth'
         )
-        
-        agent = DQNAgentEnhanced(cfg)
-        
-        # Note: You'd need to modify train_multibin_pack_dqn to accept pre-built agent
-        # For now, we'll just show the genome
-        print("\nTo train with this architecture, use:")
-        print(f"  hidden_dim={best_genome.genes['hidden_dim']}")
-        print(f"  enc_layers={best_genome.genes['enc_layers']}")
-        print(f"  head_hidden={best_genome.genes['head_hidden']}")
-        print(f"  attention_type={best_genome.genes['attention_type']}")
-        print(f"  attention_heads={best_genome.genes['attention_heads']}")
-        print(f"  num_inducing_points={best_genome.genes['num_inducing_points']}")
-        print(f"  patch_size={best_genome.genes['patch_size']}")
-        print(f"  cnn_channels={best_genome.genes['cnn_channels']}")
-        print(f"  dropout={best_genome.genes['dropout']}")
-        print(f"  activation={best_genome.genes['activation']}")
 
 
 if __name__ == "__main__":
