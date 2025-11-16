@@ -51,17 +51,33 @@ def _evaluate_genome_worker(genome_dict: Dict,
     import torch
     import gc
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem, load_problem_as_items, MultiBinPackingEnv
-    from nesting.dataset_loader import BinPackingProblem
+    from nesting.dataset_loader import BinPackingProblem, Item
 
     # Reconstruct genome from dict
     genome = NetworkGenome.from_dict(genome_dict)
 
-    # Reconstruct problem
+    # Reconstruct problem from serialized dict
+    items_objs = [
+        Item(
+            id=item_dict['id'],
+            quantity=item_dict['quantity'],
+            length=item_dict['length'],
+            width=item_dict['width'],
+            height=item_dict['height'],
+            weight=item_dict['weight']
+        )
+        for item_dict in problem_dict['items']
+    ]
+
     problem = BinPackingProblem(
-        name=problem_dict['name'],
+        max_bins=problem_dict['max_bins'],
         bin_dimensions=tuple(problem_dict['bin_dimensions']),
-        items=problem_dict['items'],
-        max_bins=problem_dict.get('max_bins', 10)
+        max_weight=problem_dict['max_weight'],
+        relative_pos=problem_dict['relative_pos'],
+        incompatibilities=problem_dict['incompatibilities'],
+        positive_affinities=problem_dict['positive_affinities'],
+        center_of_mass=problem_dict['center_of_mass'],
+        items=items_objs
     )
 
     items = load_problem_as_items(problem)
@@ -411,10 +427,24 @@ def evolve_architecture(problem,
 
             # Prepare problem dict for serialization
             problem_dict = {
-                'name': problem.name,
+                'max_bins': problem.max_bins,
                 'bin_dimensions': list(problem.bin_dimensions),
-                'items': problem.items,
-                'max_bins': getattr(problem, 'max_bins', 10)
+                'max_weight': problem.max_weight,
+                'relative_pos': problem.relative_pos,
+                'incompatibilities': problem.incompatibilities,
+                'positive_affinities': problem.positive_affinities,
+                'center_of_mass': problem.center_of_mass,
+                'items': [
+                    {
+                        'id': item.id,
+                        'quantity': item.quantity,
+                        'length': item.length,
+                        'width': item.width,
+                        'height': item.height,
+                        'weight': item.weight
+                    }
+                    for item in problem.items
+                ]
             }
 
             # Submit all genomes to process pool
