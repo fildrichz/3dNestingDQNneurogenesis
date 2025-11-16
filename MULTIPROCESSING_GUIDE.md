@@ -148,6 +148,53 @@ Worker 4 → GPU 0  # Cycles back
 
 ## Troubleshooting
 
+### Windows-Specific Issues
+
+#### Livelock / "Waiter fails to acquire" error
+**Symptoms**: Program hangs, workers never complete, no progress output
+
+**Causes**:
+- Windows uses `spawn()` instead of `fork()` for multiprocessing
+- Worker processes may hang during initialization
+- Profilers (like Scalene) have limited Windows multiprocessing support
+
+**Solutions**:
+1. **Test multiprocessing first**:
+   ```bash
+   python test_multiprocessing.py
+   ```
+   This simple test verifies multiprocessing works on your system.
+
+2. **Run without profiler**:
+   ```bash
+   # Instead of: scalene example_ga_training.py
+   python main/example_ga_training.py
+   ```
+
+3. **Reduce number of workers**:
+   ```python
+   ga_config = {
+       'num_workers': 2,  # Start small
+       # ...
+   }
+   ```
+
+4. **Disable parallelism temporarily**:
+   ```python
+   ga_config = {
+       'parallel': False,
+       # ...
+   }
+   ```
+
+5. **Check timeout settings**: Workers timeout after 600s (10 minutes) per genome. If you see timeout errors, training might be very slow on your CPU.
+
+#### Scalene warning: "only supports multiprocessing on Mac and Unix"
+**This is normal!** The warning is from Scalene, not your code.
+- Multiprocessing will still work
+- Scalene just can't profile worker processes on Windows
+- Run without Scalene for actual parallel execution
+
 ### "CUDA Out of Memory" errors
 - System is trying to use GPU parallelism
 - Solution: Set `device_mode='cpu'`
@@ -165,6 +212,15 @@ Worker 4 → GPU 0  # Cycles back
 - Genome must be serializable (dict-based)
 - Don't pass PyTorch models between processes
 - Worker rebuilds models from genome parameters
+
+### Timeout errors
+**Symptoms**: `[TIMEOUT] Genome X timed out after 600s`
+
+**Solutions**:
+- Increase episodes_per_eval reduces training time per genome
+- Your CPU might be slower than expected
+- Check if workers are stuck (Task Manager on Windows)
+- Try with smaller network architectures first
 
 ## Example Output
 
