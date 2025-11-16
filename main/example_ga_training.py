@@ -347,7 +347,7 @@ def train_with_evolved_genome(problem_path: str,
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         torch.save({
-            'model_state_dict': agent.policy_net.state_dict(),
+            'model_state_dict': agent.q.state_dict(),
             'genome': genome.to_dict(),
             'config': cfg.__dict__,
             'best_bins': best_bins,
@@ -359,6 +359,91 @@ def train_with_evolved_genome(problem_path: str,
     print(f"{'='*80}\n")
 
     return agent
+
+
+def load_trained_model(model_path: str, problem_path: str, device: str = None):
+    """
+    Load a previously trained model from checkpoint.
+
+    Args:
+        model_path: Path to saved model checkpoint (.pth file)
+        problem_path: Path to problem file (needed to create environment for obs_dim)
+        device: Device to load model on ('cuda' or 'cpu', auto-detect if None)
+
+    Returns:
+        agent: Loaded DQNAgentEnhanced
+        genome: NetworkGenome used for the model
+        checkpoint: Full checkpoint dict with metadata
+    """
+    print(f"\n{'='*80}")
+    print("LOADING TRAINED MODEL")
+    print(f"{'='*80}\n")
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Load checkpoint
+    print(f"Loading checkpoint from: {model_path}")
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # Reconstruct genome
+    genome = NetworkGenome(genes=checkpoint['genome'])
+    print(f"\nLoaded Architecture:")
+    print(genome)
+    print(f"  Complexity: {genome.get_network_complexity():.3f}M params")
+
+    # Load problem to get environment dimensions
+    problem = load_problem(problem_path)
+    items = load_problem_as_items(problem)
+    W, D, H = problem.bin_dimensions
+
+    print(f"\nProblem Specification:")
+    print(f"  Container: {W}×{D}×{H}")
+    print(f"  Items: {len(items)}")
+
+    # Create environment to get obs_dim
+    env = MultiBinPackingEnv(
+        W, D, H,
+        items=items,
+        max_actions=128,
+        topk_eps=1000,
+        seed=42,
+        gamma=0.992,
+        problem=problem
+    )
+    obs = env.reset()
+    OBS_DIM = obs.shape[0]
+    ACTION_FEAT_DIM = 25
+
+    # Build config from genome
+    cfg = genome.to_dqn_config(
+        obs_dim=OBS_DIM,
+        action_feat_dim=ACTION_FEAT_DIM,
+        max_actions=128,
+        device=device
+    )
+
+    # Create agent
+    agent = DQNAgentEnhanced(cfg)
+
+    # Load model weights
+    agent.q.load_state_dict(checkpoint['model_state_dict'])
+    agent.q.eval()  # Set to evaluation mode
+
+    print(f"\nLoaded on device: {device}")
+    print(f"  Heightmap patches: {cfg.heightmap_patch_size}×{cfg.heightmap_patch_size}")
+    print(f"  Attention: {cfg.attention_type if cfg.use_attention else 'None'}")
+
+    # Display saved performance metrics
+    if 'best_items' in checkpoint:
+        print(f"\nBest Training Performance:")
+        print(f"  Items packed: {checkpoint['best_items']}/{len(items)}")
+        print(f"  Bins used: {checkpoint['best_bins']}")
+        print(f"  Utilization: {checkpoint['best_util']:.3f}")
+
+    print(f"{'='*80}\n")
+
+    return agent, genome, checkpoint
 
 
 def main():
