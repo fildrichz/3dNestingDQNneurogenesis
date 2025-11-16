@@ -18,10 +18,136 @@ from typing import List, Dict, Tuple, Optional
 import json
 import time
 from pathlib import Path
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 from genome import NetworkGenome, create_initial_population, tournament_selection
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
 from nesting.dataset_loader import load_problem, BinPackingProblem
+
+
+def _evaluate_genome_worker(genome_dict: Dict,
+                            problem_dict: Dict,
+                            episodes: int,
+                            device: str,
+                            worker_id: int) -> Tuple[float, Dict, str]:
+    """
+    Worker function for parallel genome evaluation.
+
+    This function runs in a separate process and evaluates a single genome.
+    All inputs must be serializable (no PyTorch models).
+
+    Args:
+        genome_dict: Genome serialized as dict
+        problem_dict: Problem configuration as dict
+        episodes: Number of training episodes
+        device: Device to use ('cpu', 'cuda', 'cuda:0', etc.)
+        worker_id: Worker process ID (for logging)
+
+    Returns:
+        (fitness, metrics, genome_id)
+    """
+    import torch
+    import gc
+    from packing_with_dqncore2_enhanced import evaluate_agent_on_problem, load_problem_as_items, MultiBinPackingEnv
+    from nesting.dataset_loader import BinPackingProblem
+
+    # Reconstruct genome from dict
+    genome = NetworkGenome.from_dict(genome_dict)
+
+    # Reconstruct problem
+    problem = BinPackingProblem(
+        name=problem_dict['name'],
+        bin_dimensions=tuple(problem_dict['bin_dimensions']),
+        items=problem_dict['items'],
+        max_bins=problem_dict.get('max_bins', 10)
+    )
+
+    items = load_problem_as_items(problem)
+    W, D, H = problem.bin_dimensions
+
+    env = MultiBinPackingEnv(
+        W, D, H,
+        items=items,
+        max_actions=128,
+        topk_eps=1000,
+        seed=42,
+        gamma=0.992,
+        problem=problem
+    )
+
+    # Set device (force CPU if requested, otherwise use specified device)
+    actual_device = device
+    if device.startswith('cuda'):
+        if not torch.cuda.is_available():
+            actual_device = 'cpu'
+            print(f"[Worker {worker_id}] CUDA requested but not available, using CPU")
+        elif ':' in device:
+            # Specific GPU requested (e.g., 'cuda:1')
+            gpu_id = int(device.split(':')[1])
+            if gpu_id >= torch.cuda.device_count():
+                actual_device = 'cpu'
+                print(f"[Worker {worker_id}] GPU {gpu_id} not available, using CPU")
+
+    # Build network from genome
+    cfg = genome.to_dqn_config(
+        obs_dim=8,
+        action_feat_dim=25,
+        max_actions=env.max_actions,
+        device=actual_device
+    )
+
+    # Reduce buffer size during GA to save memory
+    cfg.buffer_size = 50_000
+
+    agent = DQNAgentEnhanced(cfg)
+
+    try:
+        # Train and evaluate
+        metrics = evaluate_agent_on_problem(
+            agent=agent,
+            env=env,
+            items=items,
+            episodes=episodes,
+            patch_size=genome.genes['patch_size'],
+            train_freq=1,
+            num_train_steps=1,
+            verbose=False
+        )
+    finally:
+        # Clean up memory
+        del agent
+        if actual_device.startswith('cuda') and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+    # Calculate fitness (same logic as evaluate_genome_fitness)
+    avg_util = metrics['avg_utilization']
+    avg_bins = metrics.get('avg_bins_used', 1.0)
+    complexity = genome.get_network_complexity()
+
+    max_bins = 5.0
+    bins_penalty = min(avg_bins / max_bins, 1.0)
+
+    max_complexity = 5.0
+    complexity_penalty = min(complexity / max_complexity, 1.0)
+
+    fitness = (
+        0.70 * avg_util +
+        0.20 * (1.0 - bins_penalty) +
+        0.10 * (1.0 - complexity_penalty)
+    )
+
+    # Add fitness components to metrics
+    metrics['fitness_components'] = {
+        'utilization': avg_util,
+        'bins_efficiency': 1.0 - bins_penalty,
+        'parsimony': 1.0 - complexity_penalty,
+        'complexity_params': complexity
+    }
+
+    return fitness, metrics, genome_dict['genome_id']
 
 
 def evaluate_genome_fitness(genome: NetworkGenome,
@@ -131,7 +257,10 @@ def evolve_architecture(problem,
                        tournament_size: int = 3,
                        seed: Optional[int] = None,
                        save_dir: Optional[str] = None,
-                       verbose: bool = True) -> Tuple[NetworkGenome, List[NetworkGenome]]:
+                       verbose: bool = True,
+                       parallel: bool = True,
+                       num_workers: Optional[int] = None,
+                       device_mode: str = 'auto') -> Tuple[NetworkGenome, List[NetworkGenome]]:
     """
     Main GA loop for architecture evolution.
 
@@ -148,6 +277,10 @@ def evolve_architecture(problem,
         seed: Random seed for reproducibility (None = random)
         save_dir: Directory to save results (None = don't save)
         verbose: Print progress
+        parallel: Enable parallel genome evaluation (default: True)
+        num_workers: Number of parallel workers (None = auto-detect based on CPUs/GPUs)
+        device_mode: Device strategy - 'auto' (detect best), 'cpu' (force CPU),
+                     'multi_gpu' (distribute across GPUs), 'single_gpu' (use one GPU)
 
     Returns:
         (best_genome, final_population)
@@ -155,6 +288,7 @@ def evolve_architecture(problem,
     # Setup
     from packing_with_dqncore2_enhanced import load_problem_as_items, MultiBinPackingEnv
     import random
+    import torch
 
     # Set random seeds for reproducibility
     if seed is not None:
@@ -162,6 +296,39 @@ def evolve_architecture(problem,
         np.random.seed(seed)
         if verbose:
             print(f"Random seed set to: {seed}")
+
+    # Configure parallelism and device strategy
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+    if device_mode == 'auto':
+        # Auto-detect best strategy
+        if num_gpus > 1:
+            device_mode = 'multi_gpu'
+            actual_num_workers = num_workers if num_workers else min(num_gpus, population_size)
+        elif num_gpus == 1:
+            # Single GPU: use CPU parallelism to avoid OOM
+            device_mode = 'cpu'
+            actual_num_workers = num_workers if num_workers else min(cpu_count(), population_size, 8)
+        else:
+            # No GPU: CPU parallelism
+            device_mode = 'cpu'
+            actual_num_workers = num_workers if num_workers else min(cpu_count(), population_size, 8)
+    else:
+        # User-specified device mode
+        if device_mode == 'multi_gpu' and num_gpus < 2:
+            if verbose:
+                print(f"Warning: multi_gpu requested but only {num_gpus} GPU(s) available. Using CPU mode.")
+            device_mode = 'cpu'
+
+        if device_mode == 'multi_gpu':
+            actual_num_workers = num_workers if num_workers else min(num_gpus, population_size)
+        else:
+            actual_num_workers = num_workers if num_workers else min(cpu_count(), population_size, 8)
+
+    # Disable parallelism if requested
+    if not parallel:
+        actual_num_workers = 1
+        device_mode = 'single_gpu' if num_gpus > 0 else 'cpu'
 
     items = load_problem_as_items(problem)
     W, D, H = problem.bin_dimensions
@@ -190,6 +357,18 @@ def evolve_architecture(problem,
         print(f"Episodes per evaluation: {episodes_per_eval}")
         print(f"Elite size: {elite_size}")
         print(f"Mutation rate: {mutation_rate}")
+        print(f"")
+        print(f"Parallelism: {'Enabled' if parallel else 'Disabled'}")
+        if parallel:
+            print(f"  Workers: {actual_num_workers}")
+            print(f"  Device mode: {device_mode}")
+            print(f"  Available GPUs: {num_gpus}")
+            if device_mode == 'multi_gpu':
+                print(f"  Strategy: Each worker uses dedicated GPU")
+            elif device_mode == 'cpu':
+                print(f"  Strategy: Parallel training on CPU cores")
+            elif device_mode == 'single_gpu':
+                print(f"  Strategy: Single GPU (sequential)")
         print(f"{'='*80}\n")
     
     # Initialize population
@@ -224,36 +403,102 @@ def evolve_architecture(problem,
         
         # Evaluate all genomes
         fitness_scores = []
-        
-        for i, genome in enumerate(population):
+
+        if parallel and actual_num_workers > 1:
+            # Parallel evaluation
             if verbose:
-                print(f"\n[{i+1}/{population_size}] Evaluating genome {genome.genome_id}...")
-                print(f"  Architecture: hidden={genome.genes['hidden_dim']}, "
-                      f"layers={genome.genes['enc_layers']}, "
-                      f"head={genome.genes['head_hidden']}")
-                print(f"  Attention: type={genome.genes['attention_type']}, "
-                      f"heads={genome.genes['attention_heads']}, "
-                      f"inds={genome.genes['num_inducing_points']}")
-                print(f"  Features: patch={genome.genes['patch_size']}, "
-                      f"cnn={genome.genes['cnn_channels']}, "
-                      f"act={genome.genes['activation']}, "
-                      f"drop={genome.genes['dropout']}")
-            
-            fitness, metrics = evaluate_genome_fitness(
-                genome=genome,
-                env=env,
-                items=items.copy(),
-                episodes=episodes_per_eval,
-                verbose=False
-            )
-            
-            fitness_scores.append(fitness)
-            
-            if verbose:
-                print(f"  → Fitness: {fitness:.4f} | "
-                      f"Util: {metrics['avg_utilization']:.3f} | "
-                      f"Bins: {metrics['avg_bins_used']:.1f} | "
-                      f"Complexity: {genome.get_network_complexity():.3f}M params")
+                print(f"\nEvaluating {population_size} genomes in parallel with {actual_num_workers} workers...")
+
+            # Prepare problem dict for serialization
+            problem_dict = {
+                'name': problem.name,
+                'bin_dimensions': list(problem.bin_dimensions),
+                'items': problem.items,
+                'max_bins': getattr(problem, 'max_bins', 10)
+            }
+
+            # Submit all genomes to process pool
+            genome_id_map = {}  # Map genome_id -> genome object
+            futures = {}
+
+            with ProcessPoolExecutor(max_workers=actual_num_workers) as executor:
+                for i, genome in enumerate(population):
+                    # Determine device for this worker
+                    if device_mode == 'multi_gpu':
+                        device = f"cuda:{i % num_gpus}"
+                    elif device_mode == 'single_gpu':
+                        device = "cuda"
+                    else:  # cpu
+                        device = "cpu"
+
+                    # Submit task
+                    future = executor.submit(
+                        _evaluate_genome_worker,
+                        genome.to_dict(),
+                        problem_dict,
+                        episodes_per_eval,
+                        device,
+                        i
+                    )
+                    futures[future] = i
+                    genome_id_map[genome.genome_id] = genome
+
+                # Collect results as they complete
+                completed = 0
+                for future in as_completed(futures):
+                    worker_idx = futures[future]
+                    genome = population[worker_idx]
+
+                    try:
+                        fitness, metrics, genome_id = future.result()
+                        genome.fitness = fitness
+                        genome.metrics = metrics
+                        fitness_scores.append(fitness)
+
+                        completed += 1
+                        if verbose:
+                            print(f"  [{completed}/{population_size}] Genome {genome_id} → "
+                                  f"Fitness: {fitness:.4f} | "
+                                  f"Util: {metrics['avg_utilization']:.3f} | "
+                                  f"Bins: {metrics['avg_bins_used']:.1f} | "
+                                  f"Complexity: {genome.get_network_complexity():.3f}M params")
+                    except Exception as e:
+                        print(f"  [ERROR] Genome {genome.genome_id} failed: {e}")
+                        # Assign low fitness to failed genomes
+                        genome.fitness = 0.0
+                        genome.metrics = {'avg_utilization': 0.0, 'avg_bins_used': 999}
+                        fitness_scores.append(0.0)
+        else:
+            # Sequential evaluation (original behavior)
+            for i, genome in enumerate(population):
+                if verbose:
+                    print(f"\n[{i+1}/{population_size}] Evaluating genome {genome.genome_id}...")
+                    print(f"  Architecture: hidden={genome.genes['hidden_dim']}, "
+                          f"layers={genome.genes['enc_layers']}, "
+                          f"head={genome.genes['head_hidden']}")
+                    print(f"  Attention: type={genome.genes['attention_type']}, "
+                          f"heads={genome.genes['attention_heads']}, "
+                          f"inds={genome.genes['num_inducing_points']}")
+                    print(f"  Features: patch={genome.genes['patch_size']}, "
+                          f"cnn={genome.genes['cnn_channels']}, "
+                          f"act={genome.genes['activation']}, "
+                          f"drop={genome.genes['dropout']}")
+
+                fitness, metrics = evaluate_genome_fitness(
+                    genome=genome,
+                    env=env,
+                    items=items.copy(),
+                    episodes=episodes_per_eval,
+                    verbose=False
+                )
+
+                fitness_scores.append(fitness)
+
+                if verbose:
+                    print(f"  → Fitness: {fitness:.4f} | "
+                          f"Util: {metrics['avg_utilization']:.3f} | "
+                          f"Bins: {metrics['avg_bins_used']:.1f} | "
+                          f"Complexity: {genome.get_network_complexity():.3f}M params")
         
         # Sort population by fitness
         population.sort(key=lambda g: g.fitness, reverse=True)

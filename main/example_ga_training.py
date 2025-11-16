@@ -379,7 +379,11 @@ def main():
         'crossover_method': 'uniform',
         'tournament_size': 3,
         'save_dir': 'output_data/ga_evolution',
-        'verbose': True
+        'verbose': True,
+        # Parallelism settings (NEW!)
+        'parallel': True,            # Enable parallel genome evaluation
+        'num_workers': None,         # Auto-detect based on CPUs/GPUs
+        'device_mode': 'auto'        # 'auto', 'cpu', 'multi_gpu', 'single_gpu'
     }
     
     print("="*80)
