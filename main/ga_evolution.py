@@ -98,13 +98,11 @@ def _evaluate_genome_worker(genome_dict: Dict,
     if device.startswith('cuda'):
         if not torch.cuda.is_available():
             actual_device = 'cpu'
-            print(f"[Worker {worker_id}] CUDA requested but not available, using CPU")
         elif ':' in device:
             # Specific GPU requested (e.g., 'cuda:1')
             gpu_id = int(device.split(':')[1])
             if gpu_id >= torch.cuda.device_count():
                 actual_device = 'cpu'
-                print(f"[Worker {worker_id}] GPU {gpu_id} not available, using CPU")
 
     # Build network from genome
     cfg = genome.to_dqn_config(
@@ -475,12 +473,16 @@ def evolve_architecture(problem,
 
                 # Collect results as they complete
                 completed = 0
-                for future in as_completed(futures):
+                # Timeout: 10 minutes per genome (generous for 50 episodes)
+                timeout_per_genome = 600  # seconds
+
+                for future in as_completed(futures, timeout=timeout_per_genome * population_size):
                     worker_idx = futures[future]
                     genome = population[worker_idx]
 
                     try:
-                        fitness, metrics, genome_id = future.result()
+                        # Add timeout to individual result retrieval
+                        fitness, metrics, genome_id = future.result(timeout=timeout_per_genome)
                         genome.fitness = fitness
                         genome.metrics = metrics
                         fitness_scores.append(fitness)
@@ -492,12 +494,22 @@ def evolve_architecture(problem,
                                   f"Util: {metrics['avg_utilization']:.3f} | "
                                   f"Bins: {metrics['avg_bins_used']:.1f} | "
                                   f"Complexity: {genome.get_network_complexity():.3f}M params")
+                    except TimeoutError:
+                        print(f"  [TIMEOUT] Genome {genome.genome_id} timed out after {timeout_per_genome}s")
+                        # Assign low fitness to timed-out genomes
+                        genome.fitness = 0.0
+                        genome.metrics = {'avg_utilization': 0.0, 'avg_bins_used': 999}
+                        fitness_scores.append(0.0)
+                        completed += 1
                     except Exception as e:
+                        import traceback
                         print(f"  [ERROR] Genome {genome.genome_id} failed: {e}")
+                        print(f"  Traceback: {traceback.format_exc()}")
                         # Assign low fitness to failed genomes
                         genome.fitness = 0.0
                         genome.metrics = {'avg_utilization': 0.0, 'avg_bins_used': 999}
                         fitness_scores.append(0.0)
+                        completed += 1
         else:
             # Sequential evaluation (original behavior)
             for i, genome in enumerate(population):
