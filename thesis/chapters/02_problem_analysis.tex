@@ -1,0 +1,136 @@
+\chapter{Problem Analysis}
+
+This chapter formally defines the 3D bin packing problem and specifies the constraints we address. We then introduce neurogenesis as the core methodology for evolving neural network architectures in this discrete optimization setting.
+
+\section{Problem Definition}
+
+\subsection{Bin Packing}
+
+Cutting and packing problems can be broadly summarized with the following description.
+
+Given are two sets of elements, namely
+\begin{itemize}
+    \item a set of large objects (input, supply) and
+    \item a set of small items (output, demand),
+\end{itemize}
+which are defined in some number of geometric dimensions. Select some or all small items, group them into one or more subsets and assign each of the resulting subsets to one of the large objects such that the geometric condition holds, i.e. the small items of each subset have to be laid out on the corresponding large object such that
+\begin{itemize}
+    \item all small items of the subset lie entirely within the large object and
+    \item the small items do not overlap,
+\end{itemize}
+and a given (single-dimensional or multi-dimensional) objective function is optimised \cite{WHS07}.
+
+\begin{definition}[3D Bin Packing]
+\label{def:3dbpp}
+Let $I = \{1,\ldots,n\}$ be items with sizes $(w_i, h_i, d_i) \in \mathbb{R}^3_{>0}$ and per-item sets of allowed orthogonal rotations $R_i \subseteq S_3$. Bins are identical axis-aligned boxes of size $(W, H, D) \in \mathbb{R}^3_{>0}$.
+
+A \emph{packing} assigns each item $i$ a bin index $k \in \{1,\ldots,K\}$, an orientation $r_i \in R_i$, and a position $\mathbf{x}_i = (x_i, y_i, z_i) \in \mathbb{R}^3_{\geq 0}$ such that:
+
+\begin{itemize}
+    \item \textbf{(in-bounds)} $0 \leq x_i \leq W - w^{r_i}_i$, $0 \leq y_i \leq H - h^{r_i}_i$, $0 \leq z_i \leq D - d^{r_i}_i$,
+
+    \item \textbf{(non-overlap)} $\forall i \neq j$ in the same bin $k$:
+    \begin{align*}
+    &(x_i + w^{r_i}_i \leq x_j) \lor (x_j + w^{r_j}_j \leq x_i) \lor \\
+    &(y_i + h^{r_i}_i \leq y_j) \lor (y_j + h^{r_j}_j \leq y_i) \lor \\
+    &(z_i + d^{r_i}_i \leq z_j) \lor (z_j + d^{r_j}_j \leq z_i),
+    \end{align*}
+\end{itemize}
+where $(w^{r_i}_i, h^{r_i}_i, d^{r_i}_i)$ denotes the dimensions of item $i$ permuted by $r_i$.
+\end{definition}
+
+\paragraph{Objectives.}
+Either (i) \textit{min-bins}: pack all items using the minimum number $K$ of bins; or (ii) \textit{max-utilization}: given a bin budget $K$, pack a subset $J \subseteq I$ to maximize $\sum_{i \in J} w^{r_i}_i h^{r_i}_i d^{r_i}_i$ (equivalently, utilization per bin).
+
+\paragraph{Additional Constraints.}
+Let $\mathcal{C}$ denote application-specific constraints (e.g., weight limits, stability/center-of-mass, accessibility/LIFO, orientation allowances, compatibility/segregation). A packing is $\mathcal{C}$-feasible if it satisfies the geometric conditions above and all $c \in \mathcal{C}$.
+
+We target 3D bin packing with multiple bins: given a set of rectangular boxes (convex items) with orthogonal rotations, pack them efficiently into minimum number of identical containers \cite{WHS07}.
+
+\subsection{Constraints}
+
+Cutting and packing problems are further defined by their constraints. Beyond the basic geometric feasibility (in-bounds, non-overlap), the literature further mentions:
+
+\begin{description}
+    \item[Orientation] item-specific allowed orientations, fragile handling, stackability classes \cite{dNAJ21}.
+
+    \item[Global capacity / weight] per-bin weight limits, sometimes combined with volumetric limits \cite{dNAJ21}.
+
+    \item[Stacking / load-bearing] limits on vertical support to avoid damaging items, may depend on item type or allowable stack height \cite{GTMP22}.
+
+    \item[Stability \& center of mass] static equilibrium, and even dynamic stability formulations to avoid tip-over during handling or motion \cite{GOGL16}.
+
+    \item[Accessibility] LIFO or door-side accessibility so earlier-stop items are not blocked. Some works use soft penalization rather than hard constraints \cite{BTC23}.
+\end{description}
+
+\section{Neurogenesis}
+
+Neurogenesis or neuroevolution is a practice of evolving the architecture and hyperparameters of given neural scoring models with a genetic algorithm. Classical neurogenesis like NEAT established that evolving topology alongside weights is effective \cite{LSX+20}. Later techniques such as Evolutionary Neural Architecture Search (ENAS) focus mostly on development of deep neural networks \cite{RMS+17}.
+
+Artificial neural network (NN) architecture design is a nontrivial and time-consuming task that often requires a high level of human expertise. Neurogenesis serves to automate the design of NN architectures and has proven to be successful in automatically finding NN architectures that outperform those manually designed by human experts \cite{BB24}.
+
+\subsection{Principles}
+
+In principle, neural network design is viewed as a population-based search over both structure (topology/connection patterns) and parameters. Individuals encode candidate architectures and hyperparameters. Each is instantiated and evaluated by an outcome-based fitness function. The target fitness is to be improved via actions of genetic algorithm of selection, crossover, mutation, and elitism.
+
+\subsection{Search Space and Genome Encoding}
+
+We encode a candidate network as a vector of genes. Some examples include the following, but compact search space keeps evaluation times manageable \cite{WSS+23}:
+
+\begin{itemize}
+    \item \textbf{Depth/width:} number of layers (e.g., 2--6); hidden sizes (e.g., 64/128/256/512).
+    \item \textbf{Activations \& normalization:} \{ReLU, GELU, SiLU\} and \{none, LayerNorm, BatchNorm\}.
+    \item \textbf{Skip/residuals:} on/off per stage.
+    \item \textbf{Context aggregation (optional):} \{none, local MLP pooling, small GNN over kNN\}.
+    \item \textbf{Feature subset:} bitmask/index selecting which engineered features are used.
+    \item \textbf{Regularization/training:} dropout rate, weight decay, learning-rate schedule.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Genome (architecture \& training) encoding for the scoring model.}
+\label{tab:genome}
+\begin{tabular}{ll}
+\hline
+\textbf{Gene} & \textbf{Example domain} \\
+\hline
+Depth & \{2, 3, 4, 5, 6\} \\
+Hidden width & \{64, 128, 256, 512\} \\
+Activation & \{ReLU, GELU, SiLU\} \\
+Normalization & \{none, LayerNorm, BatchNorm\} \\
+Residuals & \{off, on\} \\
+Context aggregation & \{none, MLP pooling, small GNN\} \\
+Feature subset & index / bitmask over features \\
+Dropout & $[0, 0.3]$ \\
+Weight decay & $[0, 10^{-3}]$ \\
+LR schedule & \{cosine, step, warmup\} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Fitness Design}
+
+Fitness is computed by outcome: each individual (architecture + hyperparameters) is instantiated, run on a batch of task instances, and mapped to a scalar for elitism. A simple scalarization is
+\[
+\text{Fit} = -\text{TaskCost} - \lambda_{\text{viol}} \cdot \text{Violations} + \lambda_Q \cdot \text{Quality} - \lambda_t \cdot \text{Runtime},
+\]
+with weights set to reflect priorities. Alternatively, multiple objectives can be kept in a Pareto set (non-dominated sorting) \cite{EMH19}. To reduce variance and cost, average fitness over small instance batches and use multi-fidelity evaluation (cheap proxies early; full fidelity for shortlisted elites) \cite{WSS+23}.
+
+\subsection{Evolutionary Operators}
+
+Evolutionary operators in neurogenesis follow standard genetic algorithm, specialized for neural networks by using a genome that encodes architecture and hyperparameters. The operators below are adapted to these NN-specific genomes.
+
+\paragraph{Initialization.}
+Sample genomes uniformly; optionally seed a few hand-designed baselines.
+
+\paragraph{Selection.}
+Tournament or rank-based selection; for distance vs.\ runtime trade-offs, use non-dominated sorting (NSGA-II style).
+
+\paragraph{Crossover.}
+One-point or uniform crossover for discrete genes; arithmetic/BLX-$\alpha$ blending for continuous ones \cite{TK01}.
+
+\paragraph{Mutation.}
+Small edits---flip activation/normalization, $\pm 1$ layer, resample feature subset, jitter dropout/weight decay, optionally self-adaptive mutation rates \cite{LSX+20}.
+
+\paragraph{Elitism, replacement.}
+Keep the top $E$ elites; fill the rest with best offspring; optionally add age/diversity pressure.

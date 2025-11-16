@@ -1,0 +1,76 @@
+\chapter{State-of-the-Art Solutions}
+
+After defining the problem of three-dimensional nesting and motivating the need for an efficient, adaptive optimization solution, this chapter reviews the current state-of-the-art in related methods. The goal is to summarize the existing approaches and highlight the research gaps that motivate the proposed neurogenetic framework.
+
+The chapter is divided into two main sections. The first section introduces nesting, focusing on heuristic and metaheuristic methods developed for the 3D bin packing and cutting stock problems. The second section explores evolutionary neural architecture search and related neurogenesis methods of automated neural network design.
+
+\section{Nesting Methods}
+
+This section categorizes solution strategies for the class of nesting problems. Individual proposed approaches can be broadly split by several characteristics which play a crucial role in determining how an algorithm may approach nesting. They provide a handy overview when evaluating an approach's usefulness in particular scenarios.
+
+\subsection{Classification Dimensions}
+
+\paragraph{Information model (offline vs.\ online).}
+In the offline setting, the entire item set is known, enabling pre-sorting and deeper look-ahead; online packing processes items as they arrive and must make irrevocable decisions. State-of-the-art strategies in both regimes share a constructive skeleton (candidate generation $\to$ selection) but differ in how they balance exploration, robustness, and speed; online variants typically adopt myopic but well-regularized scoring rules and occasional re-packing windows \cite{ARCO22}.
+
+\paragraph{Space representation (rasterization vs.\ geometry-first).}
+Raster/voxel models offer simple, parallelizable collision checks and convenient stability features at the cost of resolution dependence. Geometry-first models rely on exact or approximate intersection tests for convex bodies, oriented bounding boxes, separating-axis or GJK/EPA checks, and precomputed structures (no-fit relations in 2D; extreme points or empty maximal spaces in 3D). Hybrid designs are common: geometry for candidate generation and feasibility, rasterized descriptors for local voids/support \cite{ARCO22}.
+
+\paragraph{Candidate placements ("interesting points").}
+Modern 3D solvers avoid global pose search by enumerating high-quality placements at the evolving packing frontier. Two families dominate: (i) \textit{extreme points}, induced by faces/edges/vertices of the container and already placed items, and (ii) \textit{empty maximal spaces}, maintained as items are inserted. Both admit quick filters for container bounds, non-overlap, minimal support, separations, and admissible orientations \cite{ARCO22}.
+
+\paragraph{Neural scoring and learned proposals.}
+Neural components most often re-rank EP/EMS candidates instead of proposing arbitrary poses. Feature sets typically mix void/waste metrics, clearances, support/contact estimates, and simple surrogates for load distribution or access. Lightweight models (MLPs, attention over placed items) can replace hand-crafted tie-breakers without changing the surrounding heuristic or matheuristic scaffold \cite{ARCO22}.
+
+\subsection{Solution Approaches}
+
+\paragraph{Constructive heuristics.}
+Constructive backbones couple item ordering (e.g., by size, shape complexity, or ``hardness'') with candidate evaluation rules (minimize residual void, maximize support, minimize overhang, respect separations and orientation sets). These rules deliver fast feasible layouts and provide consistent starting points for improvement phases \cite{ARCO22}.
+
+\paragraph{Local improvement.}
+After a feasible placement, local refinements (swap, rotate within allowed sets, reinsert, neighborhood re-pack) and compaction steps reduce fragmentation. Physics-inspired or projection-based moves gently compress the layout; when overlaps appear, constraints are restored by expanding or re-projecting to the feasible set. Such micro-optimizations target the highest-void regions and are effective under strict time budgets \cite{ARCO22}.
+
+\paragraph{Metaheuristics and matheuristics.}
+GRASP, VNS, tabu, and LNS frameworks explore item orderings and partial re-packs; matheuristics embed exact subproblems (e.g., orientation/placement pricing, stability/separation checks) to sharpen feasibility and improve bounds. This hybridization remains the most common route to high fill ratios with realistic industrial constraints \cite{ARCO22}.
+
+\subsection{Key Papers in 3D Nesting}
+
+\textbf{Ali et al.\ (2022) \cite{ARCO22}} provide a comprehensive review of on-line three-dimensional packing problems, surveying both off-line and on-line solution approaches. They categorize methods by information model, space representation, and candidate generation strategies. The paper emphasizes hybrid designs that combine geometric feasibility checks with rasterized descriptors for stability evaluation. This review establishes a taxonomy that helps position new methods within the broader landscape of 3D packing research.
+
+\textbf{do Nascimento et al.\ (2021) \cite{dNAJ21}} address practical constraints in the container loading problem, providing comprehensive formulations and an exact algorithm. They systematically catalog constraints including orientation restrictions, weight limits, stackability classes, and fragile handling requirements. Their work demonstrates that realistic industrial instances require careful modeling of heterogeneous constraint sets beyond simple non-overlap conditions.
+
+\textbf{Gajda et al.\ (2022) \cite{GTMP22}} present an optimization approach for a complex real-life container loading problem with load-bearing limits. They show that stacking constraints---limiting vertical support to avoid damaging items---significantly affect solution quality and computational difficulty. Their results indicate that ignoring physical stability can lead to infeasible or unsafe loadings in practice.
+
+\textbf{Galrão Ramos et al.\ (2016) \cite{GOGL16}} develop a container loading algorithm with static mechanical equilibrium stability constraints. Beyond geometric feasibility, they enforce center-of-mass conditions to prevent tip-over during handling. This work highlights the importance of dynamic stability formulations for transport scenarios where loads experience acceleration and deceleration.
+
+\textbf{Bonet Filella et al.\ (2023) \cite{BTC23}} model soft unloading constraints in the multi-drop container loading problem. They address LIFO and door-side accessibility requirements, ensuring that items destined for earlier stops are not blocked by later deliveries. Rather than hard constraints, they use soft penalization, allowing controlled trade-offs between packing density and unloading convenience.
+
+\textbf{Alonso et al.\ (2022) \cite{AMSAVP22}} study the pallet-loading vehicle routing problem with stability constraints. Their work demonstrates the tight coupling between loading feasibility and routing decisions: what can be feasibly packed materially changes which tours are admissible and how long they are. This integration motivates our focus on nesting as a standalone problem while acknowledging its broader logistics context.
+
+\textbf{Gimenez-Palacios et al.\ (2023) \cite{GPAAVP23}} extend multi-container loading to multi-drop and split delivery conditions. They show that allowing split deliveries (serving a customer from multiple vehicles) can improve overall logistics costs, but requires more sophisticated loading strategies that consider partial item sets per vehicle.
+
+\textbf{Krebs et al.\ (2021) \cite{KEK21}} investigate advanced loading constraints for 3D vehicle routing problems. They formalize stability, weight distribution, and load sequence constraints within a vehicle routing context, demonstrating that loading feasibility is not a simple yes/no check but a complex optimization problem in its own right.
+
+\section{Evolutionary Neural Architecture Search}
+
+Neurogenesis and Evolutionary Neural Architecture Search (ENAS) automate the design of neural network architectures through evolutionary algorithms. This section reviews key developments in this field and their relevance to discrete optimization problems.
+
+\subsection{Overview of ENAS}
+
+\textbf{Elsken et al.\ (2019) \cite{EMH19}} provide a comprehensive survey of neural architecture search methods, categorizing approaches into reinforcement learning-based, gradient-based, and evolutionary methods. They identify evolutionary approaches as particularly well-suited for black-box, multi-objective optimization where gradients are unavailable or unreliable. This flexibility makes ENAS attractive for discrete combinatorial problems like bin packing.
+
+\textbf{White et al.\ (2023) \cite{WSS+23}} analyze insights from 1000 NAS papers, distilling best practices for search space design, performance prediction, and computational efficiency. They emphasize that compact, well-designed search spaces with domain-specific inductive biases outperform unconstrained searches. For nesting problems, this suggests encoding geometric and packing-specific features directly into the architecture search space.
+
+\textbf{Liu et al.\ (2020) \cite{LSX+20}} survey evolutionary neural architecture search specifically, tracing developments from NEAT (NeuroEvolution of Augmenting Topologies) to modern deep learning contexts. They highlight that evolving topology alongside weights allows discovering novel architectural patterns not easily captured by hand-designed templates. Self-adaptive mutation rates and speciation mechanisms help maintain population diversity and avoid premature convergence.
+
+\textbf{Real et al.\ (2017) \cite{RMS+17}} demonstrate large-scale evolution of image classifiers, showing that simple evolutionary strategies can discover competitive architectures when given sufficient computational budget. Their work establishes that tournament selection, mutation-only evolution, and aging mechanisms (removing old individuals) form an effective baseline for ENAS.
+
+\textbf{Booysen and Bosman (2024) \cite{BB24}} apply multi-objective evolutionary neural architecture search to recurrent neural networks, balancing accuracy, model size, and inference time. They use Pareto-based selection (non-dominated sorting) to maintain a diverse set of trade-off solutions. This approach is directly applicable to bin packing, where we must balance packing quality, runtime, and constraint violations.
+
+\textbf{Takahashi and Kita (2001) \cite{TK01}} introduce crossover operators using independent component analysis for real-coded genetic algorithms. Their BLX-$\alpha$ blending method for continuous genes provides effective recombination for hyperparameters like learning rate, dropout, and weight decay, which appear in our genome encoding.
+
+\subsection{Gap in the Literature}
+
+While extensive research exists on 3D nesting heuristics and on evolutionary neural architecture search independently, few works combine these areas. Most learning-based packing methods use fixed architectures (typically MLPs or attention mechanisms) with hand-tuned hyperparameters. Our work addresses this gap by applying neurogenesis to automatically discover neural scoring architectures tailored to specific constraint sets and item distributions in 3D bin packing.
+
+Furthermore, existing ENAS research focuses primarily on supervised learning tasks (image classification, language modeling) where large labeled datasets are available. Bin packing presents a different challenge: fitness is outcome-based (packing quality), not gradient-based, and must be evaluated through expensive simulation. This motivates our multi-fidelity evaluation strategy and compact search space design.

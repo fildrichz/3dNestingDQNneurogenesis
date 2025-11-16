@@ -1,0 +1,53 @@
+\chapter{Introduction}
+
+The bin-packing problem is a common optimization challenge that seeks to distribute items in a set number of bins while maximizing utilization. This thesis addresses this problem in a 3D environment, with additional constraints based upon the shipping industry where this problem commonly occurs.
+
+\section{Problem Context and Motivation}
+
+Classical heuristic methods are fast and effective in specific regimes, but their decision rules are difficult to tune and often fail to transfer when constraint sets or item distributions change. The core challenge is not generating feasible candidates---that can be done deterministically---but choosing among many feasible placements under heterogeneous constraints.
+
+\section{Research Method and Scope}
+
+This thesis argues that neurogenesis---evolutionary design of neural networks---could fit this setting. Neuroevolution can search over architectures and hyperparameters of compact neural scoring models that rank items, orientations, and placements, without requiring gradients through the discrete packing process. It accommodates black-box, multi-objective fitness and adapts naturally as constraint sets vary.
+
+We therefore combine a deterministic candidate generator with evolved scoring models, aiming for a practical solver that remains robust across shipping-specific constraints.
+
+\subsection{What This Thesis Covers}
+
+This work specifically focuses on:
+\begin{itemize}
+    \item 3D bin packing with heterogeneous constraints (stability, weight limits, orientation restrictions)
+    \item Neurogenesis-based neural architecture search for scoring models
+    \item Integration of learned models with heuristic candidate generators
+    \item Evaluation on realistic benchmark instances from the shipping domain
+\end{itemize}
+
+\subsection{What This Thesis Does Not Cover}
+
+To clearly delimit the scope, this work does not address:
+\begin{itemize}
+    \item Route optimization or vehicle routing problems
+    \item Non-convex or irregular-shaped items
+    \item Dynamic or online packing scenarios where items arrive in real-time
+    \item Multi-objective optimization beyond the packing quality itself
+\end{itemize}
+
+The focus remains on offline 3D bin packing where the entire item set is known in advance, allowing for comprehensive neurogenesis-based optimization of the scoring architecture.
+
+\section{Thesis Structure}
+
+The remainder of this thesis is organized as follows:
+
+\begin{itemize}
+    \item \textbf{Chapter 2: Problem Analysis} formally defines the 3D bin packing problem, specifies the constraints we address, and introduces the fundamentals of neurogenesis.
+
+    \item \textbf{Chapter 3: State of the Art} surveys existing approaches to 3D nesting problems, evolutionary neural architecture search methods, and establishes how this work relates to and extends the current literature.
+
+    \item \textbf{Chapter 4: Proposed Method} details our neurogenesis-based approach, including the candidate generation strategy, neural scoring model design, genome encoding, and fitness evaluation.
+
+    \item \textbf{Chapter 5: Implementation} describes the tools, frameworks, and technical decisions made in implementing the proposed system.
+
+    \item \textbf{Chapter 6: Experiments and Results} presents experimental evaluation on benchmark instances, analyzes performance across different problem regimes, and compares against baseline methods.
+
+    \item \textbf{Chapter 7: Conclusions} summarizes contributions, discusses limitations, and outlines directions for future work.
+\end{itemize}
