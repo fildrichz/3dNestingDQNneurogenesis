@@ -893,8 +893,24 @@ def train_multibin_pack_dqn(
         os.makedirs("output_data", exist_ok=True)
         if not save_path.startswith("output_data/"):
             save_path = os.path.join("output_data", os.path.basename(save_path))
-        agent.save(save_path)
-        print(f"Model saved to: {save_path}\n")
+
+        # Save with enhanced metadata
+        problem_info = {
+            'bin_dimensions': (W, D, H),
+            'num_items': len(items),
+            'max_bins': problem.max_bins,
+            'max_weight': problem.max_weight
+        }
+        training_stats = {
+            'best_bins': best_bins,
+            'best_items': best_items,
+            'best_util': best_util,
+            'final_ma50_bins': np.mean(bins_hist),
+            'final_ma50_items': np.mean(items_hist),
+            'final_ma50_util': np.mean(util_hist)
+        }
+        save_model(agent, save_path, problem_info, training_stats)
+        print()
     
     # Visualize best solution (use last solution as fallback if no best was found)
     bins_to_visualize = best_solution if best_solution is not None else env.bins
@@ -926,6 +942,110 @@ def train_multibin_pack_dqn(
 
     
     return agent, env, best_solution
+
+
+def save_model(agent, save_path: str, problem_info: dict = None, training_stats: dict = None):
+    """
+    Save a trained DQN agent to disk.
+
+    Args:
+        agent: DQNAgentEnhanced instance to save
+        save_path: Path where to save the model
+        problem_info: Optional dict with problem metadata (bin dimensions, num items, etc.)
+        training_stats: Optional dict with training statistics (best_bins, best_util, etc.)
+    """
+    from pathlib import Path
+
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+
+    checkpoint = {
+        'model_state_dict': agent.q.state_dict(),
+        'target_state_dict': agent.q_target.state_dict(),
+        'optimizer_state_dict': agent.opt.state_dict(),
+        'config': agent.cfg.__dict__,
+        'env_steps': agent.env_steps,
+        'training_steps': agent.training_steps,
+        'epsilon': agent.epsilon,
+    }
+
+    if problem_info:
+        checkpoint['problem_info'] = problem_info
+
+    if training_stats:
+        checkpoint['training_stats'] = training_stats
+
+    torch.save(checkpoint, save_path)
+    print(f"Model saved to: {save_path}")
+
+
+def load_model(load_path: str, problem_path: str = None, device: str = None):
+    """
+    Load a previously trained DQN agent from disk.
+
+    Args:
+        load_path: Path to saved model checkpoint
+        problem_path: Optional path to problem file (needed if continuing training)
+        device: Device to load on ('cuda' or 'cpu', auto-detect if None)
+
+    Returns:
+        agent: Loaded DQNAgentEnhanced
+        checkpoint: Full checkpoint dict with metadata
+        env: Environment (if problem_path provided, else None)
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    print(f"Loading model from: {load_path}")
+    checkpoint = torch.load(load_path, map_location=device)
+
+    # Reconstruct config
+    from dqn_core.dqn_enhanced import DQNConfigEnhanced
+    cfg_dict = checkpoint['config']
+    cfg = DQNConfigEnhanced(**cfg_dict)
+    cfg.device = device
+
+    # Create agent
+    from dqn_core.dqn_enhanced import DQNAgentEnhanced
+    agent = DQNAgentEnhanced(cfg)
+
+    # Load weights
+    agent.q.load_state_dict(checkpoint['model_state_dict'])
+    agent.q_target.load_state_dict(checkpoint['target_state_dict'])
+    agent.opt.load_state_dict(checkpoint['optimizer_state_dict'])
+    agent.env_steps = checkpoint['env_steps']
+    agent.training_steps = checkpoint['training_steps']
+    agent._eps = checkpoint['epsilon']
+
+    print(f"Model loaded on {device}")
+    print(f"  Training steps: {agent.training_steps}")
+    print(f"  Epsilon: {agent.epsilon:.4f}")
+
+    # Optionally reconstruct environment
+    env = None
+    if problem_path:
+        from nesting.dataset_loader import load_problem
+        problem = load_problem(problem_path)
+        items = load_problem_as_items(problem)
+        W, D, H = problem.bin_dimensions
+
+        env = MultiBinPackingEnv(
+            W, D, H,
+            items=items,
+            max_actions=cfg.max_actions,
+            topk_eps=1000,
+            seed=42,
+            gamma=cfg.gamma,
+            problem=problem
+        )
+        print(f"  Environment created: {W}×{D}×{H}")
+
+    if 'training_stats' in checkpoint:
+        stats = checkpoint['training_stats']
+        print(f"\nBest Training Performance:")
+        for key, value in stats.items():
+            print(f"  {key}: {value}")
+
+    return agent, checkpoint, env
 
 
 def full_datapath(filename: str) -> str:
