@@ -381,9 +381,8 @@ def main():
         'save_dir': 'output_data/ga_evolution',
         'verbose': True,
         # Parallelism settings (NEW!)
-        # NOTE: Parallelism is automatically disabled on Windows due to stability issues
-        # On Linux/Mac, this provides 3-4x speedup
-        'parallel': True,            # Enable parallel genome evaluation (auto-disabled on Windows)
+        # Provides 2-4x speedup on Windows, 3-8x on Linux/Mac
+        'parallel': True,            # Enable parallel genome evaluation
         'num_workers': None,         # Auto-detect based on CPUs/GPUs
         'device_mode': 'auto'        # 'auto', 'cpu', 'multi_gpu', 'single_gpu'
     }

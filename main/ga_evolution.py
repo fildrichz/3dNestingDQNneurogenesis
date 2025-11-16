@@ -21,7 +21,6 @@ from pathlib import Path
 import os
 import sys
 import platform
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 from genome import NetworkGenome, create_initial_population, tournament_selection
@@ -29,11 +28,7 @@ from dqn_core.dqn_enhanced import DQNAgentEnhanced
 from nesting.dataset_loader import load_problem, BinPackingProblem
 
 
-def _evaluate_genome_worker(genome_dict: Dict,
-                            problem_dict: Dict,
-                            episodes: int,
-                            device: str,
-                            worker_id: int) -> Tuple[float, Dict, str]:
+def _evaluate_genome_worker(args: Tuple) -> Tuple[float, Dict, str]:
     """
     Worker function for parallel genome evaluation.
 
@@ -41,19 +36,32 @@ def _evaluate_genome_worker(genome_dict: Dict,
     All inputs must be serializable (no PyTorch models).
 
     Args:
-        genome_dict: Genome serialized as dict
-        problem_dict: Problem configuration as dict
-        episodes: Number of training episodes
-        device: Device to use ('cpu', 'cuda', 'cuda:0', etc.)
-        worker_id: Worker process ID (for logging)
+        args: Tuple of (genome_dict, problem_dict, episodes, device, worker_id)
 
     Returns:
         (fitness, metrics, genome_id)
     """
+    # Unpack arguments
+    genome_dict, problem_dict, episodes, device, worker_id = args
+
+    # Set environment variables to limit threading (critical for Windows)
+    import os
+    os.environ['OMP_NUM_THREADS'] = '1'
+    os.environ['MKL_NUM_THREADS'] = '1'
+    os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
+    # Import inside worker to avoid serialization issues
     import torch
     import gc
+    import warnings
+    warnings.filterwarnings('ignore')  # Suppress nested tensor warnings
+
+    # Set torch threads
+    torch.set_num_threads(1)
+
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem, load_problem_as_items, MultiBinPackingEnv
     from nesting.dataset_loader import BinPackingProblem, Item
+    from genome import NetworkGenome
 
     # Reconstruct genome from dict
     genome = NetworkGenome.from_dict(genome_dict)
@@ -313,20 +321,6 @@ def evolve_architecture(problem,
         if verbose:
             print(f"Random seed set to: {seed}")
 
-    # Windows multiprocessing compatibility check
-    is_windows = platform.system() == 'Windows'
-    if is_windows and parallel:
-        if verbose:
-            print("\n" + "="*80)
-            print("WARNING: Windows detected")
-            print("="*80)
-            print("Multiprocessing on Windows with PyTorch is unreliable and often hangs.")
-            print("STRONGLY RECOMMENDED: Set parallel=False in your config.")
-            print("")
-            print("Continuing with parallelism disabled for stability...")
-            print("="*80 + "\n")
-        parallel = False  # Force disable on Windows
-
     # Configure parallelism and device strategy
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 
@@ -433,9 +427,12 @@ def evolve_architecture(problem,
         
         # Evaluate all genomes
         fitness_scores = []
+        parallel_success = False
 
         if parallel and actual_num_workers > 1:
-            # Parallel evaluation
+            # Parallel evaluation using torch.multiprocessing (Windows-compatible)
+            import torch.multiprocessing as mp
+
             if verbose:
                 print(f"\nEvaluating {population_size} genomes in parallel with {actual_num_workers} workers...")
 
@@ -461,72 +458,57 @@ def evolve_architecture(problem,
                 ]
             }
 
-            # Submit all genomes to process pool
-            genome_id_map = {}  # Map genome_id -> genome object
-            futures = {}
+            # Prepare task arguments for each genome
+            task_args = []
+            for i, genome in enumerate(population):
+                # Determine device for this worker
+                if device_mode == 'multi_gpu':
+                    device = f"cuda:{i % num_gpus}"
+                elif device_mode == 'single_gpu':
+                    device = "cuda"
+                else:  # cpu
+                    device = "cpu"
 
-            with ProcessPoolExecutor(max_workers=actual_num_workers) as executor:
-                for i, genome in enumerate(population):
-                    # Determine device for this worker
-                    if device_mode == 'multi_gpu':
-                        device = f"cuda:{i % num_gpus}"
-                    elif device_mode == 'single_gpu':
-                        device = "cuda"
-                    else:  # cpu
-                        device = "cpu"
+                task_args.append((
+                    genome.to_dict(),
+                    problem_dict,
+                    episodes_per_eval,
+                    device,
+                    i
+                ))
 
-                    # Submit task
-                    future = executor.submit(
-                        _evaluate_genome_worker,
-                        genome.to_dict(),
-                        problem_dict,
-                        episodes_per_eval,
-                        device,
-                        i
-                    )
-                    futures[future] = i
-                    genome_id_map[genome.genome_id] = genome
+            # Use torch.multiprocessing.Pool for Windows compatibility
+            try:
+                # Set start method to 'spawn' (required for Windows, safe for all platforms)
+                ctx = mp.get_context('spawn')
 
-                # Collect results as they complete
-                completed = 0
-                # Timeout: 10 minutes per genome (generous for 50 episodes)
-                timeout_per_genome = 600  # seconds
+                with ctx.Pool(processes=actual_num_workers) as pool:
+                    # Use map for ordered results
+                    results = pool.map(_evaluate_genome_worker, task_args)
 
-                for future in as_completed(futures, timeout=timeout_per_genome * population_size):
-                    worker_idx = futures[future]
-                    genome = population[worker_idx]
+                # Process results
+                for i, (fitness, metrics, genome_id) in enumerate(results):
+                    genome = population[i]
+                    genome.fitness = fitness
+                    genome.metrics = metrics
+                    fitness_scores.append(fitness)
 
-                    try:
-                        # Add timeout to individual result retrieval
-                        fitness, metrics, genome_id = future.result(timeout=timeout_per_genome)
-                        genome.fitness = fitness
-                        genome.metrics = metrics
-                        fitness_scores.append(fitness)
+                    if verbose:
+                        print(f"  [{i+1}/{population_size}] Genome {genome_id} → "
+                              f"Fitness: {fitness:.4f} | "
+                              f"Util: {metrics['avg_utilization']:.3f} | "
+                              f"Bins: {metrics['avg_bins_used']:.1f} | "
+                              f"Complexity: {genome.get_network_complexity():.3f}M params")
 
-                        completed += 1
-                        if verbose:
-                            print(f"  [{completed}/{population_size}] Genome {genome_id} → "
-                                  f"Fitness: {fitness:.4f} | "
-                                  f"Util: {metrics['avg_utilization']:.3f} | "
-                                  f"Bins: {metrics['avg_bins_used']:.1f} | "
-                                  f"Complexity: {genome.get_network_complexity():.3f}M params")
-                    except TimeoutError:
-                        print(f"  [TIMEOUT] Genome {genome.genome_id} timed out after {timeout_per_genome}s")
-                        # Assign low fitness to timed-out genomes
-                        genome.fitness = 0.0
-                        genome.metrics = {'avg_utilization': 0.0, 'avg_bins_used': 999}
-                        fitness_scores.append(0.0)
-                        completed += 1
-                    except Exception as e:
-                        import traceback
-                        print(f"  [ERROR] Genome {genome.genome_id} failed: {e}")
-                        print(f"  Traceback: {traceback.format_exc()}")
-                        # Assign low fitness to failed genomes
-                        genome.fitness = 0.0
-                        genome.metrics = {'avg_utilization': 0.0, 'avg_bins_used': 999}
-                        fitness_scores.append(0.0)
-                        completed += 1
-        else:
+                parallel_success = True
+
+            except Exception as e:
+                import traceback
+                print(f"\n[ERROR] Multiprocessing failed: {e}")
+                print(f"Traceback: {traceback.format_exc()}")
+                print("\nFalling back to sequential evaluation...")
+
+        if not parallel_success:
             # Sequential evaluation (original behavior)
             for i, genome in enumerate(population):
                 if verbose:
