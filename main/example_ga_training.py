@@ -304,13 +304,13 @@ def train_with_evolved_genome(problem_path: str,
         # Episode statistics
         util_hist.append(info['utilization'])
         bins_hist.append(info['bins_used'])
-        items_hist.append(info['items_packed'])
+        items_hist.append(info['items_placed'])
         returns_hist.append(ep_ret)
 
         # Track best solution
-        if info['items_packed'] > best_items or \
-           (info['items_packed'] == best_items and info['bins_used'] < best_bins):
-            best_items = info['items_packed']
+        if info['items_placed'] > best_items or \
+           (info['items_placed'] == best_items and info['bins_used'] < best_bins):
+            best_items = info['items_placed']
             best_bins = info['bins_used']
             best_util = info['utilization']
 
