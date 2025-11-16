@@ -348,11 +348,17 @@ def train_with_evolved_genome(problem_path: str,
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         torch.save({
             'model_state_dict': agent.q.state_dict(),
+            'target_state_dict': agent.q_target.state_dict(),
+            'optimizer_state_dict': agent.opt.state_dict(),
+            'env_steps': agent.env_steps,
+            'training_steps': agent.training_steps,
+            'epsilon': agent.epsilon,
             'genome': genome.to_dict(),
             'config': cfg.__dict__,
             'best_bins': best_bins,
             'best_items': best_items,
-            'best_util': best_util
+            'best_util': best_util,
+            'problem_file': problem_path
         }, save_path)
         print(f"\nModel saved to: {save_path}")
 
@@ -361,7 +367,8 @@ def train_with_evolved_genome(problem_path: str,
     return agent
 
 
-def load_trained_model(model_path: str, problem_path: str, device: str = None):
+def load_trained_model(model_path: str, problem_path: str, device: str = None,
+                       for_training: bool = False):
     """
     Load a previously trained model from checkpoint.
 
@@ -369,6 +376,8 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None):
         model_path: Path to saved model checkpoint (.pth file)
         problem_path: Path to problem file (needed to create environment for obs_dim)
         device: Device to load model on ('cuda' or 'cpu', auto-detect if None)
+        for_training: If True, restore full training state (optimizer, epsilon, etc.)
+                     If False, only load weights for evaluation
 
     Returns:
         agent: Loaded DQNAgentEnhanced
@@ -376,7 +385,7 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None):
         checkpoint: Full checkpoint dict with metadata
     """
     print(f"\n{'='*80}")
-    print("LOADING TRAINED MODEL")
+    print(f"LOADING TRAINED MODEL ({'TRAINING MODE' if for_training else 'EVAL MODE'})")
     print(f"{'='*80}\n")
 
     if device is None:
@@ -428,7 +437,20 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None):
 
     # Load model weights
     agent.q.load_state_dict(checkpoint['model_state_dict'])
-    agent.q.eval()  # Set to evaluation mode
+
+    # Restore full training state if requested
+    if for_training and 'target_state_dict' in checkpoint:
+        agent.q_target.load_state_dict(checkpoint['target_state_dict'])
+        agent.opt.load_state_dict(checkpoint['optimizer_state_dict'])
+        agent.env_steps = checkpoint['env_steps']
+        agent.training_steps = checkpoint['training_steps']
+        agent._eps = checkpoint['epsilon']
+        print(f"\nTraining state restored:")
+        print(f"  Training steps: {agent.training_steps}")
+        print(f"  Environment steps: {agent.env_steps}")
+        print(f"  Epsilon: {agent.epsilon:.4f}")
+    else:
+        agent.q.eval()  # Set to evaluation mode
 
     print(f"\nLoaded on device: {device}")
     print(f"  Heightmap patches: {cfg.heightmap_patch_size}×{cfg.heightmap_patch_size}")
@@ -444,6 +466,233 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None):
     print(f"{'='*80}\n")
 
     return agent, genome, checkpoint
+
+
+def continue_training_on_new_dataset(
+    model_path: str,
+    new_problem_path: str,
+    episodes: int = 200,
+    save_path: str = None,
+    reset_epsilon: bool = False,
+    device: str = None
+):
+    """
+    Load a trained model and continue training on a new dataset (transfer learning).
+
+    This enables:
+    - Training on multiple datasets sequentially
+    - Fine-tuning a model on a different problem
+    - Curriculum learning (easy -> hard problems)
+
+    Args:
+        model_path: Path to previously saved model checkpoint
+        new_problem_path: Path to new problem file to train on
+        episodes: Number of training episodes on new dataset
+        save_path: Where to save the updated model (None = don't save)
+        reset_epsilon: If True, reset exploration to cfg.eps_start. If False, keep current epsilon
+        device: Device to use ('cuda'/'cpu', auto-detect if None)
+
+    Returns:
+        agent: Updated agent after training on new dataset
+        genome: Network architecture
+    """
+    print(f"\n{'='*80}")
+    print("TRANSFER LEARNING: CONTINUE TRAINING ON NEW DATASET")
+    print(f"{'='*80}\n")
+
+    # Load model with training state
+    agent, genome, checkpoint = load_trained_model(
+        model_path=model_path,
+        problem_path=new_problem_path,  # Use new problem for dimensions
+        device=device,
+        for_training=True  # Restore optimizer, epsilon, etc.
+    )
+
+    print(f"Previous training:")
+    print(f"  Trained on: {checkpoint.get('problem_file', 'unknown')}")
+    if 'best_items' in checkpoint:
+        print(f"  Best result: {checkpoint['best_items']} items, {checkpoint['best_bins']} bins")
+    print(f"\nContinuing with new dataset: {new_problem_path}")
+    print(f"  Additional episodes: {episodes}")
+
+    if reset_epsilon:
+        agent._eps = agent.cfg.eps_start
+        print(f"  Epsilon reset to: {agent._eps:.4f}")
+    else:
+        print(f"  Continuing with epsilon: {agent.epsilon:.4f}")
+
+    # Load new problem
+    problem = load_problem(new_problem_path)
+    items = load_problem_as_items(problem)
+    W, D, H = problem.bin_dimensions
+
+    # Create environment for new problem
+    env = MultiBinPackingEnv(
+        W, D, H,
+        items=items,
+        max_actions=128,
+        topk_eps=1000,
+        seed=42,
+        gamma=0.992,
+        problem=problem
+    )
+
+    print(f"\nNew Problem:")
+    print(f"  Container: {W}×{D}×{H}")
+    print(f"  Items: {len(items)}")
+    print(f"{'='*80}\n")
+
+    # Training tracking
+    import collections
+    util_hist = collections.deque(maxlen=50)
+    bins_hist = collections.deque(maxlen=50)
+    items_hist = collections.deque(maxlen=50)
+    returns_hist = collections.deque(maxlen=50)
+    best_bins = float('inf')
+    best_items = 0
+    best_util = 0.0
+
+    patch_size = genome.genes['patch_size']
+    ACTION_FEAT_DIM = 25
+
+    # Training loop
+    for ep in range(episodes):
+        obs = env.reset(items=items.copy())
+        ep_ret = 0.0
+        steps = 0
+        losses = []
+
+        while True:
+            # Get available actions
+            actions, mask_short = env.action_space()
+            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+            # Select action
+            act_idx = agent.select_action(
+                obs,
+                feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+            )
+            act = None if (act_idx is None or actions == [] or actions[act_idx] is None) else actions[act_idx]
+
+            # Pad current state features
+            currF, currM = pad_feats_mask(
+                feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
+                mask_short if mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            currP = pad_patches(
+                patches if patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                env.max_actions,
+                patch_size
+            )
+
+            # Execute action
+            nobs, rew, done, info = env.step(act)
+
+            # Get next state actions
+            n_actions, n_mask_short = env.action_space()
+            n_feats = build_action_features(env, n_actions) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            n_patches = extract_patches_for_actions(env, n_actions, patch_size=patch_size) if len(n_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+            # Pad next state features
+            nextF, nextM = pad_feats_mask(
+                n_feats,
+                n_mask_short if n_mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            nextP = pad_patches(
+                n_patches if n_patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                env.max_actions,
+                patch_size
+            )
+
+            # Store transition
+            agent.store(obs, act_idx, rew, nobs, done,
+                       curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                       next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
+
+            # Train
+            if steps % 1 == 0:
+                loss = agent.train_step()
+                if loss is not None:
+                    losses.append(loss)
+
+            ep_ret += rew
+            obs = nobs
+            steps += 1
+
+            if done:
+                break
+
+        # Episode statistics
+        util_hist.append(info['utilization'])
+        bins_hist.append(info['bins_used'])
+        items_hist.append(info['items_placed'])
+        returns_hist.append(ep_ret)
+
+        # Track best solution
+        if info['items_placed'] > best_items or \
+           (info['items_placed'] == best_items and info['bins_used'] < best_bins):
+            best_items = info['items_placed']
+            best_bins = info['bins_used']
+            best_util = info['utilization']
+
+        # Logging
+        if (ep + 1) % 10 == 0:
+            avg_util = sum(util_hist) / len(util_hist) if util_hist else 0
+            avg_bins = sum(bins_hist) / len(bins_hist) if bins_hist else 0
+            avg_items = sum(items_hist) / len(items_hist) if items_hist else 0
+            avg_return = sum(returns_hist) / len(returns_hist) if returns_hist else 0
+            avg_loss = sum(losses) / len(losses) if losses else 0
+
+            print(f"Ep {ep+1:4d}/{episodes} | "
+                  f"Items: {avg_items:.1f}/{len(items)} | "
+                  f"Bins: {avg_bins:.1f} | "
+                  f"Util: {avg_util:.3f} | "
+                  f"Return: {avg_return:+.2f} | "
+                  f"Loss: {avg_loss:.4f} | "
+                  f"ε: {agent.epsilon:.3f}")
+
+    # Final results
+    print(f"\n{'='*80}")
+    print("CONTINUED TRAINING COMPLETE")
+    print(f"{'='*80}")
+    print(f"Best Performance on New Dataset:")
+    print(f"  Items packed: {best_items}/{len(items)}")
+    print(f"  Bins used: {best_bins}")
+    print(f"  Utilization: {best_util:.3f}")
+    print(f"\nFinal 50-episode average:")
+    print(f"  Items packed: {sum(items_hist)/len(items_hist):.1f}/{len(items)}")
+    print(f"  Bins used: {sum(bins_hist)/len(bins_hist):.1f}")
+    print(f"  Utilization: {sum(util_hist)/len(util_hist):.3f}")
+    print(f"\nTotal training steps: {agent.training_steps}")
+    print(f"Total environment steps: {agent.env_steps}")
+
+    # Save updated model
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            'model_state_dict': agent.q.state_dict(),
+            'target_state_dict': agent.q_target.state_dict(),
+            'optimizer_state_dict': agent.opt.state_dict(),
+            'env_steps': agent.env_steps,
+            'training_steps': agent.training_steps,
+            'epsilon': agent.epsilon,
+            'genome': genome.to_dict(),
+            'config': agent.cfg.__dict__,
+            'best_bins': best_bins,
+            'best_items': best_items,
+            'best_util': best_util,
+            'problem_file': new_problem_path  # Track which problem this was trained on
+        }, save_path)
+        print(f"\nUpdated model saved to: {save_path}")
+
+    print(f"{'='*80}\n")
+
+    return agent, genome
 
 
 def main():
