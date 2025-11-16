@@ -19,6 +19,8 @@ import json
 import time
 from pathlib import Path
 import os
+import sys
+import platform
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
@@ -310,6 +312,20 @@ def evolve_architecture(problem,
         np.random.seed(seed)
         if verbose:
             print(f"Random seed set to: {seed}")
+
+    # Windows multiprocessing compatibility check
+    is_windows = platform.system() == 'Windows'
+    if is_windows and parallel:
+        if verbose:
+            print("\n" + "="*80)
+            print("WARNING: Windows detected")
+            print("="*80)
+            print("Multiprocessing on Windows with PyTorch is unreliable and often hangs.")
+            print("STRONGLY RECOMMENDED: Set parallel=False in your config.")
+            print("")
+            print("Continuing with parallelism disabled for stability...")
+            print("="*80 + "\n")
+        parallel = False  # Force disable on Windows
 
     # Configure parallelism and device strategy
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0

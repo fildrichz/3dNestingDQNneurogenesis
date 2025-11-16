@@ -2,9 +2,18 @@
 
 This guide explains the new parallel genome evaluation feature that speeds up genetic algorithm training by 3-8x.
 
+## ⚠️ Windows Compatibility Notice
+
+**Multiprocessing is automatically disabled on Windows** due to stability issues with PyTorch multiprocessing on that platform. The code will still run, but sequentially (one genome at a time).
+
+- **Windows users**: Parallelism is auto-disabled for stability
+- **Linux/Mac users**: Full multiprocessing support with 3-8x speedup
+
+If you're on Windows and want to try multiprocessing anyway (not recommended), see the troubleshooting section below.
+
 ## Overview
 
-The genetic algorithm now supports **parallel genome evaluation**, allowing multiple genomes to be trained simultaneously across CPU cores or multiple GPUs.
+The genetic algorithm supports **parallel genome evaluation** on Linux and macOS, allowing multiple genomes to be trained simultaneously across CPU cores or multiple GPUs.
 
 ## Key Features
 
@@ -150,44 +159,44 @@ Worker 4 → GPU 0  # Cycles back
 
 ### Windows-Specific Issues
 
+#### Automatic Parallelism Disabling
+**As of the latest version, multiprocessing is automatically disabled on Windows** to prevent stability issues.
+
+You will see this message when running on Windows:
+```
+WARNING: Windows detected
+Multiprocessing on Windows with PyTorch is unreliable and often hangs.
+Continuing with parallelism disabled for stability...
+```
+
+**This is normal and expected behavior.** Your code will run sequentially (one genome at a time).
+
+#### Force-Enable Multiprocessing on Windows (Not Recommended)
+
+If you want to try multiprocessing on Windows anyway, you can bypass the auto-disable by modifying `ga_evolution.py`:
+
+```python
+# In ga_evolution.py, comment out the Windows check:
+# is_windows = platform.system() == 'Windows'
+# if is_windows and parallel:
+#     parallel = False  # Force disable on Windows
+```
+
+**WARNING**: This will likely cause hangs and crashes. Only do this if:
+- You've run `test_multiprocessing.py` successfully
+- You're not using PyTorch with CUDA
+- You understand the risks
+
 #### Livelock / "Waiter fails to acquire" error
 **Symptoms**: Program hangs, workers never complete, no progress output
 
 **Causes**:
 - Windows uses `spawn()` instead of `fork()` for multiprocessing
-- Worker processes may hang during initialization
-- Profilers (like Scalene) have limited Windows multiprocessing support
+- PyTorch + Windows + multiprocessing is fundamentally incompatible
+- Worker processes hang during PyTorch initialization
 
-**Solutions**:
-1. **Test multiprocessing first**:
-   ```bash
-   python test_multiprocessing.py
-   ```
-   This simple test verifies multiprocessing works on your system.
-
-2. **Run without profiler**:
-   ```bash
-   # Instead of: scalene example_ga_training.py
-   python main/example_ga_training.py
-   ```
-
-3. **Reduce number of workers**:
-   ```python
-   ga_config = {
-       'num_workers': 2,  # Start small
-       # ...
-   }
-   ```
-
-4. **Disable parallelism temporarily**:
-   ```python
-   ga_config = {
-       'parallel': False,
-       # ...
-   }
-   ```
-
-5. **Check timeout settings**: Workers timeout after 600s (10 minutes) per genome. If you see timeout errors, training might be very slow on your CPU.
+**Solution**:
+Parallelism is now automatically disabled on Windows. No action needed.
 
 #### Scalene warning: "only supports multiprocessing on Mac and Unix"
 **This is normal!** The warning is from Scalene, not your code.
