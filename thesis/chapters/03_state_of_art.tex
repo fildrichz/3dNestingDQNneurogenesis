@@ -17,7 +17,7 @@ In the offline setting, the entire item set is known, enabling pre-sorting and d
 Raster/voxel models offer simple, parallelizable collision checks and convenient stability features at the cost of resolution dependence. Geometry-first models rely on exact or approximate intersection tests for convex bodies, oriented bounding boxes, separating-axis or GJK/EPA checks, and precomputed structures (no-fit relations in 2D; extreme points or empty maximal spaces in 3D). Hybrid designs are common: geometry for candidate generation and feasibility, rasterized descriptors for local voids/support \cite{ARCO22}.
 
 \paragraph{Candidate placements ("interesting points").}
-Modern 3D solvers avoid global pose search by enumerating high-quality placements at the evolving packing frontier. Two families dominate: (i) \textit{extreme points}, induced by faces/edges/vertices of the container and already placed items, and (ii) \textit{empty maximal spaces}, maintained as items are inserted. Both admit quick filters for container bounds, non-overlap, minimal support, separations, and admissible orientations \cite{ARCO22}.
+Modern 3D solvers avoid global pose search by enumerating high-quality placements at the evolving packing frontier. Two families dominate: (i) \textit{extreme points}, induced by faces/edges/vertices of the container and already placed items, and (ii) \textit{empty maximal spaces}, maintained as items are inserted. Both admit quick filters for container bounds, non-overlap, minimal support, separations, and admissible orientations \cite{ARCO22}. Detailed discussion of these heuristics follows in Section \ref{sec:placement-heuristics}.
 
 \paragraph{Neural scoring and learned proposals.}
 Neural components most often re-rank EP/EMS candidates instead of proposing arbitrary poses. Feature sets typically mix void/waste metrics, clearances, support/contact estimates, and simple surrogates for load distribution or access. Lightweight models (MLPs, attention over placed items) can replace hand-crafted tie-breakers without changing the surrounding heuristic or matheuristic scaffold \cite{ARCO22}.
@@ -32,6 +32,37 @@ After a feasible placement, local refinements (swap, rotate within allowed sets,
 
 \paragraph{Metaheuristics and matheuristics.}
 GRASP, VNS, tabu, and LNS frameworks explore item orderings and partial re-packs; matheuristics embed exact subproblems (e.g., orientation/placement pricing, stability/separation checks) to sharpen feasibility and improve bounds. This hybridization remains the most common route to high fill ratios with realistic industrial constraints \cite{ARCO22}.
+
+\subsection{Placement Heuristics: Extreme Points and Maximal Empty Spaces}
+\label{sec:placement-heuristics}
+
+The efficiency of 3D bin packing algorithms critically depends on the heuristic used to generate candidate placement positions. Rather than evaluating all possible positions in continuous 3D space---an intractable approach---modern solvers restrict placement to a finite set of promising locations. Two dominant families of placement heuristics have emerged: \textit{extreme points} (EPs) and \textit{empty maximal spaces} (EMS).
+
+\paragraph{Extreme Points (EPs).}
+\textbf{Crainic et al.\ (2008) \cite{CPP08}} introduced the extreme points heuristic for 3D container loading. An extreme point is a 3D coordinate $(x, y, z)$ in the container from which an item can be placed such that it touches either the container walls or previously placed items on at least one face. The key insight is that optimal placements typically occur at these ``corner'' positions where items naturally nest against existing geometry.
+
+The EP set is dynamically maintained: when a new item is placed, EPs that fall inside the item's volume are removed, and new EPs are generated at the six faces of the placed box (right, front, top, left, back, bottom). \textbf{Crainic et al.\ (2012) \cite{CPP12}} refined this approach with efficient update algorithms and pruning strategies. They introduce \textit{normal extreme points}, which ensure items are supported from below, improving practical feasibility.
+
+\textbf{Karabulut and İnceoğlu (2004) \cite{KI04}} developed a hybrid genetic algorithm using extreme points for the 3D bin packing problem, demonstrating that EPs reduce the search space while maintaining solution quality. Their results show that EP-based placement outperforms grid-based discretization in both runtime and packing density.
+
+\paragraph{Empty Maximal Spaces (EMS).}
+While EPs represent point locations, the EMS heuristic maintains a set of rectangular \textit{volumes}---specifically, axis-aligned boxes representing empty regions within the container. \textbf{Lai and Chan (1997) \cite{LC97}} introduced the maximal-space representation for 2D cutting stock problems, later extended to 3D by several researchers.
+
+An empty maximal space is defined by its corner position $(x, y, z)$ and dimensions $(w, d, h)$, representing the largest axis-aligned rectangular void at that location. The EMS set is updated after each placement using \textit{difference operations}: when an item is placed, each EMS that intersects the item is subdivided into up to six new maximal spaces (left, right, front, back, bottom, top slices). EMS that are fully contained within other EMS are eliminated through \textit{dominance pruning}.
+
+\textbf{Fanslau and Bortfeldt (2010) \cite{FB10}} present a tree search algorithm using EMS for the container loading problem with weak heterogeneity. They demonstrate that maintaining EMS sorted by volume and applying aggressive pruning (keeping only the top-$k$ largest spaces) significantly improves computational efficiency without sacrificing solution quality.
+
+\textbf{Gonçalves and Resende (2013) \cite{GR13}} develop a biased random-key genetic algorithm for 3D bin packing using maximal spaces. Their approach combines EMS-based placement with evolutionary item ordering, achieving state-of-the-art results on benchmark instances. They show that EMS-based heuristics naturally encode both spatial efficiency (preferring placements in large voids) and stability (bottom-left placement bias).
+
+\paragraph{Comparison and Hybrid Approaches.}
+EPs and EMS represent complementary philosophies: EPs are \textit{point-based} and geometrically minimal (touching constraints), while EMS are \textit{volume-based} and encode available space explicitly. \textbf{Paquay et al.\ (2016) \cite{PSD+16}} provide a comprehensive comparison, finding that:
+\begin{itemize}
+\item EPs generate fewer candidates (typically $O(n)$ points for $n$ items) but require collision detection to verify feasibility.
+\item EMS generate more candidates (up to $O(n^2)$ spaces) but guarantee collision-free placement within each space.
+\item Hybrid approaches that use EMS for candidate generation and heightmaps for local geometry evaluation achieve the best balance of efficiency and quality.
+\end{itemize}
+
+Our implementation adopts the EMS approach with volume-based prioritization (top-1000 largest spaces) and integrates heightmap-based spatial feature extraction to capture local topology around each EMS corner, combining the strengths of both geometric and rasterized representations.
 
 \subsection{Key Papers in 3D Nesting}
 
@@ -50,6 +81,197 @@ GRASP, VNS, tabu, and LNS frameworks explore item orderings and partial re-packs
 \textbf{Gimenez-Palacios et al.\ (2023) \cite{GPAAVP23}} extend multi-container loading to multi-drop and split delivery conditions. They show that allowing split deliveries (serving a customer from multiple vehicles) can improve overall logistics costs, but requires more sophisticated loading strategies that consider partial item sets per vehicle.
 
 \textbf{Krebs et al.\ (2021) \cite{KEK21}} investigate advanced loading constraints for 3D vehicle routing problems. They formalize stability, weight distribution, and load sequence constraints within a vehicle routing context, demonstrating that loading feasibility is not a simple yes/no check but a complex optimization problem in its own right.
+
+\section{Machine Learning and Neural Networks in Bin Packing}
+
+The application of machine learning to bin packing and nesting problems represents a relatively recent but rapidly growing research direction. Traditional approaches rely on hand-crafted heuristics and metaheuristics; machine learning methods aim to learn effective placement strategies directly from data or through interaction with the packing environment.
+
+\subsection{Supervised Learning Approaches}
+
+Early applications of neural networks to bin packing focused on supervised learning, where networks are trained to predict good placement decisions based on features of the current packing state.
+
+\textbf{Mack et al.\ (2007) \cite{MBK07}} apply neural networks to the 2D strip packing problem, training networks to predict placement coordinates for items. They extract geometric features (item dimensions, remaining space, aspect ratios) and use multi-layer perceptrons to approximate human expert decisions. While showing promise, their approach struggles with generalization to problem instances significantly different from the training distribution.
+
+\textbf{Hu et al.\ (2017) \cite{HLZ17}} develop a learning-based heuristic for 3D bin packing where convolutional neural networks extract spatial features from 2D projections of the current packing state. Their key innovation is using heightmaps---rasterized 2D grids encoding the maximum height at each $(x,y)$ position---as input to CNNs. This enables the network to learn local geometric patterns such as corners, walls, and valleys that indicate favorable placement positions.
+
+\subsection{Reinforcement Learning for Combinatorial Optimization}
+
+Reinforcement learning (RL) offers a natural framework for sequential decision-making problems like bin packing, where an agent must learn a policy for selecting items and placement positions through trial and error.
+
+\textbf{Zhao et al.\ (2021) \cite{ZTL+21}} survey deep reinforcement learning approaches for combinatorial optimization problems including bin packing, job scheduling, and vehicle routing. They identify key challenges:
+\begin{itemize}
+\item \textbf{Large action spaces}: The number of valid placements grows combinatorially with the number of items and placement positions.
+\item \textbf{Sparse rewards}: Feedback is only available at episode termination (final packing utilization), making credit assignment difficult.
+\item \textbf{Generalization}: Models trained on specific problem sizes or item distributions often fail to transfer to different configurations.
+\end{itemize}
+
+\textbf{Laterre et al.\ (2018) \cite{LFU+18}} apply deep Q-learning to 3D bin packing in a simulated warehouse environment. They formulate packing as a Markov decision process where states encode the current bin configuration and item queue, actions represent (item, position, orientation) tuples, and rewards are shaped to encourage high utilization and stability. Their DQN agent learns to outperform simple heuristics after extensive training, though performance degrades on instances larger than those seen during training.
+
+\textbf{Hu et al.\ (2020) \cite{HZZ+20}} introduce TAP-Net (Transferable Attention-based Packing Network), combining pointer networks with attention mechanisms for online bin packing. The attention mechanism allows the network to focus on relevant items and placement positions, improving sample efficiency. They demonstrate transfer learning across problem sizes by training on small instances and fine-tuning on larger ones.
+
+\textbf{Zhao et al.\ (2022) \cite{ZXL+22}} propose a deep reinforcement learning method specifically for 3D bin packing with heterogeneous items and complex constraints (weight limits, fragility, load-bearing). They use a hierarchical action space decomposition: first selecting which item to pack, then where to place it. This factorization reduces the combinatorial explosion of joint action selection. Their reward function incorporates potential-based shaping to provide intermediate feedback based on packing density and remaining space quality.
+
+\subsection{Neural Architecture Components}
+
+Modern learning-based packing systems typically comprise several neural components:
+
+\paragraph{State Encoders.}
+Global state information (number of items remaining, current utilization, bin count) is encoded via multi-layer perceptrons (MLPs) into fixed-dimensional embeddings. These embeddings provide context for action selection.
+
+\paragraph{Spatial Feature Extractors.}
+Convolutional neural networks (CNNs) process rasterized representations (heightmaps, occupancy grids) to extract local geometric features. As shown by \textbf{Hu et al.\ (2017) \cite{HLZ17}}, CNNs can learn to recognize favorable placement patterns such as fitting items into corners or against walls.
+
+\paragraph{Action Encoders.}
+Each candidate action (placement) is represented by features including item dimensions, placement position, orientation, slack space, and derived metrics (utilization delta, tightness). MLPs embed these features into a common representation space.
+
+\paragraph{Attention Mechanisms.}
+When the number of candidate actions varies (as in bin packing, where different states have different numbers of valid placements), attention mechanisms enable the network to reason about relationships between actions. This is particularly important for learning to compare and rank placement alternatives. The use of attention in packing is discussed further in Section \ref{sec:attention-mechanisms}.
+
+\section{Deep Reinforcement Learning}
+
+Deep reinforcement learning combines reinforcement learning---learning through interaction with an environment---with deep neural networks as function approximators. This section reviews the foundational algorithms underlying our neurogenetic packing system.
+
+\subsection{Q-Learning and Value-Based Methods}
+
+Reinforcement learning frames sequential decision-making as a Markov Decision Process (MDP) defined by states $s \in \mathcal{S}$, actions $a \in \mathcal{A}$, transition dynamics $P(s'|s,a)$, and rewards $r(s,a)$. The goal is to learn a policy $\pi(a|s)$ that maximizes expected cumulative discounted reward:
+\[
+G_t = \sum_{k=0}^{\infty} \gamma^k r_{t+k}
+\]
+where $\gamma \in [0,1)$ is the discount factor.
+
+\textbf{Watkins and Dayan (1992) \cite{WD92}} introduced Q-learning, an off-policy temporal difference algorithm that learns the optimal action-value function:
+\[
+Q^*(s,a) = \mathbb{E}\left[ r + \gamma \max_{a'} Q^*(s', a') \mid s, a \right]
+\]
+The Q-learning update rule is:
+\[
+Q(s,a) \leftarrow Q(s,a) + \alpha \left[ r + \gamma \max_{a'} Q(s', a') - Q(s,a) \right]
+\]
+where $\alpha$ is the learning rate. Q-learning is \textit{off-policy} because it learns the optimal policy while following an exploratory behavior policy (e.g., $\epsilon$-greedy).
+
+For large or continuous state spaces, tabular Q-learning becomes intractable. Function approximation---using neural networks to represent $Q(s,a; \theta)$ parameterized by weights $\theta$---extends Q-learning to high-dimensional problems.
+
+\subsection{Deep Q-Networks (DQN)}
+
+\textbf{Mnih et al.\ (2013) \cite{MKS+13}} introduced Deep Q-Networks (DQN), demonstrating that deep neural networks can successfully approximate Q-values for complex control tasks. Their landmark work showed that a single neural network architecture could learn to play dozens of Atari games from raw pixel input, achieving human-level performance.
+
+DQN addresses two critical challenges of using neural networks for Q-learning:
+
+\paragraph{Experience Replay.}
+Training directly on sequential experiences leads to highly correlated updates, which destabilize learning. DQN stores experiences $(s, a, r, s')$ in a \textit{replay buffer} $\mathcal{D}$ and samples random minibatches for training. This breaks temporal correlations and improves sample efficiency by reusing past experiences.
+
+The loss function is:
+\[
+\mathcal{L}(\theta) = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ \left( r + \gamma \max_{a'} Q(s', a'; \theta^-) - Q(s, a; \theta) \right)^2 \right]
+\]
+
+\paragraph{Target Network.}
+Using the same network to both select actions and evaluate targets ($\max_{a'} Q(s', a'; \theta)$) creates a moving target that impedes convergence. DQN maintains a separate \textit{target network} with parameters $\theta^-$ that are periodically copied from the online network $\theta$. This stabilizes training by fixing the target for multiple updates.
+
+\textbf{Mnih et al.\ (2015) \cite{MKS+15}} extended this work in Nature, providing comprehensive analysis of DQN's components and demonstrating superhuman performance on a majority of Atari games.
+
+\subsection{Double DQN}
+
+A well-known issue with standard Q-learning is \textit{overestimation bias}: the max operator in the target $\max_{a'} Q(s', a')$ selects the action with the highest (possibly noisy) Q-value, leading to systematic overestimation of true values.
+
+\textbf{van Hasselt et al.\ (2016) \cite{vHGS16}} introduced Double DQN to address this issue. The key insight is to \textit{decouple action selection from action evaluation}:
+\begin{enumerate}
+\item Use the online network $Q(s', a'; \theta)$ to select the best next action: $a^* = \arg\max_{a'} Q(s', a'; \theta)$
+\item Use the target network $Q(s', a'; \theta^-)$ to evaluate that action: $Q(s', a^*; \theta^-)$
+\end{enumerate}
+
+The Double DQN target becomes:
+\[
+y = r + \gamma Q(s', \arg\max_{a'} Q(s', a'; \theta); \theta^-)
+\]
+
+This simple modification significantly reduces overestimation and improves performance across a wide range of tasks. \textbf{van Hasselt et al.\ (2016) \cite{vHGS16}} show that Double DQN achieves more stable learning curves and higher final performance on Atari benchmarks compared to standard DQN.
+
+Our implementation adopts Double DQN as the core learning algorithm due to its demonstrated stability and superior performance in discrete action spaces.
+
+\subsection{N-Step Returns and Sparse Reward Environments}
+
+A fundamental challenge in reinforcement learning for sequential decision problems like bin packing is \textit{sparse rewards}: feedback is only available after many actions, making it difficult to assign credit to individual decisions.
+
+\paragraph{N-Step Returns.}
+\textbf{Sutton and Barto (2018) \cite{SB18}} comprehensively discuss n-step bootstrapping methods that bridge the gap between Monte Carlo (using full episode returns) and one-step TD learning. The n-step return is defined as:
+\[
+G_t^{(n)} = r_t + \gamma r_{t+1} + \cdots + \gamma^{n-1} r_{t+n-1} + \gamma^n \max_{a} Q(s_{t+n}, a)
+\]
+
+N-step returns provide several advantages:
+\begin{itemize}
+\item \textbf{Faster credit propagation}: Rewards are backed up multiple steps in a single update, accelerating learning in sparse-reward environments.
+\item \textbf{Reduced bias}: By incorporating more actual rewards before bootstrapping, n-step methods are less biased than one-step TD.
+\item \textbf{Variance trade-off}: Larger $n$ increases variance but reduces bias; typical values are $n \in [3, 15]$.
+\end{itemize}
+
+\textbf{Hessel et al.\ (2018) \cite{HMM+18}} demonstrate in Rainbow DQN that n-step returns (with $n=3$) contribute significantly to improved performance on Atari games, particularly those with delayed rewards.
+
+\paragraph{Reward Shaping.}
+Another approach to sparse rewards is \textit{potential-based reward shaping} \cite{NHR99}, which adds intermediate rewards based on a potential function $\Phi(s)$:
+\[
+r'(s, a, s') = r(s, a, s') + \gamma \Phi(s') - \Phi(s)
+\]
+
+\textbf{Ng et al.\ (1999) \cite{NHR99}} prove that potential-based shaping preserves the optimal policy: any policy optimal under shaped rewards is also optimal under the original reward function. This theoretical guarantee makes potential-based shaping attractive for bin packing, where we can define $\Phi(s)$ based on packing utilization or space quality metrics.
+
+Our implementation combines n-step returns ($n=15$) with potential-based reward shaping to address the sparse reward challenge in sequential bin packing.
+
+\section{Attention Mechanisms}
+\label{sec:attention-mechanisms}
+
+Attention mechanisms have become a cornerstone of modern deep learning, enabling models to dynamically focus on relevant parts of the input. For bin packing, attention is particularly valuable for reasoning about variable-length sets of candidate placements.
+
+\subsection{Transformer Architecture}
+
+\textbf{Vaswani et al.\ (2017) \cite{VSP+17}} introduced the Transformer architecture for sequence-to-sequence learning, replacing recurrent networks with purely attention-based computation. The core building block is \textit{scaled dot-product attention}:
+\[
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right) V
+\]
+where $Q$ (queries), $K$ (keys), and $V$ (values) are linear projections of the input, and $d_k$ is the key dimension.
+
+\paragraph{Multi-Head Attention.}
+Rather than computing a single attention function, multi-head attention projects inputs into multiple representation subspaces:
+\[
+\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h) W^O
+\]
+where each head $\text{head}_i = \text{Attention}(QW_i^Q, KW_i^K, VW_i^V)$ learns different attention patterns. This allows the model to jointly attend to information from different representation subspaces.
+
+\paragraph{Positional Encoding.}
+Since attention is permutation-invariant, Transformers add positional encodings to retain sequence order information. However, for sets (like candidate placements in bin packing), permutation invariance is actually desirable---the ordering of candidate actions should not affect their evaluation.
+
+\subsection{Set Transformer for Permutation Invariance}
+
+While standard Transformers are powerful, they have quadratic complexity $O(n^2)$ in sequence length and include positional biases unsuitable for true set-valued inputs.
+
+\textbf{Lee et al.\ (2019) \cite{LHS+19}} introduced Set Transformers, specifically designed for permutation-invariant set processing. The key innovation is \textit{Induced Set Attention Blocks (ISAB)}, which reduce complexity from $O(n^2)$ to $O(nm)$ where $m \ll n$ is the number of inducing points.
+
+\paragraph{Multihead Attention Block (MAB).}
+The foundational component is MAB$(X, Y)$, computing attention where $X$ provides queries and $Y$ provides keys and values:
+\[
+\text{MAB}(X, Y) = \text{LayerNorm}\left(H + \text{MultiHead}(X, Y, Y)\right)
+\]
+where $H = \text{LayerNorm}(X)$ provides residual connections.
+
+\paragraph{Induced Set Attention Block (ISAB).}
+ISAB uses $m$ learnable \textit{inducing points} $I \in \mathbb{R}^{m \times d}$ to compress information:
+\begin{align*}
+H &= \text{MAB}(I, X) \quad \text{(induce: aggregate $X$ into $m$ summaries)} \\
+\text{ISAB}(X) &= \text{MAB}(X, H) \quad \text{(transform: attend to summaries)}
+\end{align*}
+
+This reduces complexity: instead of every element attending to all $n$ elements ($O(n^2)$), elements attend to $m$ inducing points ($O(nm)$). For bin packing with hundreds of candidate actions, this is crucial for computational efficiency.
+
+\paragraph{Set Transformer Architecture.}
+A complete Set Transformer encoder stacks multiple ISAB blocks:
+\[
+\text{SetTransformer}(X) = \text{ISAB}_L(\cdots \text{ISAB}_2(\text{ISAB}_1(X)) \cdots)
+\]
+
+\textbf{Lee et al.\ (2019) \cite{LHS+19}} demonstrate that Set Transformers achieve state-of-the-art results on set-based tasks including point cloud classification and set anomaly detection, outperforming DeepSets and standard Transformers on permutation-invariant benchmarks.
+
+For bin packing, Set Transformers are ideal: candidate placements form an unordered set (their enumeration order is arbitrary), and the model must evaluate each placement's quality relative to alternatives. Our implementation provides configurable attention mechanisms, including Set Transformers with evolved hyperparameters (number of heads, inducing points) determined by the genetic algorithm.
 
 \section{Evolutionary Neural Architecture Search}
 
