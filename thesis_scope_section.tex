@@ -1,0 +1,78 @@
+\section{Scope of This Work}
+
+This thesis presents a neurogenetic approach to 3D bin packing that combines evolutionary neural architecture search with deep reinforcement learning. To position this work appropriately within the broader landscape of both bin packing research and neural architecture optimization, we clearly delineate what is implemented, evaluated, and analyzed versus what remains future work.
+
+\subsection{Core Contributions}
+
+This work makes the following specific technical contributions:
+
+\paragraph{Evolutionary Neural Architecture Search for Bin Packing.}
+We implement a complete genetic algorithm that evolves neural network architectures for scoring placement decisions. The genome encoding spans 11 architectural parameters including layer depth (1--8 layers), hidden dimensions (64--1024 units), attention mechanisms (standard Transformer, Set Transformer with inducing points, or none), activation functions (ReLU, GELU, SiLU), dropout rates, and convolutional feature extractors. Evolution proceeds through tournament selection, uniform crossover, and multiplicative mutation over 10--20 generations with populations of 15--25 individuals.
+
+\paragraph{Heightmap-Based Spatial Reasoning.}
+We introduce a convolutional neural network component that processes local heightmap patches (default 7×7 grid cells) extracted around candidate placement positions. This spatial feature extractor learns to recognize favorable geometric patterns---corners, walls, valleys---that indicate high-quality placements. The heightmap representation bridges rasterized spatial reasoning with exact geometric feasibility checks provided by the EMS candidate generator.
+
+\paragraph{Attention Over Action Sets.}
+Rather than evaluating placements independently, we employ attention mechanisms (standard multi-head Transformer or Set Transformer with $O(nm)$ complexity via inducing points) to model relationships between candidate actions. This enables the network to reason about comparative placement quality and learn context-dependent selection strategies. The attention architecture itself is evolved by the genetic algorithm.
+
+\paragraph{Double DQN with N-Step Returns.}
+We implement Double DQN with configurable n-step returns (default $n=15$) to address sparse rewards in sequential bin packing. The agent learns to maximize cumulative packing utilization across multi-bin episodes, with experience replay, target networks (hard updates every 500 steps), epsilon-greedy exploration (linear decay from 1.0 to 0.05--0.15), and gradient clipping for training stability.
+
+\paragraph{Constraint-Aware Placement with EMS.}
+The implementation includes a complete Empty Maximal Spaces (EMS) candidate generator with six-way difference computation, dominated space pruning, and top-1000 volume-based selection. We enforce realistic shipping constraints: per-bin weight capacity (800--1000 kg), item incompatibilities, positive affinities (items that must share bins), relative positioning rules (heavy items cannot rest on light items with XY overlap), and center-of-mass restrictions with configurable tolerance.
+
+\subsection{Scope Boundaries}
+
+To ensure realistic expectations and proper comparison with related work, we explicitly state what this research does \emph{not} address:
+
+\paragraph{Algorithmic Scope.}
+This work focuses exclusively on value-based deep reinforcement learning (Double DQN). We do not implement or compare against policy gradient methods (PPO, A3C), actor-critic variants, graph neural network representations, pointer networks for item sequencing, or hierarchical reinforcement learning decompositions. While these are promising directions, they are beyond the scope of this thesis.
+
+\paragraph{Classical Baseline Integration.}
+We do not provide a comprehensive benchmark against classical bin packing heuristics (First-Fit Decreasing, Best-Fit Decreasing, Skyline, MaxRects) or metaheuristics (Simulated Annealing, Tabu Search, Ant Colony Optimization). The focus is on demonstrating that evolved neural architectures can learn effective placement strategies, not on establishing state-of-the-art absolute performance. Proper benchmarking against mature classical methods would require substantial engineering effort and is left for future work.
+
+\paragraph{Problem Formulation Restrictions.}
+We restrict attention to \emph{offline} 3D bin packing where all items are known in advance. The system does not support online/dynamic scenarios where items arrive over time, vehicle routing integration (loading sequence constraints, multi-drop deliveries), non-rectangular or non-convex items, arbitrary 3D rotations (only axis-aligned orientations), or guillotine cutting constraints. Items are modeled as rigid rectangular boxes with uniform material properties; we do not simulate fragility classes, stackability hierarchies beyond weight-based rules, or detailed physical stability analysis.
+
+\paragraph{Experimental Rigor.}
+This is a research prototype demonstrating feasibility, not a production-ready system with comprehensive validation. Our experiments evaluate evolved architectures on benchmark datasets (3dBPP, thpack, BR instances with 38--100 items) but do not include:
+\begin{itemize}
+    \item Repeated runs with statistical significance testing and confidence intervals
+    \item Systematic ablation studies isolating the contribution of each component (heightmap CNN, attention, n-step returns, etc.)
+    \item Computational profiling quantifying time and memory overhead per module
+    \item Scalability analysis to problems with thousands of items or hundreds of bins
+    \item Robustness evaluation under adversarial item distributions or noisy input data
+\end{itemize}
+
+Results presented in Chapter 6 demonstrate that the system works and that genetic algorithms can discover architectures outperforming random baselines, but do not claim state-of-the-art performance or provide exhaustive empirical validation.
+
+\paragraph{Neurogenesis Terminology Clarification.}
+The term ``neurogenesis'' in this thesis refers to \emph{evolutionary neural architecture search}---the automated design of network topology and hyperparameters via genetic algorithms evaluated on outcome-based fitness. This should not be confused with biological neurogenesis (the growth of new neurons in living brains) or continual learning methods that dynamically add network capacity during training. Our approach evolves architectures \emph{offline} before training; once an architecture is selected, its topology remains fixed during reinforcement learning.
+
+\subsection{Positioning Within the Research Landscape}
+
+This work sits at the intersection of three research communities:
+
+\begin{enumerate}
+    \item \textbf{Combinatorial Optimization:} We address a well-studied NP-hard problem (3D bin packing) with realistic industrial constraints, contributing a learned approach that complements deterministic heuristics.
+
+    \item \textbf{Deep Reinforcement Learning:} We demonstrate successful application of DQN to a discrete sequential decision problem with sparse rewards, large action spaces (hundreds of candidate placements per step), and constraint satisfaction requirements.
+
+    \item \textbf{Neural Architecture Search:} We apply evolutionary methods to automatically discover problem-specific network designs, showing that domain-appropriate inductive biases (heightmap CNNs, set-based attention) emerge from fitness-driven search.
+\end{enumerate}
+
+The novelty lies not in individual components---DQN, genetic algorithms, and EMS placement heuristics are all established techniques---but in their \emph{integration} and the demonstration that architecture evolution can adapt neural scoring models to constraint-specific packing scenarios without hand-tuning.
+
+\subsection{Thesis Deliverables}
+
+Concretely, this thesis delivers:
+\begin{itemize}
+    \item A working implementation (~6,300 lines of Python) integrating DQN, GA, EMS, and constraint handling
+    \item Genome encoding for 11 architectural parameters with multiplicative and discrete genes
+    \item Fitness evaluation framework combining utilization, bin count, and model complexity
+    \item Trained models and evolved architectures on benchmark datasets (saved in \texttt{output\_data/})
+    \item Visualization tools for 3D bin layouts, heightmaps, and evolution history
+    \item Empirical evaluation demonstrating feasibility and identifying promising architectural patterns
+\end{itemize}
+
+The code, trained models, and experimental results provide a foundation for future research extending this neurogenetic approach to larger problem scales, additional constraints, or alternative evolutionary strategies.
