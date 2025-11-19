@@ -133,23 +133,21 @@ Deep reinforcement learning combines reinforcement learning---learning through i
 
 \subsection{Q-Learning and Value-Based Methods}
 
-Reinforcement learning frames sequential decision-making as a Markov Decision Process (MDP) defined by states $s \in \mathcal{S}$, actions $a \in \mathcal{A}$, transition dynamics $P(s'|s,a)$, and rewards $r(s,a)$. The goal is to learn a policy $\pi(a|s)$ that maximizes expected cumulative discounted reward:
+Reinforcement learning (RL) provides a framework for sequential decision-making in which an agent interacts with an environment, observes states, selects actions, and receives scalar rewards.\cite{Sutton1998} Formally, this interaction is modelled as a Markov decision process (MDP) with state space $\mathcal{S}$, action space $\mathcal{A}$, transition kernel $P(s' \mid s,a)$, and reward function $r(s,a)$. At each time $t$, the agent observes state $s_t \in \mathcal{S}$, chooses action $a_t \in \mathcal{A}$, receives reward $r_t = r(s_t,a_t)$, and transitions to $s_{t+1}\sim P(\cdot \mid s_t,a_t)$. The objective is to find a policy $\pi(a\mid s)$ maximizing the expected return
 \[
-G_t = \sum_{k=0}^{\infty} \gamma^k r_{t+k}
+\mathbb{E}\!\left[\sum_{t=0}^{T} \gamma^t r_t\right],
 \]
-where $\gamma \in [0,1)$ is the discount factor.
+where $\gamma\in[0,1)$ is the discount factor and $T$ is the episode horizon.\cite{Sutton1998}
 
-\textbf{Watkins and Dayan (1992) \cite{WD92}} introduced Q-learning, an off-policy temporal difference algorithm that learns the optimal action-value function:
-\[
-Q^*(s,a) = \mathbb{E}\left[ r + \gamma \max_{a'} Q^*(s', a') \mid s, a \right]
-\]
-The Q-learning update rule is:
-\[
-Q(s,a) \leftarrow Q(s,a) + \alpha \left[ r + \gamma \max_{a'} Q(s', a') - Q(s,a) \right]
-\]
-where $\alpha$ is the learning rate. Q-learning is \textit{off-policy} because it learns the optimal policy while following an exploratory behavior policy (e.g., $\epsilon$-greedy).
+\paragraph{Application to 3D Bin Packing.}
+The sequential nature of bin packing fits naturally into the RL framework: states encode the current container configuration and remaining items, actions represent (item, placement, orientation) decisions, and rewards reflect packing quality. However, 3D nesting presents an inherently \textit{sparse reward} environment. The true quality of a placement sequence---measured by final utilization, stability, or constraint satisfaction---is only revealed after placing \textit{all} items. Intermediate placements cannot be definitively evaluated in isolation; a seemingly poor early placement may enable efficient packing later, while a locally optimal choice may fragment the remaining space. This delayed feedback makes credit assignment exceptionally difficult: which of the dozens of placement decisions was responsible for the final outcome? This sparsity motivates the use of n-step returns, reward shaping, and evolved neural architectures capable of learning long-horizon dependencies from limited feedback signals.
 
-For large or continuous state spaces, tabular Q-learning becomes intractable. Function approximation---using neural networks to represent $Q(s,a; \theta)$ parameterized by weights $\theta$---extends Q-learning to high-dimensional problems.
+\paragraph{Q-Learning.}
+\textbf{Watkins and Dayan (1992) \cite{WD92}} introduced Q-learning, an off-policy algorithm that learns the optimal action-value function $Q^*(s,a) = \mathbb{E}\left[ r + \gamma \max_{a'} Q^*(s', a') \mid s, a \right]$ via the update rule
+\[
+Q(s,a) \leftarrow Q(s,a) + \alpha \left[ r + \gamma \max_{a'} Q(s', a') - Q(s,a) \right],
+\]
+where $\alpha$ is the learning rate. For large state spaces, tabular methods become intractable; function approximation using neural networks $Q(s,a; \theta)$ parameterized by weights $\theta$ extends Q-learning to high-dimensional problems.
 
 \subsection{Deep Q-Networks (DQN)}
 
