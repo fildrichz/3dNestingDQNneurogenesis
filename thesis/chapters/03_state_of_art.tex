@@ -1,10 +1,13 @@
 \chapter{State-of-the-Art Solutions}
 
-After defining the problem of three-dimensional nesting and motivating the need for an efficient, adaptive optimization solution, this chapter reviews the current state-of-the-art in related methods. The goal is to summarize the existing approaches and highlight the research gaps that motivate the proposed neurogenetic framework.
+Having formally defined the 3D bin packing problem and introduced neurogenesis as our core methodology for evolving neural network architectures, we now survey the existing solution landscape. This chapter examines how researchers have approached both the nesting problem itself and the challenge of automated neural architecture design.
 
-The chapter is divided into two main sections. The first section introduces nesting, focusing on heuristic and metaheuristic methods developed for the 3D bin packing and cutting stock problems. The second section explores evolutionary neural architecture search and related neurogenesis methods of automated neural network design.
+The preceding chapter established that 3D bin packing is a complex discrete optimization problem requiring careful constraint handling, and that neurogenesis offers a principled framework for automatically discovering effective neural scoring architectures. This chapter reviews the current state-of-the-art across three main areas: (1) traditional and modern nesting methods including placement heuristics, (2) machine learning approaches to bin packing with emphasis on deep reinforcement learning, and (3) evolutionary neural architecture search techniques. By identifying the strengths and limitations of existing approaches, we motivate our neurogenetic framework that combines evolved DQN architectures with efficient spatial reasoning for constrained 3D bin packing.
+
+The chapter is organized as follows. Section~\ref{sec:nesting-methods} categorizes solution strategies for 3D bin packing, from classical heuristics to modern metaheuristics. Section~\ref{sec:ml-bin-packing} examines the application of machine learning to nesting problems, covering both supervised and reinforcement learning approaches. Section~\ref{sec:deep-rl} provides theoretical foundations of deep reinforcement learning, including DQN and its enhancements. Section~\ref{sec:spatial-features} discusses spatial feature extraction techniques including heightmaps and graph representations. Section~\ref{sec:attention} introduces attention mechanisms and set transformers for handling variable-length action spaces. Finally, Section~\ref{sec:enas} reviews evolutionary neural architecture search and identifies gaps in the literature that our work addresses.
 
 \section{Nesting Methods}
+\label{sec:nesting-methods}
 
 This section categorizes solution strategies for the class of nesting problems. Individual proposed approaches can be broadly split by several characteristics which play a crucial role in determining how an algorithm may approach nesting. They provide a handy overview when evaluating an approach's usefulness in particular scenarios.
 
@@ -83,6 +86,7 @@ Our implementation adopts the EMS approach with volume-based prioritization (top
 \textbf{Krebs et al.\ (2021) \cite{KEK21}} investigate advanced loading constraints for 3D vehicle routing problems. They formalize stability, weight distribution, and load sequence constraints within a vehicle routing context, demonstrating that loading feasibility is not a simple yes/no check but a complex optimization problem in its own right.
 
 \section{Machine Learning and Neural Networks in Bin Packing}
+\label{sec:ml-bin-packing}
 
 The application of machine learning to bin packing and nesting problems represents a relatively recent but rapidly growing research direction. Traditional approaches rely on hand-crafted heuristics and metaheuristics; machine learning methods aim to learn effective placement strategies directly from data or through interaction with the packing environment.
 
@@ -125,9 +129,10 @@ Convolutional neural networks (CNNs) process rasterized representations (heightm
 Each candidate action (placement) is represented by features including item dimensions, placement position, orientation, slack space, and derived metrics (utilization delta, tightness). MLPs embed these features into a common representation space.
 
 \paragraph{Attention Mechanisms.}
-When the number of candidate actions varies (as in bin packing, where different states have different numbers of valid placements), attention mechanisms enable the network to reason about relationships between actions. This is particularly important for learning to compare and rank placement alternatives. The use of attention in packing is discussed further in Section \ref{sec:attention-mechanisms}.
+When the number of candidate actions varies (as in bin packing, where different states have different numbers of valid placements), attention mechanisms enable the network to reason about relationships between actions. This is particularly important for learning to compare and rank placement alternatives. The use of attention in packing is discussed further in Section \ref{sec:attention}.
 
 \section{Deep Reinforcement Learning}
+\label{sec:deep-rl}
 
 Deep reinforcement learning combines reinforcement learning---learning through interaction with an environment---with deep neural networks as function approximators. This section reviews the foundational algorithms underlying our neurogenetic packing system.
 
@@ -216,8 +221,60 @@ r'(s, a, s') = r(s, a, s') + \gamma \Phi(s') - \Phi(s)
 
 Our implementation combines n-step returns ($n=15$) with potential-based reward shaping to address the sparse reward challenge in sequential bin packing.
 
+\section{Spatial Feature Extraction}
+\label{sec:spatial-features}
+
+Effective neural approaches to 3D bin packing require rich representations of spatial geometry. This section reviews techniques for extracting geometric features from packing states, including heightmap-based methods and graph neural networks for relational reasoning over items and placements.
+
+\subsection{Heightmap Representations}
+
+Heightmaps provide a compact rasterized representation of 3D packing state by projecting the container onto a 2D grid where each cell records the maximum height of placed items at that $(x,y)$ position. This representation naturally captures important geometric features such as corners, walls, valleys, and support surfaces.
+
+\textbf{Hu et al.\ (2017) \cite{HLZ17}} pioneered the use of convolutional neural networks (CNNs) to extract features from heightmaps for bin packing. Their approach processes heightmaps as grayscale images, allowing CNNs to learn local spatial patterns that indicate favorable placement positions. Key advantages include:
+\begin{itemize}
+\item \textbf{Spatial invariance:} CNNs can recognize patterns regardless of their position in the container.
+\item \textbf{Local reasoning:} Convolutional filters capture neighborhood relationships (e.g., ``this position is in a corner'').
+\item \textbf{Efficient computation:} 2D convolutions are fast and well-optimized on GPUs.
+\end{itemize}
+
+Our implementation extends this approach by extracting local $7 \times 7$ heightmap patches around each candidate placement position and processing them through a two-layer CNN (Conv2d: 1→16→32 channels) followed by adaptive pooling. This produces a 64-dimensional spatial embedding for each action, enabling the DQN to reason about local topology when evaluating placements.
+
+\subsection{Graph Neural Networks for Relational Reasoning}
+
+While heightmaps capture local geometry, they lose information about individual item identities and relationships. Graph neural networks (GNNs) offer an alternative representation that explicitly models items and their spatial relationships as a graph.
+
+\paragraph{Graph Representation.}
+In a GNN-based packing approach, nodes represent items (both placed and unplaced), and edges encode spatial relationships such as:
+\begin{itemize}
+\item \textbf{Support:} Item $i$ supports item $j$ (edge from $i$ to $j$).
+\item \textbf{Proximity:} Items within distance threshold.
+\item \textbf{Compatibility:} Items that can/cannot be placed together.
+\end{itemize}
+
+Each node is associated with features $(w_i, h_i, d_i, x_i, y_i, z_i, \text{placed}_i, \ldots)$ encoding dimensions, position, and status.
+
+\paragraph{Message Passing.}
+GNNs aggregate information from neighboring nodes through iterative message passing. At each layer $\ell$, node embeddings are updated:
+\[
+\mathbf{h}_i^{(\ell+1)} = \sigma\left( \mathbf{W}^{(\ell)} \mathbf{h}_i^{(\ell)} + \sum_{j \in \mathcal{N}(i)} \mathbf{M}^{(\ell)} \mathbf{h}_j^{(\ell)} \right)
+\]
+where $\mathcal{N}(i)$ are neighbors of node $i$, $\mathbf{W}^{(\ell)}$ and $\mathbf{M}^{(\ell)}$ are learnable weight matrices, and $\sigma$ is a nonlinearity.
+
+\paragraph{Applications to Bin Packing.}
+GNNs are particularly well-suited for reasoning about:
+\begin{itemize}
+\item \textbf{Stability constraints:} Propagating support information through the graph.
+\item \textbf{Load-bearing:} Aggregating weights of items above each placed item.
+\item \textbf{Affinity constraints:} Identifying clusters of items that must be placed together.
+\item \textbf{Accessibility:} Reasoning about which items block access to others.
+\end{itemize}
+
+\textbf{Cappart et al.\ (2021)} demonstrate that combining GNNs with reinforcement learning improves performance on combinatorial optimization problems by enabling relational reasoning \cite{CCBT21}. Their work on the traveling salesman problem shows that GNNs can learn to identify structural patterns (e.g., clusters, chains) that inform better decision-making.
+
+While our current implementation focuses on heightmap CNNs for computational efficiency, GNNs represent a promising direction for future work, particularly for problems with complex affinity and stability constraints where relational reasoning is critical.
+
 \section{Attention Mechanisms}
-\label{sec:attention-mechanisms}
+\label{sec:attention}
 
 Attention mechanisms have become a cornerstone of modern deep learning, enabling models to dynamically focus on relevant parts of the input. For bin packing, attention is particularly valuable for reasoning about variable-length sets of candidate placements.
 
@@ -272,6 +329,7 @@ A complete Set Transformer encoder stacks multiple ISAB blocks:
 For bin packing, Set Transformers are ideal: candidate placements form an unordered set (their enumeration order is arbitrary), and the model must evaluate each placement's quality relative to alternatives. Our implementation provides configurable attention mechanisms, including Set Transformers with evolved hyperparameters (number of heads, inducing points) determined by the genetic algorithm.
 
 \section{Evolutionary Neural Architecture Search}
+\label{sec:enas}
 
 Neurogenesis and Evolutionary Neural Architecture Search (ENAS) automate the design of neural network architectures through evolutionary algorithms. This section reviews key developments in this field and their relevance to discrete optimization problems.
 
