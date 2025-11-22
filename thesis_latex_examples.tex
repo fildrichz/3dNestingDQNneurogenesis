@@ -8,17 +8,37 @@
 
 \begin{document}
 
-\section{State of the Art}
+\section{Introduction and Motivation}
+
+The three-dimensional bin packing problem represents a fundamental NP-hard combinatorial optimization challenge with critical applications across manufacturing, logistics, and warehousing operations. Despite decades of research, existing approaches struggle with the dual challenges of solution quality and computational efficiency when confronting real-world online packing scenarios where items arrive sequentially with limited or no look-ahead capability~\cite{drl_concurrent2024}. This limitation becomes particularly acute in modern automated warehousing systems where decisions must be made in real-time under dynamic constraints.
+
+\subsection{Research Gap and Problem Statement}
+
+While deep reinforcement learning (DRL) has demonstrated remarkable success in solving complex sequential decision-making problems, current DRL-based approaches to 3D bin packing face a critical limitation: the inability to efficiently adapt to novel problem configurations without extensive retraining. The GOPT framework~\cite{gopt2024} and Transformer-based architectures~\cite{transformer_packing2023} achieve strong performance on fixed problem distributions, yet exhibit brittleness when confronted with items of significantly different geometries or bin configurations outside their training distribution. Similarly, while the One4Many-StablePacker (O4M-SP) framework demonstrates generalization across varied bin dimensions~\cite{one4many2024}, it requires careful architectural design and extensive training data to achieve this capability.
+
+The fundamental challenge lies in the catastrophic forgetting phenomenon inherent to traditional deep neural networks: when trained on new problem instances, these networks tend to overwrite previously learned representations, losing performance on earlier tasks~\cite{neurogenesis_dl2017}. This limitation severely constrains the practical deployment of learned packing policies in dynamic industrial environments where item distributions evolve continuously.
+
+\subsection{Proposed Approach: Neurogenesis-Enhanced DQN}
+
+This thesis proposes a novel architecture that integrates neurogenesis-inspired network growth with Deep Q-Network (DQN) learning for 3D bin packing optimization. Drawing upon biological inspiration from hippocampal neurogenesis~\cite{neurogenesis_dl2017}, our approach dynamically expands network capacity by adding new neurons to deep layers when encountering novel problem characteristics, thereby preserving existing knowledge while acquiring new capabilities.
+
+The proposed architecture builds upon several established foundations:
+
+\textbf{DQN-Based Value Estimation:} We adopt the DQN framework as our core learning algorithm due to its proven effectiveness in handling high-dimensional state spaces for packing problems~\cite{dqn_irregular2023}. Unlike rule-based expert systems, DQN learns optimal packing strategies directly from experience through interaction with the environment. The DeepPack3D implementation~\cite{deeppack3d2025} demonstrates that DQN achieves superior space utilization compared to traditional greedy heuristics when provided sufficient training, validating this algorithmic choice.
+
+\textbf{Height Map State Representation:} We employ a CNN-based height map representation~\cite{cnn_heightmap2024} as our state encoding mechanism. This representation provides a compact encoding of spatial occupancy while preserving critical geometric information necessary for effective packing decisions. The height map reduces the dimensionality of the 3D state space from $O(xyz)$ voxels to $O(xy)$ height values, significantly improving learning efficiency while maintaining sufficient fidelity for accurate value estimation.
+
+\textbf{Neurogenesis for Continual Learning:} The core innovation of our approach integrates neurogenesis deep learning~\cite{neurogenesis_dl2017} into the DQN architecture. When performance degradation is detected on validation tasks or when encountering item distributions with novel geometric characteristics, the network dynamically adds new neurons to hidden layers. This mechanism addresses catastrophic forgetting by allocating dedicated capacity for new knowledge while preserving existing representations in established neurons.
+
+\textbf{Multimodal Action Decomposition:} Following the multimodal DRL paradigm~\cite{multimodal_drl2024}, we decompose the packing decision into three hierarchical sub-tasks: item selection from the available queue, orientation determination (rotation selection), and spatial placement (position selection). This decomposition simplifies the action space from $O(n \times r \times p)$ to $O(n) + O(r) + O(p)$ where $n$ is queue size, $r$ is number of orientations, and $p$ is number of placement positions. Each sub-task is handled by a separate output head in our neurogenesis-enhanced network architecture.
+
+\section{Related Work and Architectural Foundations}
 
 \subsection{Deep Reinforcement Learning for 3D Bin Packing}
 
-The three-dimensional bin packing problem represents a notorious NP-hard combinatorial optimization challenge with significant applications in logistics, warehousing, and container loading operations. Recent advances in deep reinforcement learning (DRL) have demonstrated substantial promise in addressing this complex problem, particularly for online packing scenarios where items arrive sequentially with limited look-ahead capability~\cite{drl_concurrent2024}.
+Recent advances in deep reinforcement learning have demonstrated substantial promise for online 3D bin packing optimization. Contemporary approaches leverage various neural network architectures to achieve state-of-the-art results. The Transformer-based architecture employed as a policy network, trained using Proximal Policy Optimization (PPO), achieves superior performance compared to traditional heuristic methods~\cite{transformer_packing2023}. The GOPT framework extends this by introducing a generalizable online 3D bin packing methodology via Transformer-based DRL, enabling robust performance across diverse problem instances~\cite{gopt2024}.
 
-Contemporary DRL-based approaches have leveraged various neural network architectures to achieve state-of-the-art results. One notable development is the Transformer-based architecture employed as a policy network, trained using Proximal Policy Optimization (PPO), which has achieved superior performance compared to traditional heuristic methods~\cite{transformer_packing2023}. The GOPT framework extends this approach by introducing a generalizable online 3D bin packing methodology via Transformer-based DRL, enabling robust performance across diverse problem instances~\cite{gopt2024}.
-
-A particularly promising direction involves multimodal DRL agents that decompose the packing task into three distinct sub-problems: sequence optimization, orientation selection, and position determination. This decomposition enables efficient handling of large-scale instances containing 100 or more boxes~\cite{multimodal_drl2024}. The Dynamic Multi-modal deep Reinforcement Learning framework (DMRL-BPP) further refines this approach by adaptively adjusting the learning strategy based on problem characteristics~\cite{dmrl_bpp2024}.
-
-The generalizability of DRL models across bins with varying dimensions has been addressed by the One4Many-StablePacker (O4M-SP) framework, which demonstrates the capability to handle bins of different sizes without requiring model retraining~\cite{one4many2024}. This advancement is particularly valuable for practical applications where container dimensions may vary frequently.
+Multimodal DRL agents that decompose the packing task into sequence optimization, orientation selection, and position determination enable efficient handling of large-scale instances containing 100 or more boxes~\cite{multimodal_drl2024}. The Dynamic Multi-modal deep Reinforcement Learning framework (DMRL-BPP) refines this approach by adaptively adjusting the learning strategy based on problem characteristics~\cite{dmrl_bpp2024}.
 
 \subsection{Deep Q-Networks for Packing Optimization}
 
