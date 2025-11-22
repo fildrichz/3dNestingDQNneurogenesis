@@ -1,0 +1,78 @@
+% Example LaTeX text for Diploma Thesis
+% Topics: 3D Nesting, DQN, Neurogenesis, Genetic Algorithms
+% All citations use recent articles (2023-2025)
+
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{cite}
+
+\begin{document}
+
+\section{State of the Art}
+
+\subsection{Deep Reinforcement Learning for 3D Bin Packing}
+
+The three-dimensional bin packing problem represents a notorious NP-hard combinatorial optimization challenge with significant applications in logistics, warehousing, and container loading operations. Recent advances in deep reinforcement learning (DRL) have demonstrated substantial promise in addressing this complex problem, particularly for online packing scenarios where items arrive sequentially with limited look-ahead capability~\cite{drl_concurrent2024}.
+
+Contemporary DRL-based approaches have leveraged various neural network architectures to achieve state-of-the-art results. One notable development is the Transformer-based architecture employed as a policy network, trained using Proximal Policy Optimization (PPO), which has achieved superior performance compared to traditional heuristic methods~\cite{transformer_packing2023}. The GOPT framework extends this approach by introducing a generalizable online 3D bin packing methodology via Transformer-based DRL, enabling robust performance across diverse problem instances~\cite{gopt2024}.
+
+A particularly promising direction involves multimodal DRL agents that decompose the packing task into three distinct sub-problems: sequence optimization, orientation selection, and position determination. This decomposition enables efficient handling of large-scale instances containing 100 or more boxes~\cite{multimodal_drl2024}. The Dynamic Multi-modal deep Reinforcement Learning framework (DMRL-BPP) further refines this approach by adaptively adjusting the learning strategy based on problem characteristics~\cite{dmrl_bpp2024}.
+
+The generalizability of DRL models across bins with varying dimensions has been addressed by the One4Many-StablePacker (O4M-SP) framework, which demonstrates the capability to handle bins of different sizes without requiring model retraining~\cite{one4many2024}. This advancement is particularly valuable for practical applications where container dimensions may vary frequently.
+
+\subsection{Deep Q-Networks for Packing Optimization}
+
+Deep Q-Networks (DQN) represent a foundational algorithm in deep reinforcement learning, combining Q-learning with deep neural networks to handle high-dimensional state spaces. In the context of 3D bin packing, DQN-based approaches have demonstrated significant advantages over rule-based expert systems by learning optimal packing strategies directly from experience~\cite{dqn_irregular2023}.
+
+Recent implementations of DQN for 3D bin packing have incorporated support for irregular items and multiple container types. The intelligent DQN packing algorithm avoids the limitations of handcrafted expert rules while achieving superior packing schemes given sufficient training time~\cite{dqn_irregular2023}. These methods have been validated through extensive numerical experiments demonstrating improved space utilization compared to traditional greedy heuristics.
+
+The DeepPack3D package provides an open-source implementation that integrates DQN with four different constructive heuristics, offering a standardized benchmark for evaluating and comparing different approaches to online 3D bin packing optimization~\cite{deeppack3d2025}. This framework supports both research and practical applications in palletization and container loading scenarios.
+
+Virtual environment simulations have been developed to train DRL agents for logistics systems, with the BoxStacker framework demonstrating effective learning of packing policies in realistic warehouse settings~\cite{boxstacker2023}. These simulation-based training approaches enable safe and cost-effective development of automated packing systems.
+
+\subsection{State Representation and Neural Network Architectures}
+
+The representation of the 3D packing state significantly influences the learning efficiency and final performance of neural network-based approaches. Height map-based representations combined with convolutional neural networks (CNNs) have emerged as a prevalent approach, providing a compact encoding of space occupancy that delivers strong performance for fixed-size bins~\cite{cnn_heightmap2024}. This representation reduces the dimensionality of the state space while preserving critical spatial information necessary for effective packing decisions.
+
+Improved deep neural network algorithms have been proposed that utilize the size information of ordered items to design more informative network inputs, enabling better handling of irregular items through enhanced geometric understanding~\cite{idnna2024}. These architectural improvements demonstrate the importance of domain-specific state representations in achieving superior performance.
+
+Recent research has also explored the synergy between generative adversarial networks (GANs) and genetic algorithms for 3D bin packing optimization. This hybrid approach enhances both exploration and exploitation capabilities, leading to improved solution quality and reduced bin requirements~\cite{gan_ga_packing2024}.
+
+\subsection{Neurogenesis in Deep Learning}
+
+Neurogenesis deep learning (NDL) introduces a biologically-inspired approach to neural network adaptation by adding new neurons to deep layers, facilitating the acquisition of novel information while preserving previously trained data representations~\cite{neurogenesis_dl2017}. This technique draws inspiration from adult neurogenesis observed in the hippocampus, where new neurons continuously integrate into existing neural circuits throughout an organism's lifetime.
+
+Unlike biological neural systems capable of continuous learning, traditional deep artificial networks exhibit limited capacity for incorporating new information into already-trained models without experiencing catastrophic forgetting. The neurogenesis approach addresses this fundamental limitation by dynamically expanding network capacity in response to new learning requirements~\cite{neurogenesis_dl2017}.
+
+Contemporary neuromorphic computing research has advanced significantly toward commercial viability, with gradient-based training of deep spiking neural networks becoming an established technique for building general-purpose neuromorphic applications~\cite{neuromorphic2025}. Open-source tools supported by rigorous theoretical foundations have enabled widespread adoption of these approaches. Furthermore, the transition from analog and mixed-signal neuromorphic circuit designs to digital implementations in newer devices has simplified application deployment while maintaining computational efficiency benefits~\cite{neuromorphic_commercial2025}.
+
+Recent investigations into brain-inspired artificial intelligence examine the alignment between key brain regions and AI paradigms, spanning generic AI, machine learning, deep learning, and artificial general intelligence (AGI). This research highlights how AI models progressively emulate the brain's complexity, advancing from basic pattern recognition and association to sophisticated reasoning capabilities~\cite{brain_inspired_ai2024}.
+
+\subsection{2D Irregular Nesting with Deep Learning}
+
+While 3D bin packing has received considerable attention, 2D irregular nesting problems present unique challenges requiring specialized approaches. Recent developments in vision-based deep reinforcement learning have demonstrated remarkable improvements in both computational efficiency and material utilization for 2D irregular pattern packing~\cite{nest_smarter2025}.
+
+A hybrid DRL framework for rotational placement of 2D irregular geometries achieves a 97\% improvement in computation time and an 11\% enhancement in material utilization compared to conventional open-source nesting software~\cite{nest_smarter2025}. This approach combines learning-based policies for flexible rotational placement with rule-based policies, supported by a deep learning-based geometric semantics extraction module that captures essential shape characteristics.
+
+The integration of hierarchical deep reinforcement learning enables joint optimization of both packing order and placement decisions. This hierarchical decomposition allows the learning agent to develop strategies at multiple levels of abstraction, improving overall solution quality~\cite{ml_hierarchical2024}.
+
+\subsection{Genetic Algorithms and Hybrid Approaches}
+
+Genetic algorithms (GAs) have long been established as effective metaheuristic approaches for solving complex optimization problems, including various packing and nesting challenges. Recent advances have focused on hybrid methodologies that combine GAs with other optimization techniques to leverage complementary strengths.
+
+The fidelity-adaptive evolution optimization (FAEO) method integrates genetic algorithms with skyline-derived nesting strategies, accelerating the optimization process at different evolutionary stages~\cite{faeo2024}. This adaptive approach adjusts the level of solution fidelity throughout the search process, balancing computational efficiency with solution quality.
+
+Hybrid GA-LP algorithms combine the global search capabilities of genetic algorithms with the precise solving characteristics of linear programming, achieving superior performance for two-dimensional irregular packing problems~\cite{ga_lp2023}. This integration enables efficient exploration of the solution space while ensuring local optimality in placement decisions.
+
+Modified genetic algorithms incorporating image processing techniques have been developed for 2D irregular pattern packing. These approaches utilize pixel count-based overlap detection and overlap ratio-based optimization strategies to achieve efficient compact packing arrangements~\cite{ga_image2025}. The image-based representation simplifies geometric computations while maintaining sufficient accuracy for practical applications.
+
+Advanced nesting algorithms with flaw avoidance capabilities have also been proposed, addressing the practical requirement of avoiding defects in material sheets during the nesting process~\cite{irregular_flaw2024}. These algorithms incorporate constraint-handling mechanisms within the genetic algorithm framework to ensure feasible and high-quality solutions.
+
+\section{Conclusion}
+
+The field of automated packing and nesting optimization has witnessed significant advances through the application of deep reinforcement learning, neurogenesis-inspired architectures, and hybrid evolutionary approaches. Recent research from 2023-2025 demonstrates continuing innovation in neural network architectures, state representations, and training methodologies. The convergence of insights from neuroscience, machine learning, and operations research continues to drive progress toward more efficient and practical automated packing systems for industrial applications.
+
+\bibliographystyle{ieeetr}
+\bibliography{thesis_references}
+
+\end{document}
