@@ -115,6 +115,182 @@
   note={Improved DNN utilizing size information for irregular items}
 }
 
+% ===== Foundational Neural Network Architectures =====
+
+@article{lecun1998gradient,
+  title={Gradient-based learning applied to document recognition},
+  author={LeCun, Yann and Bottou, L{\'e}on and Bengio, Yoshua and Haffner, Patrick},
+  journal={Proceedings of the IEEE},
+  volume={86},
+  number={11},
+  pages={2278--2324},
+  year={1998},
+  publisher={IEEE},
+  note={Foundational work on convolutional neural networks}
+}
+
+@inproceedings{krizhevsky2012imagenet,
+  title={Imagenet classification with deep convolutional neural networks},
+  author={Krizhevsky, Alex and Sutskever, Ilya and Hinton, Geoffrey E},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={25},
+  pages={1097--1105},
+  year={2012},
+  note={AlexNet - breakthrough CNN architecture}
+}
+
+@inproceedings{nair2010rectified,
+  title={Rectified linear units improve restricted boltzmann machines},
+  author={Nair, Vinod and Hinton, Geoffrey E},
+  booktitle={Proceedings of the 27th International Conference on Machine Learning (ICML-10)},
+  pages={807--814},
+  year={2010},
+  note={Introduction of ReLU activation function}
+}
+
+@article{hochreiter1997long,
+  title={Long short-term memory},
+  author={Hochreiter, Sepp and Schmidhuber, J{\"u}rgen},
+  journal={Neural Computation},
+  volume={9},
+  number={8},
+  pages={1735--1780},
+  year={1997},
+  publisher={MIT Press},
+  note={Original LSTM architecture}
+}
+
+@article{cho2014learning,
+  title={Learning phrase representations using RNN encoder-decoder for statistical machine translation},
+  author={Cho, Kyunghyun and Van Merri{\"e}nboer, Bart and Gulcehre, Caglar and Bahdanau, Dzmitry and Bougares, Fethi and Schwenk, Holger and Bengio, Yoshua},
+  journal={arXiv preprint arXiv:1406.1078},
+  year={2014},
+  note={Introduction of Gated Recurrent Unit (GRU)}
+}
+
+@article{elman1990finding,
+  title={Finding structure in time},
+  author={Elman, Jeffrey L},
+  journal={Cognitive Science},
+  volume={14},
+  number={2},
+  pages={179--211},
+  year={1990},
+  publisher={Wiley Online Library},
+  note={Foundational work on recurrent neural networks}
+}
+
+@article{scarselli2009graph,
+  title={The graph neural network model},
+  author={Scarselli, Franco and Gori, Marco and Tsoi, Ah Chung and Hagenbuchner, Markus and Monfardini, Gabriele},
+  journal={IEEE Transactions on Neural Networks},
+  volume={20},
+  number={1},
+  pages={61--80},
+  year={2009},
+  publisher={IEEE},
+  note={Original graph neural network framework}
+}
+
+@article{gilmer2017neural,
+  title={Neural message passing for quantum chemistry},
+  author={Gilmer, Justin and Schoenholz, Samuel S and Riley, Patrick F and Vinyals, Oriol and Dahl, George E},
+  journal={arXiv preprint arXiv:1704.01212},
+  year={2017},
+  note={Message passing neural network framework}
+}
+
+@article{kipf2017semi,
+  title={Semi-supervised classification with graph convolutional networks},
+  author={Kipf, Thomas N and Welling, Max},
+  journal={arXiv preprint arXiv:1609.02907},
+  year={2017},
+  note={Graph Convolutional Networks (GCN)}
+}
+
+@article{veliccovic2018graph,
+  title={Graph attention networks},
+  author={Veli{\v{c}}kovi{\'c}, Petar and Cucurull, Guillem and Casanova, Arantxa and Romero, Adriana and Li{\`o}, Pietro and Bengio, Yoshua},
+  journal={arXiv preprint arXiv:1710.10903},
+  year={2018},
+  note={Graph Attention Networks (GAT)}
+}
+
+@article{mnih2013playing,
+  title={Playing atari with deep reinforcement learning},
+  author={Mnih, Volodymyr and Kavukcuoglu, Koray and Silver, David and Graves, Alex and Antonoglou, Ioannis and Wierstra, Daan and Riedmiller, Martin},
+  journal={arXiv preprint arXiv:1312.5602},
+  year={2013},
+  note={Original Deep Q-Network (DQN) paper}
+}
+
+@article{mnih2015human,
+  title={Human-level control through deep reinforcement learning},
+  author={Mnih, Volodymyr and Kavukcuoglu, Koray and Silver, David and Rusu, Andrei A and Veness, Joel and Bellemare, Marc G and Graves, Alex and Riedmiller, Martin and Fidjeland, Andreas K and Ostrovski, Georg and others},
+  journal={Nature},
+  volume={518},
+  number={7540},
+  pages={529--533},
+  year={2015},
+  publisher={Nature Publishing Group},
+  note={Nature publication of DQN with experience replay and target networks}
+}
+
+@inproceedings{van2016deep,
+  title={Deep reinforcement learning with double Q-learning},
+  author={Van Hasselt, Hado and Guez, Arthur and Silver, David},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={30},
+  number={1},
+  year={2016},
+  note={Double DQN addressing overestimation bias}
+}
+
+@inproceedings{wang2016dueling,
+  title={Dueling network architectures for deep reinforcement learning},
+  author={Wang, Ziyu and Schaul, Tom and Hessel, Matteo and Hasselt, Hado and Lanctot, Marc and Freitas, Nando},
+  booktitle={International Conference on Machine Learning},
+  pages={1995--2003},
+  year={2016},
+  organization={PMLR},
+  note={Dueling DQN with separate value and advantage streams}
+}
+
+@article{schaul2015prioritized,
+  title={Prioritized experience replay},
+  author={Schaul, Tom and Quan, John and Antonoglou, Ioannis and Silver, David},
+  journal={arXiv preprint arXiv:1511.05952},
+  year={2015},
+  note={Prioritized experience replay for DQN}
+}
+
+@article{vaswani2017attention,
+  title={Attention is all you need},
+  author={Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N and Kaiser, {\L}ukasz and Polosukhin, Illia},
+  journal={Advances in Neural Information Processing Systems},
+  volume={30},
+  year={2017},
+  note={Original Transformer architecture}
+}
+
+@inproceedings{lee2019set,
+  title={Set transformer: A framework for attention-based permutation-invariant neural networks},
+  author={Lee, Juho and Lee, Yoonho and Kim, Jungtaek and Kosiorek, Adam and Choi, Seungjin and Teh, Yee Whye},
+  booktitle={International Conference on Machine Learning},
+  pages={3744--3753},
+  year={2019},
+  organization={PMLR},
+  note={Set Transformers with Induced Set Attention Blocks}
+}
+
+@article{xiong2024packing,
+  title={Learning to pack: A data-driven tree search algorithm for large-scale 3D bin packing problem},
+  author={Xiong, Hao and Liu, Qinghua and Zhang, Jie and Wang, Lei},
+  journal={arXiv preprint arXiv:2406.07179},
+  year={2024},
+  note={Packing Transformer for modeling interactions between items and maximal spaces}
+}
+
 % ===== Neurogenesis and Neural Networks =====
 
 @inproceedings{neurogenesis_dl2017,

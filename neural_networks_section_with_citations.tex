@@ -1,0 +1,305 @@
+\section{Neural Networks}
+
+This section surveys neural network architectures relevant to discrete optimization and combinatorial problems. While the application to 3D nesting will be addressed in later chapters, this section establishes the theoretical foundations of modern deep learning architectures that have shown promise in learning complex decision policies.
+
+\subsection{Convolutional Neural Networks}
+
+Convolutional Neural Networks (CNNs) are specialized neural architectures designed to process grid-structured data, originally developed for computer vision tasks~\cite{lecun1998gradient}. Their key innovation lies in the use of convolution operations that preserve spatial structure while learning hierarchical feature representations. The success of deep CNNs was decisively demonstrated by AlexNet~\cite{krizhevsky2012imagenet}, which achieved breakthrough performance on large-scale image recognition tasks.
+
+\subsubsection{Architecture and Components}
+
+A CNN consists of several types of layers arranged in a feed-forward manner:
+
+\textbf{Convolutional Layers.} The core building block applies learnable filters (kernels) across the input through discrete convolution. For a 2D input $\mathbf{X} \in \mathbb{R}^{H \times W}$ and a kernel $\mathbf{K} \in \mathbb{R}^{k \times k}$, the convolution operation at position $(i,j)$ is:
+
+\begin{equation}
+(\mathbf{X} * \mathbf{K})[i,j] = \sum_{m=0}^{k-1}\sum_{n=0}^{k-1} \mathbf{X}[i+m, j+n] \cdot \mathbf{K}[m,n]
+\end{equation}
+
+Each convolutional layer typically applies multiple filters to learn different features, producing a set of feature maps.
+
+\textbf{Activation Functions.} Non-linear activations are applied element-wise after convolution. Common choices include ReLU (Rectified Linear Unit)~\cite{nair2010rectified}: $f(x) = \max(0,x)$, which introduces non-linearity while remaining computationally efficient, and variants such as Leaky ReLU and GELU that address specific limitations.
+
+\textbf{Pooling Layers.} These layers reduce spatial dimensionality through downsampling operations. Max pooling selects the maximum value within each local region:
+
+\begin{equation}
+\text{MaxPool}(\mathbf{X})[i,j] = \max_{m,n \in \mathcal{N}_{i,j}} \mathbf{X}[m,n]
+\end{equation}
+
+where $\mathcal{N}_{i,j}$ denotes the pooling window centered at $(i,j)$. Average pooling computes the mean instead, providing a smoother downsampling alternative.
+
+\textbf{Fully Connected Layers.} Terminal layers flatten the feature maps and apply standard dense connections to produce final outputs.
+
+\subsubsection{Key Properties}
+
+CNNs exhibit several properties that make them effective for spatial data:
+
+\textbf{Parameter Sharing.} The same kernel weights are applied across all spatial locations, drastically reducing the number of parameters compared to fully connected networks. For a $H \times W$ input with $k \times k$ kernels, a convolutional layer uses $k^2$ parameters per filter, whereas a fully connected layer would require $H \cdot W$ parameters per output unit.
+
+\textbf{Translation Equivariance.} Convolution operations are equivariant to translation: shifting the input results in an equivalent shift in the output. Formally, if $T_{\delta}$ denotes a translation operator, then:
+
+\begin{equation}
+\text{Conv}(T_{\delta}(\mathbf{X})) = T_{\delta}(\text{Conv}(\mathbf{X}))
+\end{equation}
+
+This property allows CNNs to detect features regardless of their position in the input.
+
+\textbf{Local Receptive Fields.} Each unit in a convolutional layer connects only to a local region of the input, enabling efficient processing and hierarchical feature extraction. Deeper layers implicitly have larger receptive fields, capturing increasingly global information.
+
+\subsubsection{Applications to Optimization Problems}
+
+While originally designed for image processing, CNNs have been adapted to combinatorial optimization through creative input representations. For problems with spatial structure, such as the Traveling Salesman Problem on Euclidean coordinates or grid-based puzzles, CNNs can process 2D or 3D grids representing problem states.
+
+In the context of packing and nesting, heightmaps (Section 3.1.2) provide a natural 2D representation amenable to convolutional processing~\cite{cnn_heightmap2024}. The CNN can learn to detect spatial patterns such as cavities, support surfaces, and fragmentation that are relevant for placement quality assessment.
+
+\subsection{Recurrent Neural Networks}
+
+Recurrent Neural Networks (RNNs)~\cite{elman1990finding} extend feedforward architectures to process sequential data by maintaining hidden state that captures information from previous time steps. This makes them well-suited for tasks involving temporal dependencies or variable-length sequences.
+
+\subsubsection{Architecture}
+
+An RNN processes a sequence $\mathbf{x}_1, \mathbf{x}_2, \ldots, \mathbf{x}_T$ by maintaining a hidden state $\mathbf{h}_t$ that is updated at each time step:
+
+\begin{align}
+\mathbf{h}_t &= f(\mathbf{W}_{hh} \mathbf{h}_{t-1} + \mathbf{W}_{xh} \mathbf{x}_t + \mathbf{b}_h) \\
+\mathbf{y}_t &= \mathbf{W}_{hy} \mathbf{h}_t + \mathbf{b}_y
+\end{align}
+
+where $f$ is a non-linear activation function (typically $\tanh$ or ReLU), $\mathbf{W}_{hh}$, $\mathbf{W}_{xh}$, and $\mathbf{W}_{hy}$ are learnable weight matrices, and $\mathbf{b}_h$, $\mathbf{b}_y$ are bias vectors.
+
+\subsubsection{Long Short-Term Memory (LSTM)}
+
+Standard RNNs suffer from the vanishing gradient problem when learning long-range dependencies. LSTMs~\cite{hochreiter1997long} address this through a gating mechanism that controls information flow. An LSTM cell maintains two state vectors: the hidden state $\mathbf{h}_t$ and the cell state $\mathbf{c}_t$, updated through three gates:
+
+\begin{align}
+\mathbf{f}_t &= \sigma(\mathbf{W}_f [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_f) \quad \text{(forget gate)} \\
+\mathbf{i}_t &= \sigma(\mathbf{W}_i [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_i) \quad \text{(input gate)} \\
+\mathbf{o}_t &= \sigma(\mathbf{W}_o [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_o) \quad \text{(output gate)} \\
+\tilde{\mathbf{c}}_t &= \tanh(\mathbf{W}_c [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_c) \quad \text{(candidate values)} \\
+\mathbf{c}_t &= \mathbf{f}_t \odot \mathbf{c}_{t-1} + \mathbf{i}_t \odot \tilde{\mathbf{c}}_t \\
+\mathbf{h}_t &= \mathbf{o}_t \odot \tanh(\mathbf{c}_t)
+\end{align}
+
+where $\sigma$ denotes the sigmoid function and $\odot$ represents element-wise multiplication.
+
+\subsubsection{Gated Recurrent Unit (GRU)}
+
+GRUs~\cite{cho2014learning} simplify the LSTM architecture by combining the forget and input gates into a single update gate, and merging the cell state with the hidden state:
+
+\begin{align}
+\mathbf{r}_t &= \sigma(\mathbf{W}_r [\mathbf{h}_{t-1}, \mathbf{x}_t]) \quad \text{(reset gate)} \\
+\mathbf{z}_t &= \sigma(\mathbf{W}_z [\mathbf{h}_{t-1}, \mathbf{x}_t]) \quad \text{(update gate)} \\
+\tilde{\mathbf{h}}_t &= \tanh(\mathbf{W}_h [\mathbf{r}_t \odot \mathbf{h}_{t-1}, \mathbf{x}_t]) \\
+\mathbf{h}_t &= (1 - \mathbf{z}_t) \odot \mathbf{h}_{t-1} + \mathbf{z}_t \odot \tilde{\mathbf{h}}_t
+\end{align}
+
+GRUs often achieve comparable performance to LSTMs with fewer parameters and faster training.
+
+\subsubsection{Application to Sequential Decision Making}
+
+RNNs are natural candidates for reinforcement learning problems where decisions must be made sequentially and past actions influence future states. In constructive optimization heuristics, where items are placed one at a time, RNNs can model the sequential dependency between placement decisions and learn to account for how current choices affect future options.
+
+\subsection{Graph Neural Networks}
+
+Graph Neural Networks (GNNs)~\cite{scarselli2009graph} extend deep learning to graph-structured data by defining convolution-like operations on arbitrary graph topologies. Unlike CNNs, which operate on regular grids, GNNs can process irregular structures such as social networks, molecules, or combinatorial problem instances.
+
+\subsubsection{Graph Representation}
+
+A graph $\mathcal{G} = (\mathcal{V}, \mathcal{E})$ consists of vertices (nodes) $\mathcal{V} = \{v_1, \ldots, v_n\}$ and edges $\mathcal{E} \subseteq \mathcal{V} \times \mathcal{V}$. Each node $v_i$ has a feature vector $\mathbf{h}_i^{(0)} \in \mathbb{R}^d$, and optionally, edges may have features $\mathbf{e}_{ij}$.
+
+\subsubsection{Message Passing Framework}
+
+Most GNN architectures follow a message-passing paradigm~\cite{gilmer2017neural}, where node representations are iteratively updated by aggregating information from neighboring nodes. At layer $\ell$, the update for node $i$ is:
+
+\begin{align}
+\mathbf{m}_i^{(\ell)} &= \text{AGGREGATE}^{(\ell)}\left(\{\mathbf{h}_j^{(\ell-1)} : j \in \mathcal{N}(i)\}\right) \\
+\mathbf{h}_i^{(\ell)} &= \text{UPDATE}^{(\ell)}\left(\mathbf{h}_i^{(\ell-1)}, \mathbf{m}_i^{(\ell)}\right)
+\end{align}
+
+where $\mathcal{N}(i)$ denotes the neighbors of node $i$, AGGREGATE is a permutation-invariant function (sum, mean, max), and UPDATE is typically a feedforward neural network.
+
+\subsubsection{Graph Convolutional Networks (GCN)}
+
+Kipf and Welling~\cite{kipf2017semi} propose a simplified convolution operator based on spectral graph theory. For a graph with adjacency matrix $\mathbf{A}$ and node features $\mathbf{H}^{(\ell)}$, the GCN layer computes:
+
+\begin{equation}
+\mathbf{H}^{(\ell+1)} = \sigma\left(\tilde{\mathbf{D}}^{-\frac{1}{2}} \tilde{\mathbf{A}} \tilde{\mathbf{D}}^{-\frac{1}{2}} \mathbf{H}^{(\ell)} \mathbf{W}^{(\ell)}\right)
+\end{equation}
+
+where $\tilde{\mathbf{A}} = \mathbf{A} + \mathbf{I}$ is the adjacency matrix with added self-loops, $\tilde{\mathbf{D}}$ is the degree matrix of $\tilde{\mathbf{A}}$, and $\mathbf{W}^{(\ell)}$ is a learnable weight matrix.
+
+\subsubsection{Graph Attention Networks (GAT)}
+
+GATs~\cite{veliccovic2018graph} introduce an attention mechanism to weight the importance of different neighbors. The attention coefficient $\alpha_{ij}$ between nodes $i$ and $j$ is computed as:
+
+\begin{equation}
+\alpha_{ij} = \frac{\exp(\text{LeakyReLU}(\mathbf{a}^T [\mathbf{W}\mathbf{h}_i \| \mathbf{W}\mathbf{h}_j]))}{\sum_{k \in \mathcal{N}(i)} \exp(\text{LeakyReLU}(\mathbf{a}^T [\mathbf{W}\mathbf{h}_i \| \mathbf{W}\mathbf{h}_k]))}
+\end{equation}
+
+where $\|$ denotes concatenation and $\mathbf{a}$ is a learnable attention vector. Node features are then updated as:
+
+\begin{equation}
+\mathbf{h}_i' = \sigma\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} \mathbf{W} \mathbf{h}_j\right)
+\end{equation}
+
+\subsubsection{Applications to Combinatorial Optimization}
+
+GNNs have shown strong performance on graph-based combinatorial problems such as the Traveling Salesman Problem, Maximum Cut, and Graph Coloring. Many optimization problems admit natural graph representations: in bin packing, items can be nodes with edges representing compatibility or spatial relationships; placement candidates can form a graph where edges encode geometric constraints.
+
+\subsection{Deep Reinforcement Learning and Deep Q-Networks}
+
+Deep Reinforcement Learning combines neural function approximation with reinforcement learning algorithms, enabling agents to learn policies directly from high-dimensional observations. This section focuses on value-based methods, particularly Deep Q-Networks and their variants.
+
+\subsubsection{Q-Learning and the Bellman Equation}
+
+Q-learning is a model-free RL algorithm that learns an action-value function $Q(s,a)$ representing the expected return from taking action $a$ in state $s$ and following an optimal policy thereafter. The optimal Q-function satisfies the Bellman optimality equation:
+
+\begin{equation}
+Q^*(s,a) = \mathbb{E}_{s'}\left[r + \gamma \max_{a'} Q^*(s', a') \mid s, a\right]
+\end{equation}
+
+where $r$ is the immediate reward, $\gamma \in [0,1)$ is the discount factor, and $s'$ is the next state.
+
+Tabular Q-learning updates estimates using temporal-difference (TD) learning:
+
+\begin{equation}
+Q(s,a) \leftarrow Q(s,a) + \alpha \left[r + \gamma \max_{a'} Q(s',a') - Q(s,a)\right]
+\end{equation}
+
+where $\alpha$ is the learning rate.
+
+\subsubsection{Deep Q-Networks (DQN)}
+
+Mnih et al.~\cite{mnih2013playing, mnih2015human} introduced DQN, which approximates $Q(s,a; \theta)$ using a deep neural network with parameters $\theta$. The network is trained to minimize the temporal-difference error:
+
+\begin{equation}
+\mathcal{L}(\theta) = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}}\left[\left(r + \gamma \max_{a'} Q(s',a';\theta^-) - Q(s,a;\theta)\right)^2\right]
+\end{equation}
+
+where $\mathcal{D}$ is a replay buffer of stored transitions and $\theta^-$ are the parameters of a target network.
+
+DQN introduces two key innovations to stabilize training:
+
+\textbf{Experience Replay.} Transitions $(s,a,r,s')$ are stored in a replay buffer $\mathcal{D}$ and sampled uniformly during training. This breaks temporal correlations in the data and enables more efficient reuse of experience.
+
+\textbf{Target Network.} A separate target network with parameters $\theta^-$ is used to compute TD targets. These parameters are periodically updated from the main network ($\theta^- \leftarrow \theta$ every $C$ steps), providing more stable learning targets.
+
+\subsubsection{Double Deep Q-Network (Double DQN)}
+
+Standard DQN tends to overestimate Q-values due to the max operator in the Bellman update. Van Hasselt et al.~\cite{van2016deep} propose Double DQN, which decouples action selection from action evaluation:
+
+\begin{equation}
+Y_t^{\text{DoubleDQN}} = r + \gamma Q(s', \arg\max_{a'} Q(s',a';\theta); \theta^-)
+\end{equation}
+
+The online network selects the best action, but the target network evaluates it. This significantly reduces overestimation bias and improves learning stability.
+
+\subsubsection{Dueling DQN}
+
+Wang et al.~\cite{wang2016dueling} introduce a network architecture that separately estimates the state value $V(s)$ and the advantage of each action $A(s,a)$:
+
+\begin{equation}
+Q(s,a;\theta,\alpha,\beta) = V(s;\theta,\beta) + \left(A(s,a;\theta,\alpha) - \frac{1}{|\mathcal{A}|}\sum_{a'} A(s,a';\theta,\alpha)\right)
+\end{equation}
+
+where $\theta$ represents shared parameters, $\alpha$ are advantage stream parameters, and $\beta$ are value stream parameters. This decomposition allows the network to learn which states are valuable independent of the action choice, accelerating learning.
+
+\subsubsection{Prioritized Experience Replay}
+
+Schaul et al.~\cite{schaul2015prioritized} improve experience replay by sampling transitions non-uniformly based on their TD error. Transitions with higher error $|\delta| = |r + \gamma \max_{a'} Q(s',a') - Q(s,a)|$ are sampled more frequently, as they provide more learning signal. The sampling probability is:
+
+\begin{equation}
+P(i) = \frac{p_i^\alpha}{\sum_k p_k^\alpha}
+\end{equation}
+
+where $p_i = |\delta_i| + \epsilon$ and $\alpha$ controls the degree of prioritization.
+
+\subsubsection{Application to Combinatorial Optimization}
+
+DQN and its variants have been successfully applied to discrete optimization problems by formulating them as sequential decision processes~\cite{dqn_irregular2023}. For constructive heuristics, each placement decision can be treated as an action, with the Q-network learning to evaluate the long-term quality of placing an item at a specific location. The discrete action space (selecting from candidate placements) is well-suited to Q-learning methods.
+
+\subsection{Transformer Networks}
+
+Transformers, introduced by Vaswani et al.~\cite{vaswani2017attention}, represent a paradigm shift in sequence modeling by replacing recurrence with self-attention mechanisms. This architecture has become dominant in natural language processing and is increasingly applied to combinatorial optimization.
+
+\subsubsection{Self-Attention Mechanism}
+
+The core component of transformers is the scaled dot-product attention. Given query $\mathbf{Q}$, key $\mathbf{K}$, and value $\mathbf{V}$ matrices:
+
+\begin{equation}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right)\mathbf{V}
+\end{equation}
+
+where $d_k$ is the dimension of the key vectors. The scaling factor $1/\sqrt{d_k}$ prevents dot products from growing too large.
+
+For a sequence of inputs $\mathbf{X} = [\mathbf{x}_1, \ldots, \mathbf{x}_n]$, self-attention computes:
+
+\begin{align}
+\mathbf{Q} &= \mathbf{X}\mathbf{W}_Q, \quad \mathbf{K} = \mathbf{X}\mathbf{W}_K, \quad \mathbf{V} = \mathbf{X}\mathbf{W}_V \\
+\mathbf{Z} &= \text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V})
+\end{align}
+
+where $\mathbf{W}_Q, \mathbf{W}_K, \mathbf{W}_V$ are learnable projection matrices.
+
+\subsubsection{Multi-Head Attention}
+
+Transformers employ multiple attention heads operating in parallel, each learning different aspects of the relationships:
+
+\begin{equation}
+\text{MultiHead}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h)\mathbf{W}_O
+\end{equation}
+
+where $\text{head}_i = \text{Attention}(\mathbf{Q}\mathbf{W}_Q^i, \mathbf{K}\mathbf{W}_K^i, \mathbf{V}\mathbf{W}_V^i)$ and $\mathbf{W}_O$ is an output projection matrix.
+
+\subsubsection{Transformer Architecture}
+
+A full transformer layer consists of:
+
+\begin{enumerate}
+\item Multi-head self-attention with residual connection and layer normalization:
+\begin{equation}
+\mathbf{Z} = \text{LayerNorm}(\mathbf{X} + \text{MultiHead}(\mathbf{X}, \mathbf{X}, \mathbf{X}))
+\end{equation}
+
+\item Position-wise feedforward network:
+\begin{equation}
+\text{FFN}(\mathbf{z}) = \max(0, \mathbf{z}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2
+\end{equation}
+
+applied with residual connection:
+\begin{equation}
+\mathbf{Y} = \text{LayerNorm}(\mathbf{Z} + \text{FFN}(\mathbf{Z}))
+\end{equation}
+\end{enumerate}
+
+\subsubsection{Positional Encoding}
+
+Since attention is permutation-equivariant, position information must be injected explicitly. The original transformer uses sinusoidal positional encodings:
+
+\begin{align}
+\text{PE}_{(pos, 2i)} &= \sin(pos / 10000^{2i/d}) \\
+\text{PE}_{(pos, 2i+1)} &= \cos(pos / 10000^{2i/d})
+\end{align}
+
+Alternatively, learned positional embeddings can be used.
+
+\subsubsection{Set Transformers}
+
+Lee et al.~\cite{lee2019set} adapt transformers for set-structured inputs by introducing Induced Set Attention Blocks (ISAB) that reduce computational complexity from $O(n^2)$ to $O(nm)$ where $m \ll n$ is the number of inducing points.
+
+An ISAB computes attention through a bottleneck:
+
+\begin{align}
+\mathbf{H} &= \text{Attention}(\mathbf{I}, \mathbf{X}, \mathbf{X}) \\
+\mathbf{Z} &= \text{Attention}(\mathbf{X}, \mathbf{H}, \mathbf{H})
+\end{align}
+
+where $\mathbf{I} \in \mathbb{R}^{m \times d}$ are learnable inducing points.
+
+Set transformers are particularly relevant for combinatorial optimization because many problem instances are naturally represented as sets (e.g., sets of items, candidate placements, or graph nodes) where the order is irrelevant.
+
+\subsubsection{Application to Optimization}
+
+Transformers have been successfully applied to routing problems (TSP, VRP), scheduling, and packing tasks. Their ability to model long-range dependencies and attend to all elements simultaneously makes them effective for problems where global context is important. For packing problems, transformers can attend over all items and candidate placements, learning complex relationships between geometric configurations.
+
+In the context of bin packing, Xiong et al.~\cite{xiong2024packing} use a Packing Transformer to model interactions between items and empty maximal spaces, demonstrating that attention mechanisms can capture spatial relationships relevant for placement decisions.
