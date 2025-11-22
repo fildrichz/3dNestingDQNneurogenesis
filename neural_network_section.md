@@ -1,6 +1,6 @@
-# 3.2 Neural Network Architectures for Bin Packing
+# 3.2 Neural Network Architectures for Combinatorial Optimization
 
-The application of deep learning to combinatorial optimization has transformed bin packing from a domain of hand-crafted heuristics to one where neural networks learn placement strategies directly from experience. This section reviews the key neural network architectures employed in modern bin packing systems, with particular focus on deep reinforcement learning approaches that treat packing as a sequential decision-making problem.
+The application of deep learning to combinatorial optimization has transformed bin packing from a domain of hand-crafted heuristics to one where neural networks learn placement strategies directly from experience. Rather than manually encoding rules for item selection and placement, modern approaches leverage neural networks as function approximators that discover effective policies through interaction with the problem space. This section reviews the key neural network architectures employed for learning-based packing systems, with particular focus on deep reinforcement learning approaches that treat packing as a sequential decision-making problem where an agent learns to maximize long-term packing efficiency.
 
 ## 3.2.1 Deep Q-Networks (DQN)
 
@@ -34,24 +34,25 @@ where $\mathcal{D}$ is a **replay buffer** storing past experiences $(s, a, r, s
 
 3. **$\varepsilon$-greedy Exploration**: The agent selects the greedy action $a = \arg\max_a Q(s, a; \theta)$ with probability $1 - \varepsilon$, and a random action with probability $\varepsilon$. Epsilon is annealed from $\varepsilon_{\text{start}}$ to $\varepsilon_{\text{end}}$ over training.
 
-### Application to Bin Packing
+### Application to Packing Problems
 
-In the bin packing domain, the DQN framework is instantiated as follows:
+In packing domains, the DQN framework is instantiated as follows:
 
-- **State $s$**: The current packing configuration, encoded as feature vectors (Section 3.1.2), heightmaps, or voxel grids. Includes:
-  - Container state: occupied positions, utilization, heightmap
-  - Current item: dimensions, weight, orientation constraints
-  - Remaining items: count, volume distribution
+- **State $s$**: The current packing configuration, typically encoded as:
+  - Feature vectors capturing item and container properties (dimensions, weight, shape)
+  - Spatial representations (heightmaps, occupancy grids, voxel representations)
+  - Global statistics (utilization, number of items placed/remaining)
+  - Current item awaiting placement
 
-- **Action $a$**: A discrete choice of placement candidate. For $K$ candidate positions (e.g., extreme points or EMS), $a \in \{1, \ldots, K\}$. Some systems also include orientation selection as part of the action space.
+- **Action $a$**: A discrete choice among placement candidates. For $K$ candidate positions (e.g., corner points, empty maximal spaces), $a \in \{1, \ldots, K\}$. Actions may also encode orientation selection or bin selection in multi-container scenarios.
 
-- **Reward $r$**: Immediate feedback signal. Common reward structures:
-  - **Utilization increment**: $r = V_{\text{item}} / V_{\text{container}}$ (reward for packing volume)
-  - **Sparse completion reward**: $r = 0$ during packing, $r = \text{final utilization}$ at episode end
-  - **Penalty-based**: $r = -1$ per bin opened (minimizes bin count)
-  - **Shaped rewards**: Additional terms for support quality, fragmentation, or constraint violations
+- **Reward $r$**: Immediate feedback signal that guides learning. Common reward structures include:
+  - **Utilization increment**: Reward proportional to volume successfully packed
+  - **Sparse completion reward**: Reward only at episode end based on final packing quality
+  - **Penalty-based**: Negative reward for opening new containers or violating constraints
+  - **Shaped rewards**: Additional terms encouraging desirable properties (stability, compactness, accessibility)
 
-- **Episode Termination**: When all items are placed or no feasible placements remain for the current item.
+- **Episode Termination**: When all items are successfully placed or no feasible placements remain.
 
 **Network Architecture:**
 
@@ -61,17 +62,17 @@ The Q-network typically consists of:
 2. **Shared trunk**: Multi-layer perceptron (MLP) or convolutional layers to process spatial representations
 3. **Action-value heads**: Outputs $Q(s, a)$ for each candidate action $a$
 
-For $K$ candidate placements, one can use:
+For $K$ candidate placements, two common approaches exist:
 
 - **Separate forward passes**: Encode each $(state, candidate_k)$ pair and evaluate $Q(s, a_k)$ separately
-- **Single forward pass**: Encode state once, then score all candidates via attention or separate heads
+- **Single forward pass**: Encode state once, then score all candidates via attention mechanisms or parallel output heads
 
-Example network structure (from packing_with_dqncore2_enhanced.py):
+A typical network structure might consist of:
 
 ```
-Input: [item_features, container_state, candidate_position]
+Input: [item_features, container_features, candidate_features]
   ↓
-FC layers with ReLU: [512, 512, 256]
+Fully-connected layers with ReLU: [512, 512, 256]
   ↓
 Output: Q(s, a) ∈ ℝ
 ```
@@ -135,15 +136,15 @@ best_actions = q_online(next_state).argmax(dim=1)  # Select with online
 target = reward + gamma * q_target(next_state).gather(1, best_actions.unsqueeze(1)).squeeze(1)  # Evaluate with target
 ```
 
-### Impact on Bin Packing
+### Impact on Packing Problems
 
-For bin packing, Double DQN provides:
+For packing applications, Double DQN provides:
 
 - **More stable Q-values**: Especially important when reward signals are sparse (e.g., only at episode end)
 - **Better convergence**: Reduced oscillation in learned policies during training
 - **Improved sample efficiency**: Faster learning with fewer episodes
 
-Empirical results [HGS16] show that Double DQN often achieves higher final performance and more consistent learning curves compared to standard DQN, particularly in domains with large action spaces—such as selecting among hundreds of candidate placements in a complex 3D packing scenario.
+Empirical results [HGS16] show that Double DQN often achieves higher final performance and more consistent learning curves compared to standard DQN, particularly in domains with large action spaces—such as selecting among many candidate placement positions when numerous items remain to be packed.
 
 
 ## 3.2.3 Transformer Architectures
@@ -202,38 +203,38 @@ $$
 
 Multiple encoder layers are stacked to form deep representations.
 
-### Application to Bin Packing
+### Application to Packing Problems
 
-Transformers are well-suited to bin packing because packing involves **relational reasoning** over sets:
+Transformers are well-suited to packing because these problems fundamentally involve **relational reasoning** over sets:
 
-- **Items**: Which items pack well together?
-- **Placements**: Which candidate positions create favorable configurations?
-- **Constraints**: Which items are blocked by current placements?
+- **Items**: Which items should be placed together? Which have compatible shapes and sizes?
+- **Placements**: Which candidate positions create stable, efficient configurations?
+- **Constraints**: How do current placements affect future options?
 
-**Example: GOPT [XGP+24]**
+**Example: Packing Transformers**
 
-Xiong et al. (2024) propose a **Packing Transformer** for online 3D bin packing with robotic arms:
+Recent work has applied Transformer architectures to packing domains, demonstrating their effectiveness:
 
-1. **Item Encoding**: Each item $i$ is embedded as $\mathbf{e}_i \in \mathbb{R}^d$ (dimensions, weight, orientation)
+1. **Item Encoding**: Each item $i$ is embedded as $\mathbf{e}_i \in \mathbb{R}^d$ capturing relevant properties (dimensions, weight, geometric features)
 
-2. **EMS Encoding**: Each empty maximal space $j$ is embedded as $\mathbf{c}_j \in \mathbb{R}^d$ (position, available volume)
+2. **Candidate Position Encoding**: Each candidate placement location $j$ is embedded as $\mathbf{c}_j \in \mathbb{R}^d$ (spatial coordinates, available space, local geometry)
 
-3. **Cross-Attention**: Items attend to EMS candidates:
+3. **Cross-Attention**: Items attend to placement candidates:
    $$
    \mathbf{h}_j = \text{Attention}(Q=\mathbf{c}_j, K=\{\mathbf{e}_i\}, V=\{\mathbf{e}_i\})
    $$
 
-   This computes, for each candidate position $j$, which items are relevant (compatible size, waiting to be packed).
+   This computes, for each candidate position $j$, which items are relevant based on compatibility and packing sequence.
 
-4. **Heightmap Integration**: A 2D heightmap is processed by a CNN to extract spatial features $\mathbf{f}_{\text{spatial}}$, then concatenated with item/EMS embeddings.
+4. **Spatial Feature Integration**: Spatial representations (e.g., heightmaps, occupancy grids) may be processed by convolutional layers to extract spatial features $\mathbf{f}_{\text{spatial}}$, then concatenated with item and position embeddings.
 
-5. **Policy Head**: The attended representations are passed to an MLP that outputs placement probabilities or Q-values.
+5. **Decision Head**: The attended representations are passed to output layers that produce placement probabilities or value estimates.
 
-**Benefits for Bin Packing:**
+**Benefits for Packing:**
 
 - **Permutation invariance**: Attention is invariant to the order of items/candidates, making the network robust to different input sequences
 - **Variable-length sets**: Can process different numbers of items or candidates without architectural changes
-- **Learned relationships**: Discovers which spatial patterns matter (e.g., "place large items first near corners")
+- **Learned relationships**: Automatically discovers which spatial and relational patterns lead to efficient packings
 
 ### Comparison with CNNs and MLPs
 
@@ -294,17 +295,17 @@ $$
 
 The output $\mathbf{Z}$ is a fixed-size representation of the input set, invariant to permutations.
 
-### Application to Bin Packing
+### Application to Packing Problems
 
 **Item Set Encoding**: Given a set of items $\{\mathbf{v}_i\}$ to be packed:
 
-1. Embed each item: $\mathbf{e}_i = \text{Embed}(\mathbf{v}_i)$ (dimensions, weight, etc.)
-2. Apply ISAB layers: Learn inter-item relationships (e.g., clustering by size)
+1. Embed each item: $\mathbf{e}_i = \text{Embed}(\mathbf{v}_i)$ capturing item properties
+2. Apply ISAB layers: Learn inter-item relationships (e.g., grouping by size or shape compatibility)
 3. Pool with PMA: Produce a global item set representation $\mathbf{z}_{\text{items}}$
 
 **Candidate Scoring**: Given a set of candidate placements $\{\mathbf{p}_j\}$:
 
-1. Embed each candidate: $\mathbf{c}_j = \text{Embed}(\mathbf{p}_j)$ (position, available volume)
+1. Embed each candidate: $\mathbf{c}_j = \text{Embed}(\mathbf{p}_j)$ capturing position and available space
 2. Attend to item set:
    $$
    \mathbf{h}_j = \text{Attention}(Q=\mathbf{c}_j, K=\mathbf{z}_{\text{items}}, V=\mathbf{z}_{\text{items}})
@@ -371,23 +372,23 @@ The resulting network is highly specialized but may discover inductive biases (e
 
 ## 3.2.6 Graph Neural Networks (GNNs)
 
-Graph Neural Networks provide a natural framework for encoding the **relational structure** of bin packing: items, empty spaces, and spatial relationships can be represented as nodes and edges in a graph [SZL+22, ZWL+24].
+Graph Neural Networks provide a natural framework for encoding the **relational structure** inherent in packing problems: items, placement locations, and spatial relationships can be explicitly represented as nodes and edges in a graph [SZL+22, ZWL+24].
 
 ### Graph Representation of Packing State
 
 A packing configuration can be modeled as a graph $G = (V, E)$ where:
 
 **Nodes $V$:**
-- **Item nodes**: Each placed item $i$ with features $\mathbf{x}_i = [w_i, h_i, d_i, x_i, y_i, z_i, \text{weight}_i]$
-- **EMS nodes**: Each empty maximal space $j$ with features $\mathbf{x}_j = [x_j, y_j, z_j, w_j, h_j, d_j]$
-- **Container node**: Global state $\mathbf{x}_{\text{bin}} = [\text{utilization}, \text{num\_items\_placed}]$
-- **Item-to-place node**: The current item awaiting placement
+- **Placed item nodes**: Each placed item $i$ with features encoding its geometry and position
+- **Empty space nodes**: Available placement locations with features describing size and position
+- **Container node**: Global state (utilization, capacity, packing progress)
+- **Current item node**: The item currently being placed
 
 **Edges $E$:**
-- **Support edges**: $(i, j)$ if item $i$ supports item $j$ (geometric contact)
-- **Proximity edges**: $(i, j)$ if items $i$ and $j$ are within distance $\epsilon$
-- **Containment edges**: $(i, \text{EMS}_k)$ if placing item $i$ in EMS $k$ is feasible
-- **Global edges**: All nodes connected to the container node
+- **Support edges**: Connections between items in physical contact
+- **Proximity edges**: Connections between nearby items or spaces
+- **Feasibility edges**: Connections indicating valid placement options
+- **Global edges**: Connections to container node for global context
 
 ### Message Passing Framework
 
@@ -413,7 +414,7 @@ GNNs learn node representations by iteratively **aggregating information** from 
 
 After $L$ layers, each node has a representation $\mathbf{h}_i^{(L)}$ that aggregates information from its $L$-hop neighborhood.
 
-### GNN Variants for Bin Packing
+### GNN Variants for Packing
 
 **Graph Convolutional Networks (GCN)** [KW17]:
 $$
@@ -499,7 +500,7 @@ The neural architectures discussed above are typically integrated within **deep 
 
 ### Policy Gradient Methods
 
-For bin packing with large or continuous action spaces (e.g., precise $(x, y, z)$ positioning), policy gradients may be preferred. The **policy gradient theorem** provides a gradient estimator:
+For problems with large or continuous action spaces, policy gradients offer an alternative to value-based methods. The **policy gradient theorem** provides a gradient estimator:
 
 $$
 \nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\left[\sum_{t=0}^T \nabla_\theta \log \pi_\theta(a_t | s_t) \cdot G_t\right]
@@ -507,44 +508,45 @@ $$
 
 where $G_t = \sum_{t'=t}^T \gamma^{t'-t} r_{t'}$ is the return from time $t$. Modern algorithms like **Proximal Policy Optimization (PPO)** [SWD+17] add clipping or trust regions to stabilize updates.
 
-**Application to Packing:**
+**Applications in Packing:**
 
-- **Continuous placement**: Output a probability distribution over $(x, y, z, \text{orientation})$
-- **Item ordering**: Learn a policy over item permutations (e.g., via pointer networks)
-- **Multi-agent**: Multiple robots packing in parallel, each with a local policy
+- **Continuous decisions**: Learning probability distributions over placement coordinates and orientations
+- **Sequence optimization**: Learning to select item ordering for improved packing
+- **Multi-container scenarios**: Coordinating placement decisions across multiple bins
 
 ### Sample Efficiency and Curriculum Learning
 
-DRL often requires millions of environment steps to converge. For bin packing:
+DRL often requires millions of environment steps to converge. For packing problems:
 
-- **Simulated environments**: Fast physics-free collision checks enable rapid data collection
-- **Curriculum learning**: Train on easy instances (few items, simple shapes) before hard ones
-- **Transfer learning**: Pre-train on synthetic data, fine-tune on real-world distributions
+- **Simulated environments**: Fast simulation enables rapid data collection and policy evaluation
+- **Curriculum learning**: Train on easy instances (few items, regular shapes) before progressively harder ones
+- **Transfer learning**: Pre-train on synthetic problem distributions, fine-tune on target distributions
 
 ### Model-Based RL
 
 Most packing systems use **model-free** RL (learn $Q$ or $\pi$ directly from experience). An alternative is **model-based RL**:
 
 1. Learn a dynamics model: $\hat{s}_{t+1} = f(s_t, a_t)$
-2. Plan using the model (e.g., Monte Carlo Tree Search)
+2. Plan using the model (e.g., tree search, trajectory optimization)
 3. Update the model from real experience
 
 **Challenges for Packing:**
 
-- High-dimensional state (3D geometry) makes model learning difficult
-- Discrete item placements lead to discontinuous dynamics
+- High-dimensional state spaces make accurate model learning difficult
+- Discrete placement decisions lead to discontinuous dynamics
+- Long planning horizons compound model errors
 
-Model-based methods remain rare in bin packing, though they show promise for long-horizon planning [KSH+20].
+Model-based methods remain less common in packing, though they offer potential benefits for planning and sample efficiency [KSH+20].
 
 
 ## 3.3 Hybrid Architectures and Integration
 
-Modern packing systems often **combine** multiple neural components:
+Modern packing systems often **combine** multiple neural components to leverage complementary strengths:
 
-**CNN + Transformer (GOPT [XGP+24])**:
-- CNN processes heightmap → spatial features
-- Transformer processes item/EMS embeddings → relational features
-- Concatenate and feed to policy/value head
+**CNN + Transformer**:
+- CNN processes spatial representations (heightmaps, occupancy grids) → spatial features
+- Transformer processes item and candidate embeddings → relational features
+- Concatenate and feed to decision head
 
 **GNN + DQN**:
 - GNN encodes packing state as graph
@@ -561,14 +563,14 @@ This hybrid approach leverages the strengths of both learned and hand-crafted me
 
 ## Summary
 
-Neural network architectures for bin packing have evolved from simple MLPs to sophisticated models incorporating attention, graph structure, and deep reinforcement learning. **DQN** provides a foundational framework for learning placement policies via value function approximation, while **Double DQN** addresses overestimation bias for more stable training. **Transformers** and **Set Transformers** enable relational reasoning over variable-size sets of items and candidates, learning which spatial patterns matter without explicit geometric programming. **Single-problem networks** specialize to individual instances, trading generalization for instance-specific performance. **Graph Neural Networks** encode explicit relational structure (support, proximity, blocking), though at higher computational cost.
+Neural network architectures for combinatorial optimization in packing have evolved from simple feedforward networks to sophisticated models incorporating attention mechanisms, graph structure, and deep reinforcement learning. **DQN** provides a foundational framework for learning placement policies via value function approximation, while **Double DQN** addresses overestimation bias for more stable training. **Transformers** and **Set Transformers** enable relational reasoning over variable-size sets of items and candidates, learning which patterns lead to efficient packings without manual feature engineering. **Single-problem networks** specialize to individual instances, trading generalization for maximum performance on specific problem configurations. **Graph Neural Networks** encode explicit relational structure through message passing, though at higher computational cost.
 
-The choice of architecture depends on the problem characteristics:
+The choice of architecture depends on the problem characteristics and available computational resources:
 
-- **Small, fixed state spaces**: MLP-based DQN
-- **Spatial grid representations**: CNN + DQN
+- **Fixed-size feature representations**: MLP-based DQN
+- **Spatial grid representations**: CNN-based architectures
 - **Variable-size item/candidate sets**: Transformer or Set Transformer
-- **Explicit relational constraints**: GNN
-- **Recurring static problems**: Single-problem specialized networks
+- **Explicit relational reasoning**: Graph Neural Networks
+- **Recurring static problems**: Instance-specialized networks
 
-Hybrid architectures combining multiple paradigms (e.g., CNN for spatial processing + Transformer for relational reasoning) represent the current state-of-the-art, balancing expressiveness, computational cost, and sample efficiency. The neurogenesis framework proposed in this thesis (Chapter 4) extends this landscape by evolving neural architectures tailored to the specific inductive biases of 3D bin packing, searching over network topologies to discover effective combinations of spatial, relational, and value-based processing.
+Hybrid architectures combining multiple paradigms (e.g., CNN for spatial processing + Transformer for relational reasoning) represent current state-of-the-art approaches, balancing expressiveness, computational cost, and sample efficiency. These architectures provide a foundation for understanding how neural networks can learn effective policies for complex combinatorial optimization problems. The specific application of these techniques to particular packing scenarios, including architectural adaptations and domain-specific innovations, is explored in subsequent implementation chapters.
