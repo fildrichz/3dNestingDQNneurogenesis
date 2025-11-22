@@ -1,10 +1,448 @@
 \section{Neural Network Architectures for Combinatorial Optimization}
 
-Neural networks have emerged as powerful function approximators for learning solution strategies in combinatorial optimization domains. Unlike traditional approaches that rely on hand-crafted heuristics and domain-specific rules, neural architectures can discover effective decision-making policies through direct interaction with problem instances. This learning-based paradigm is particularly well-suited to sequential decision-making formulations, where an agent must select a sequence of actions to optimize a cumulative objective.
+Neural networks have emerged as powerful function approximators for learning solution strategies in combinatorial optimization domains. Unlike traditional approaches that rely on hand-crafted heuristics and domain-specific rules, neural architectures can discover effective decision-making policies by learning patterns from data and experience. This data-driven paradigm enables systems to automatically extract relevant features and decision criteria from problem instances.
 
-Deep reinforcement learning (DRL) provides the primary framework for training such neural policies. In DRL, an agent learns through trial and error: it observes the current state of the problem, selects an action (e.g., which decision to make next), receives a reward signal indicating immediate progress, and updates its policy to maximize long-term cumulative reward. The neural network serves as the core function approximator, either estimating the value of state-action pairs (value-based methods) or directly parameterizing a stochastic policy over actions (policy-based methods).
+The application of neural networks to 3D bin packing involves several distinct architectural paradigms, each offering unique capabilities for processing different aspects of the problem:
 
-This section reviews the key neural network architectures employed in learning-based approaches to combinatorial optimization, with particular focus on their application to sequential placement problems. We examine how different architectural choices—from feedforward networks to attention mechanisms and graph-structured models—provide varying inductive biases for capturing problem structure and supporting generalization across problem instances.
+\begin{itemize}
+\item \textbf{Convolutional Neural Networks (CNNs)}: Process spatial representations such as heightmaps, occupancy grids, and voxelized container states to extract geometric features
+\item \textbf{Graph Neural Networks (GNNs)}: Encode relational structure among items, placement locations, and spatial relationships through message passing
+\item \textbf{Recurrent Neural Networks (RNNs)}: Model sequential dependencies in packing trajectories and temporal evolution of container states
+\item \textbf{Reinforcement Learning Architectures}: Learn placement policies through trial-and-error interaction with packing environments (e.g., Deep Q-Networks)
+\item \textbf{Attention Mechanisms}: Enable relational reasoning over variable-size sets of items and candidate positions
+\end{itemize}
+
+This section reviews these architectural families, examining how each provides distinct inductive biases for capturing problem structure. We begin with foundational architectures for spatial and relational processing, then explore reinforcement learning frameworks that leverage these architectures for sequential decision-making in packing problems.
+
+
+\subsection{Convolutional Neural Networks (CNNs)}
+
+Convolutional Neural Networks excel at processing grid-structured spatial data, making them particularly well-suited for bin packing representations that discretize the container space. CNNs automatically learn hierarchical spatial features through local receptive fields and weight sharing, enabling efficient processing of heightmaps, occupancy grids, and voxelized container states.
+
+\subsubsection{Architectural Components}
+
+A typical CNN architecture for packing consists of several key components:
+
+\paragraph{Convolutional Layers:}
+
+The fundamental operation is the 2D or 3D convolution:
+
+\begin{equation}
+(\mathbf{f} * \mathbf{w})[i, j, k] = \sum_{m,n,p} \mathbf{f}[i+m, j+n, k+p] \cdot \mathbf{w}[m, n, p]
+\end{equation}
+
+where $\mathbf{f}$ is the input feature map (e.g., heightmap or occupancy grid), $\mathbf{w}$ is a learnable filter kernel, and the output represents a detected spatial pattern. Multiple filters are applied in parallel to detect diverse features (edges, corners, filled regions, empty spaces).
+
+\paragraph{Receptive Fields and Hierarchy:}
+
+CNNs build hierarchical representations through stacked layers:
+\begin{itemize}
+\item \textbf{Early layers}: Detect local patterns (edges, corners, small obstacles)
+\item \textbf{Middle layers}: Combine local patterns into larger structures (walls, clusters of items, empty regions)
+\item \textbf{Deep layers}: Capture global context (overall container utilization, large-scale spatial organization)
+\end{itemize}
+
+\paragraph{Pooling Operations:}
+
+Pooling layers reduce spatial dimensions while retaining important features:
+
+\begin{itemize}
+\item \textbf{Max pooling}: $\text{MaxPool}(\mathbf{f})[i, j] = \max_{m,n \in W} \mathbf{f}[i+m, j+n]$
+  \\ Preserves strong activations (e.g., presence of items)
+\item \textbf{Average pooling}: Captures aggregate statistics over regions
+\end{itemize}
+
+\subsubsection{Spatial Representations for Packing}
+
+CNNs process various spatial encodings of the packing state:
+
+\paragraph{Heightmaps (2D):}
+
+A 2D grid where each cell $(x, y)$ stores the height of items at that position:
+
+\begin{equation}
+H[x, y] = \max_{z} \{\text{item occupies }(x, y, z)\}
+\end{equation}
+
+\begin{itemize}
+\item \textbf{Advantages}: Compact representation, fast to update, captures vertical structure
+\item \textbf{Limitations}: Loses information about internal voids and overhangs
+\end{itemize}
+
+\paragraph{Occupancy Grids (2D slices or 3D voxels):}
+
+Binary or multi-valued grids indicating whether each cell is occupied:
+
+\begin{equation}
+O[x, y, z] = \begin{cases}
+1 & \text{if cell occupied} \\
+0 & \text{if cell empty}
+\end{cases}
+\end{equation}
+
+\begin{itemize}
+\item \textbf{3D voxel grids}: Complete geometric representation but memory-intensive ($O(W \times D \times H)$)
+\item \textbf{2D slices}: Horizontal or vertical cross-sections provide partial 3D information with lower memory cost
+\end{itemize}
+
+\paragraph{Multi-Channel Representations:}
+
+Combine multiple spatial features as channels (analogous to RGB channels in images):
+
+\begin{itemize}
+\item Channel 1: Binary occupancy
+\item Channel 2: Item IDs or types
+\item Channel 3: Height values
+\item Channel 4: Stability indicators
+\item Channel 5: Distance to container boundaries
+\end{itemize}
+
+\subsubsection{Application to Placement Decisions}
+
+CNNs can be integrated into packing systems in several ways:
+
+\paragraph{1. Candidate Position Scoring:}
+
+Given a candidate placement location $(x, y, z)$ for the current item:
+
+\begin{enumerate}
+\item \textbf{Local patch extraction}: Extract a spatial patch centered on the candidate position (e.g., $32 \times 32 \times 32$ voxel region)
+\item \textbf{CNN processing}: Pass the patch through convolutional layers to extract spatial features
+\item \textbf{Placement quality prediction}: Final fully-connected layers output a score indicating placement quality
+\end{enumerate}
+
+\paragraph{2. Global State Encoding:}
+
+Process the entire container state to extract global features:
+
+\begin{enumerate}
+\item \textbf{Full container representation}: Heightmap or occupancy grid of the entire container
+\item \textbf{Convolutional processing}: Multiple conv layers reduce spatial dimensions while increasing feature depth
+\item \textbf{Global feature vector}: Flatten and concatenate with item features
+\item \textbf{Decision network}: Use global features to score all candidate positions
+\end{enumerate}
+
+\paragraph{3. Hybrid Spatial-Vector Approach:}
+
+\begin{itemize}
+\item \textbf{CNN branch}: Processes spatial representation $\to$ spatial features $\mathbf{f}_{\text{spatial}} \in \mathbb{R}^{d_s}$
+\item \textbf{MLP branch}: Processes item and candidate features $\to$ semantic features $\mathbf{f}_{\text{semantic}} \in \mathbb{R}^{d_m}$
+\item \textbf{Fusion}: Concatenate $[\mathbf{f}_{\text{spatial}}; \mathbf{f}_{\text{semantic}}]$ and feed to decision head
+\end{itemize}
+
+\subsubsection{Architectural Variations}
+
+\paragraph{ResNet-style Skip Connections:}
+
+For deeper networks, residual connections prevent gradient vanishing:
+
+\begin{equation}
+\mathbf{h}^{(\ell+1)} = \sigma(\text{Conv}(\mathbf{h}^{(\ell)})) + \mathbf{h}^{(\ell)}
+\end{equation}
+
+This enables training of very deep CNNs (50+ layers) that can capture complex spatial patterns.
+
+\paragraph{Dilated Convolutions:}
+
+Expand receptive fields without increasing parameters:
+
+\begin{equation}
+(\mathbf{f} *_d \mathbf{w})[i] = \sum_{m} \mathbf{f}[i + d \cdot m] \cdot \mathbf{w}[m]
+\end{equation}
+
+where $d$ is the dilation rate. Useful for capturing long-range spatial dependencies (e.g., items at opposite ends of the container).
+
+\paragraph{3D Convolutions:}
+
+For true volumetric processing:
+
+\begin{itemize}
+\item \textbf{Filters}: $\mathbf{w} \in \mathbb{R}^{k \times k \times k \times c_{\text{in}} \times c_{\text{out}}}$
+\item \textbf{Operations}: Convolve over all three spatial dimensions
+\item \textbf{Cost}: Significantly higher computational and memory requirements
+\end{itemize}
+
+\subsubsection{Advantages for Packing Problems}
+
+\begin{itemize}
+\item \textbf{Translation equivariance}: Same features are detected regardless of position in the container
+\item \textbf{Parameter efficiency}: Weight sharing dramatically reduces parameters compared to fully-connected networks
+\item \textbf{Hierarchical feature learning}: Automatically learns relevant spatial patterns from data
+\item \textbf{Natural fit for spatial domains}: Directly processes geometric representations without manual feature engineering
+\end{itemize}
+
+\subsubsection{Limitations}
+
+\begin{itemize}
+\item \textbf{Discretization requirement}: Continuous 3D space must be voxelized, leading to precision loss
+\item \textbf{Memory scaling}: 3D voxel grids scale cubically with container dimensions ($O(W \times D \times H)$)
+\item \textbf{Fixed-size inputs}: Standard CNNs require fixed spatial dimensions (addressed by adaptive pooling or fully-convolutional architectures)
+\item \textbf{Limited relational reasoning}: Primarily captures local spatial patterns; struggles with long-range dependencies between distant items
+\end{itemize}
+
+
+\subsection{Graph Neural Networks (GNNs)}
+
+Graph Neural Networks provide a natural framework for encoding the \textbf{relational structure} inherent in packing problems: items, placement locations, and spatial relationships can be explicitly represented as nodes and edges in a graph \cite{SZL+22, ZWL+24}. Unlike CNNs that impose a grid structure, GNNs work directly with arbitrary graph topologies, making them ideal for capturing pairwise relationships and constraints.
+
+\subsubsection{Graph Representation of Packing State}
+
+A packing configuration can be modeled as a graph $G = (V, E)$ where:
+
+\paragraph{Nodes $V$:}
+\begin{itemize}
+\item \textbf{Placed item nodes}: Each placed item $i$ with features encoding its geometry and position
+\item \textbf{Empty space nodes}: Available placement locations with features describing size and position
+\item \textbf{Container node}: Global state (utilization, capacity, packing progress)
+\item \textbf{Current item node}: The item currently being placed
+\end{itemize}
+
+\paragraph{Edges $E$:}
+\begin{itemize}
+\item \textbf{Support edges}: Connections between items in physical contact
+\item \textbf{Proximity edges}: Connections between nearby items or spaces
+\item \textbf{Feasibility edges}: Connections indicating valid placement options
+\item \textbf{Global edges}: Connections to container node for global context
+\end{itemize}
+
+\subsubsection{Message Passing Framework}
+
+GNNs learn node representations by iteratively \textbf{aggregating information} from neighbors. At each layer $\ell$:
+
+\begin{enumerate}
+\item \textbf{Message computation}: For each edge $(i, j)$:
+   \begin{equation}
+   \mathbf{m}_{ij}^{(\ell)} = \text{Message}(\mathbf{h}_i^{(\ell-1)}, \mathbf{h}_j^{(\ell-1)}, \mathbf{e}_{ij})
+   \end{equation}
+   where $\mathbf{h}_i$ is the hidden state of node $i$, and $\mathbf{e}_{ij}$ are edge features (e.g., distance, contact area).
+
+\item \textbf{Aggregation}: Collect messages from all neighbors:
+   \begin{equation}
+   \mathbf{a}_i^{(\ell)} = \text{Aggregate}\left(\{\mathbf{m}_{ji}^{(\ell)} : j \in \mathcal{N}(i)\}\right)
+   \end{equation}
+   Common aggregators: sum, mean, max, or attention-weighted sum.
+
+\item \textbf{Update}: Combine aggregated messages with current state:
+   \begin{equation}
+   \mathbf{h}_i^{(\ell)} = \text{Update}(\mathbf{h}_i^{(\ell-1)}, \mathbf{a}_i^{(\ell)})
+   \end{equation}
+   Typically a neural network (MLP or GRU).
+\end{enumerate}
+
+After $L$ layers, each node has a representation $\mathbf{h}_i^{(L)}$ that aggregates information from its $L$-hop neighborhood.
+
+\subsubsection{GNN Variants for Packing}
+
+\paragraph{Graph Convolutional Networks (GCN) \cite{KW17}:}
+\begin{equation}
+\mathbf{h}_i^{(\ell)} = \sigma\left(W^{(\ell)} \sum_{j \in \mathcal{N}(i) \cup \{i\}} \frac{\mathbf{h}_j^{(\ell-1)}}{\sqrt{|\mathcal{N}(i)||\mathcal{N}(j)|}}\right)
+\end{equation}
+
+Simple and efficient, but fixed aggregation (mean).
+
+\paragraph{Graph Attention Networks (GAT) \cite{VCC+18}:}
+\begin{equation}
+\mathbf{h}_i^{(\ell)} = \sigma\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} W^{(\ell)} \mathbf{h}_j^{(\ell-1)}\right)
+\end{equation}
+
+where $\alpha_{ij}$ are learned attention weights. Allows the network to focus on relevant neighbors (e.g., items that directly support the current item).
+
+\paragraph{Relational GCN (R-GCN) \cite{SKB+18}:}
+
+Uses different weight matrices for different edge types:
+\begin{equation}
+\mathbf{h}_i^{(\ell)} = \sigma\left(\sum_{r \in \mathcal{R}} \sum_{j \in \mathcal{N}_r(i)} \frac{1}{|\mathcal{N}_r(i)|} W_r^{(\ell)} \mathbf{h}_j^{(\ell-1)}\right)
+\end{equation}
+
+where $\mathcal{R}$ is the set of relation types (support, proximity, containment). Useful when different relationships have different semantics.
+
+\subsubsection{Application to Placement Selection}
+
+Given a graph representation of the current packing state:
+
+\begin{enumerate}
+\item \textbf{Graph construction}: Build $G$ from placed items, EMS candidates, and the item to place
+\item \textbf{Message passing}: Run $L$ GNN layers to compute node embeddings $\{\mathbf{h}_i^{(L)}\}$
+\item \textbf{Readout}:
+  \begin{itemize}
+  \item \textbf{Node-level}: Score each EMS node: $Q(s, a_j) = \text{MLP}(\mathbf{h}_j^{(L)})$
+  \item \textbf{Graph-level}: Pool all EMS embeddings and decode: $Q(s, a) = \text{MLP}(\text{Pool}(\{\mathbf{h}_j^{(L)}\}))$
+  \end{itemize}
+\end{enumerate}
+
+\subsubsection{Advantages for Packing Problems}
+
+\begin{itemize}
+\item \textbf{Explicit relational structure}: Encodes support, adjacency, and blocking relationships directly
+\item \textbf{Inductive bias}: Message passing naturally captures spatial dependencies (e.g., ``supported items depend on supporters'')
+\item \textbf{Interpretability}: Attention weights or message values reveal which relationships drive decisions
+\item \textbf{Variable-size graphs}: Handles varying numbers of items and placement candidates without architectural changes
+\end{itemize}
+
+\subsubsection{Challenges}
+
+\begin{itemize}
+\item \textbf{Graph construction overhead}: Building and updating the graph at each packing step is computationally expensive
+\item \textbf{Dynamic graphs}: Adding/removing nodes (items/EMS) requires re-indexing and re-initializing embeddings
+\item \textbf{Scalability}: Large packing problems (100s of items) lead to dense graphs with $O(n^2)$ edges
+\item \textbf{Limited adoption}: GNNs for bin packing remain less common than CNNs or Transformers, with fewer established architectures
+\end{itemize}
+
+
+\subsection{Recurrent Neural Networks (RNNs)}
+
+Recurrent Neural Networks excel at processing \textbf{sequential data} by maintaining an internal hidden state that evolves as the network processes elements one at a time. In packing problems, RNNs can model the temporal dependencies in placement sequences: each placement decision affects the container state and constrains future options, creating a sequential decision trajectory.
+
+\subsubsection{Core RNN Architecture}
+
+The fundamental RNN update equations are:
+
+\begin{align}
+\mathbf{h}_t &= \sigma(\mathbf{W}_{hh} \mathbf{h}_{t-1} + \mathbf{W}_{xh} \mathbf{x}_t + \mathbf{b}_h) \\
+\mathbf{y}_t &= \mathbf{W}_{hy} \mathbf{h}_t + \mathbf{b}_y
+\end{align}
+
+where:
+\begin{itemize}
+\item $\mathbf{x}_t$: Input at time step $t$ (e.g., current item and container features)
+\item $\mathbf{h}_t$: Hidden state capturing history of previous placements
+\item $\mathbf{y}_t$: Output (e.g., placement decision or value estimate)
+\item $\mathbf{W}_{hh}, \mathbf{W}_{xh}, \mathbf{W}_{hy}$: Learnable weight matrices
+\end{itemize}
+
+The hidden state $\mathbf{h}_t$ serves as a \textbf{memory} of the packing trajectory, encoding which items have been placed and how the container state has evolved.
+
+\subsubsection{Long Short-Term Memory (LSTM)}
+
+Standard RNNs suffer from \textbf{vanishing gradients}, making it difficult to learn long-range dependencies. LSTMs address this through a gating mechanism that selectively preserves and updates information:
+
+\begin{align}
+\mathbf{f}_t &= \sigma(\mathbf{W}_f [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_f) \quad \text{(forget gate)} \\
+\mathbf{i}_t &= \sigma(\mathbf{W}_i [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_i) \quad \text{(input gate)} \\
+\tilde{\mathbf{c}}_t &= \tanh(\mathbf{W}_c [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_c) \quad \text{(candidate cell state)} \\
+\mathbf{c}_t &= \mathbf{f}_t \odot \mathbf{c}_{t-1} + \mathbf{i}_t \odot \tilde{\mathbf{c}}_t \quad \text{(cell state update)} \\
+\mathbf{o}_t &= \sigma(\mathbf{W}_o [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_o) \quad \text{(output gate)} \\
+\mathbf{h}_t &= \mathbf{o}_t \odot \tanh(\mathbf{c}_t) \quad \text{(hidden state)}
+\end{align}
+
+where $\odot$ denotes element-wise multiplication. The gates control:
+\begin{itemize}
+\item \textbf{Forget gate $\mathbf{f}_t$}: What to discard from previous cell state (e.g., forget items from early placements)
+\item \textbf{Input gate $\mathbf{i}_t$}: What new information to store (e.g., update container utilization)
+\item \textbf{Output gate $\mathbf{o}_t$}: What to expose from the cell state
+\end{itemize}
+
+The cell state $\mathbf{c}_t$ acts as a \textbf{long-term memory} that can propagate information across many time steps.
+
+\subsubsection{Gated Recurrent Units (GRU)}
+
+GRUs simplify the LSTM architecture while retaining similar performance:
+
+\begin{align}
+\mathbf{z}_t &= \sigma(\mathbf{W}_z [\mathbf{h}_{t-1}, \mathbf{x}_t]) \quad \text{(update gate)} \\
+\mathbf{r}_t &= \sigma(\mathbf{W}_r [\mathbf{h}_{t-1}, \mathbf{x}_t]) \quad \text{(reset gate)} \\
+\tilde{\mathbf{h}}_t &= \tanh(\mathbf{W}_h [\mathbf{r}_t \odot \mathbf{h}_{t-1}, \mathbf{x}_t]) \quad \text{(candidate hidden state)} \\
+\mathbf{h}_t &= (1 - \mathbf{z}_t) \odot \mathbf{h}_{t-1} + \mathbf{z}_t \odot \tilde{\mathbf{h}}_t \quad \text{(hidden state)}
+\end{align}
+
+GRUs have fewer parameters than LSTMs (no separate cell state), making them faster to train while still handling long-range dependencies.
+
+\subsubsection{Application to Packing Sequences}
+
+RNNs model the packing process as a sequence of decisions:
+
+\paragraph{1. Sequential Item Encoding:}
+
+Process the item sequence $\{\mathbf{v}_1, \mathbf{v}_2, \ldots, \mathbf{v}_n\}$ through an RNN:
+
+\begin{equation}
+\mathbf{h}_i = \text{RNN}(\mathbf{v}_i, \mathbf{h}_{i-1})
+\end{equation}
+
+The final hidden state $\mathbf{h}_n$ encodes the entire item set, capturing ordering and composition.
+
+\paragraph{2. Packing Trajectory Modeling:}
+
+At each placement step $t$:
+\begin{enumerate}
+\item \textbf{Input}: Current container state features and item to place: $\mathbf{x}_t = [\mathbf{s}_{\text{container}}, \mathbf{v}_{\text{current}}]$
+\item \textbf{Hidden state update}: $\mathbf{h}_t = \text{LSTM}(\mathbf{x}_t, \mathbf{h}_{t-1})$
+\item \textbf{Decision}: Use $\mathbf{h}_t$ to score candidate placements or directly output a placement decision
+\end{enumerate}
+
+The hidden state $\mathbf{h}_t$ captures:
+\begin{itemize}
+\item \textbf{Placement history}: Which items have been placed and where
+\item \textbf{Container evolution}: How utilization and available space have changed
+\item \textbf{Sequential patterns}: Regularities in successful packing trajectories
+\end{itemize}
+
+\paragraph{3. Encoder-Decoder Architecture:}
+
+\begin{itemize}
+\item \textbf{Encoder RNN}: Processes all items to produce a context vector $\mathbf{c} = \mathbf{h}_n$
+\item \textbf{Decoder RNN}: Generates placement sequence conditioned on $\mathbf{c}$:
+  \begin{equation}
+  \mathbf{h}_t^{\text{dec}} = \text{RNN}(\mathbf{c}, \mathbf{h}_{t-1}^{\text{dec}})
+  \end{equation}
+\item \textbf{Attention mechanism}: Decoder can attend to encoder hidden states to focus on relevant items
+\end{itemize}
+
+\paragraph{4. Bidirectional RNNs:}
+
+For offline packing (all items known in advance), process the item sequence in both directions:
+
+\begin{align}
+\overrightarrow{\mathbf{h}}_i &= \text{RNN}(\mathbf{v}_i, \overrightarrow{\mathbf{h}}_{i-1}) \quad \text{(forward)} \\
+\overleftarrow{\mathbf{h}}_i &= \text{RNN}(\mathbf{v}_i, \overleftarrow{\mathbf{h}}_{i+1}) \quad \text{(backward)} \\
+\mathbf{h}_i &= [\overrightarrow{\mathbf{h}}_i; \overleftarrow{\mathbf{h}}_i] \quad \text{(concatenate)}
+\end{align}
+
+This captures both past and future context for each item, improving placement decisions.
+
+\subsubsection{Advantages for Packing Problems}
+
+\begin{itemize}
+\item \textbf{Temporal modeling}: Naturally captures sequential dependencies in packing trajectories
+\item \textbf{Variable-length sequences}: Handles varying numbers of items without architectural changes
+\item \textbf{Memory of history}: Hidden state maintains context of previous placements
+\item \textbf{Order-aware}: Explicitly models the importance of item ordering (unlike order-invariant architectures)
+\end{itemize}
+
+\subsubsection{Limitations}
+
+\begin{itemize}
+\item \textbf{Sequential processing}: Cannot parallelize over time steps, slower than Transformers for long sequences
+\item \textbf{Limited long-range dependencies}: Despite LSTM/GRU improvements, still struggles with very long sequences (100+ items)
+\item \textbf{Order sensitivity}: Performance depends on item ordering, may need to learn ordering jointly
+\item \textbf{Gradient instability}: Training deep RNNs can be challenging, especially for long sequences
+\end{itemize}
+
+\subsubsection{Comparison with Transformers}
+
+While both RNNs and Transformers handle sequences, they differ fundamentally:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|p{5.5cm}|p{5.5cm}|}
+\hline
+\textbf{Property} & \textbf{RNN/LSTM} & \textbf{Transformer} \\
+\hline
+Processing & Sequential (one step at a time) & Parallel (all positions simultaneously) \\
+\hline
+Position encoding & Implicit (via recurrence) & Explicit (positional embeddings) \\
+\hline
+Long-range dependencies & Limited (vanishing gradients) & Excellent (direct attention) \\
+\hline
+Computational cost & $O(n \cdot d^2)$ & $O(n^2 \cdot d)$ \\
+\hline
+Training speed & Slower (sequential) & Faster (parallelizable) \\
+\hline
+Inference speed & Fast for short sequences & Fast for any length \\
+\hline
+\end{tabular}
+\end{table}
+
 
 \subsection{Deep Q-Networks (DQN)}
 
@@ -349,177 +787,6 @@ The seeds attend to the entire input set, producing $k$ summary vectors. For $k=
 \end{itemize}
 
 
-\subsection{Single-Problem Neural Networks}
-
-Most neural approaches aim to learn \textbf{general policies} that generalize across problem instances. An alternative paradigm is \textbf{single-problem learning}: training a neural network (or evolving an architecture) specifically for \textbf{one fixed problem instance} \cite{ACG21, VMP20}.
-
-\subsubsection{Motivation}
-
-For recurring packing tasks (e.g., warehouses packing the same set of product SKUs daily, or shipping containers with similar item distributions), a specialized network may outperform a general one by exploiting instance-specific structure.
-
-\subsubsection{Training Paradigm}
-
-Given a fixed bin packing instance $I = (W, D, H, \{v_1, \ldots, v_n\})$:
-
-\begin{enumerate}
-\item \textbf{Network initialization}: Random weights or a pre-trained general model
-\item \textbf{Episode generation}: Sample random item orderings (or learn the ordering jointly)
-\item \textbf{Reinforcement learning}: Train via DQN, policy gradient, or evolutionary methods to maximize utilization on $I$
-\item \textbf{Convergence}: Train until performance plateaus (often 1000s of episodes)
-\end{enumerate}
-
-\paragraph{Key Difference from General Learning:}
-
-\begin{itemize}
-\item \textbf{No generalization pressure}: Network can overfit to $I$, learning idiosyncrasies (e.g., ``item 3 always goes in the bottom-left corner'')
-\item \textbf{Faster convergence}: Smaller effective hypothesis space $\to$ quicker training
-\item \textbf{Optimal for static problems}: If the item set never changes, generalization is unnecessary
-\end{itemize}
-
-\subsubsection{Use Cases}
-
-\begin{enumerate}
-\item \textbf{Static packing problems}: Manufacturing with fixed product lines
-\item \textbf{Warm-starting for similar problems}: Train on a representative instance, then fine-tune for variations
-\item \textbf{Benchmarking}: Measure the performance ceiling of neural approaches on standard test instances
-\end{enumerate}
-
-\subsubsection{Limitations}
-
-\begin{itemize}
-\item \textbf{No generalization}: Catastrophic failure on different item sets or container sizes
-\item \textbf{Training cost}: Full RL training per instance can be expensive
-\item \textbf{Overfitting risk}: Network may exploit spurious correlations specific to $I$ (e.g., item ordering artifacts)
-\end{itemize}
-
-
-\subsection{Graph Neural Networks (GNNs)}
-
-Graph Neural Networks provide a natural framework for encoding the \textbf{relational structure} inherent in packing problems: items, placement locations, and spatial relationships can be explicitly represented as nodes and edges in a graph \cite{SZL+22, ZWL+24}.
-
-\subsubsection{Graph Representation of Packing State}
-
-A packing configuration can be modeled as a graph $G = (V, E)$ where:
-
-\paragraph{Nodes $V$:}
-\begin{itemize}
-\item \textbf{Placed item nodes}: Each placed item $i$ with features encoding its geometry and position
-\item \textbf{Empty space nodes}: Available placement locations with features describing size and position
-\item \textbf{Container node}: Global state (utilization, capacity, packing progress)
-\item \textbf{Current item node}: The item currently being placed
-\end{itemize}
-
-\paragraph{Edges $E$:}
-\begin{itemize}
-\item \textbf{Support edges}: Connections between items in physical contact
-\item \textbf{Proximity edges}: Connections between nearby items or spaces
-\item \textbf{Feasibility edges}: Connections indicating valid placement options
-\item \textbf{Global edges}: Connections to container node for global context
-\end{itemize}
-
-\subsubsection{Message Passing Framework}
-
-GNNs learn node representations by iteratively \textbf{aggregating information} from neighbors. At each layer $\ell$:
-
-\begin{enumerate}
-\item \textbf{Message computation}: For each edge $(i, j)$:
-   \begin{equation}
-   \mathbf{m}_{ij}^{(\ell)} = \text{Message}(\mathbf{h}_i^{(\ell-1)}, \mathbf{h}_j^{(\ell-1)}, \mathbf{e}_{ij})
-   \end{equation}
-   where $\mathbf{h}_i$ is the hidden state of node $i$, and $\mathbf{e}_{ij}$ are edge features (e.g., distance, contact area).
-
-\item \textbf{Aggregation}: Collect messages from all neighbors:
-   \begin{equation}
-   \mathbf{a}_i^{(\ell)} = \text{Aggregate}\left(\{\mathbf{m}_{ji}^{(\ell)} : j \in \mathcal{N}(i)\}\right)
-   \end{equation}
-   Common aggregators: sum, mean, max, or attention-weighted sum.
-
-\item \textbf{Update}: Combine aggregated messages with current state:
-   \begin{equation}
-   \mathbf{h}_i^{(\ell)} = \text{Update}(\mathbf{h}_i^{(\ell-1)}, \mathbf{a}_i^{(\ell)})
-   \end{equation}
-   Typically a neural network (MLP or GRU).
-\end{enumerate}
-
-After $L$ layers, each node has a representation $\mathbf{h}_i^{(L)}$ that aggregates information from its $L$-hop neighborhood.
-
-\subsubsection{GNN Variants for Packing}
-
-\paragraph{Graph Convolutional Networks (GCN) \cite{KW17}:}
-\begin{equation}
-\mathbf{h}_i^{(\ell)} = \sigma\left(W^{(\ell)} \sum_{j \in \mathcal{N}(i) \cup \{i\}} \frac{\mathbf{h}_j^{(\ell-1)}}{\sqrt{|\mathcal{N}(i)||\mathcal{N}(j)|}}\right)
-\end{equation}
-
-Simple and efficient, but fixed aggregation (mean).
-
-\paragraph{Graph Attention Networks (GAT) \cite{VCC+18}:}
-\begin{equation}
-\mathbf{h}_i^{(\ell)} = \sigma\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} W^{(\ell)} \mathbf{h}_j^{(\ell-1)}\right)
-\end{equation}
-
-where $\alpha_{ij}$ are learned attention weights. Allows the network to focus on relevant neighbors (e.g., items that directly support the current item).
-
-\paragraph{Relational GCN (R-GCN) \cite{SKB+18}:}
-
-Uses different weight matrices for different edge types:
-\begin{equation}
-\mathbf{h}_i^{(\ell)} = \sigma\left(\sum_{r \in \mathcal{R}} \sum_{j \in \mathcal{N}_r(i)} \frac{1}{|\mathcal{N}_r(i)|} W_r^{(\ell)} \mathbf{h}_j^{(\ell-1)}\right)
-\end{equation}
-
-where $\mathcal{R}$ is the set of relation types (support, proximity, containment). Useful when different relationships have different semantics.
-
-\subsubsection{Application to Placement Selection}
-
-Given a graph representation of the current packing state:
-
-\begin{enumerate}
-\item \textbf{Graph construction}: Build $G$ from placed items, EMS candidates, and the item to place
-\item \textbf{Message passing}: Run $L$ GNN layers to compute node embeddings $\{\mathbf{h}_i^{(L)}\}$
-\item \textbf{Readout}:
-  \begin{itemize}
-  \item \textbf{Node-level}: Score each EMS node: $Q(s, a_j) = \text{MLP}(\mathbf{h}_j^{(L)})$
-  \item \textbf{Graph-level}: Pool all EMS embeddings and decode: $Q(s, a) = \text{MLP}(\text{Pool}(\{\mathbf{h}_j^{(L)}\}))$
-  \end{itemize}
-\end{enumerate}
-
-\paragraph{Advantages:}
-
-\begin{itemize}
-\item \textbf{Explicit relational structure}: Encodes support, adjacency, and blocking relationships directly
-\item \textbf{Inductive bias}: Message passing naturally captures spatial dependencies (e.g., ``supported items depend on supporters'')
-\item \textbf{Interpretability}: Attention weights or message values reveal which relationships drive decisions
-\end{itemize}
-
-\paragraph{Challenges:}
-
-\begin{itemize}
-\item \textbf{Graph construction overhead}: Building and updating the graph at each packing step is computationally expensive
-\item \textbf{Dynamic graphs}: Adding/removing nodes (items/EMS) requires re-indexing and re-initializing embeddings
-\item \textbf{Scalability}: Large packing problems (100s of items) lead to dense graphs with $O(n^2)$ edges
-\item \textbf{Limited adoption}: GNNs for bin packing remain less common than CNNs or Transformers, with fewer established architectures
-\end{itemize}
-
-\subsubsection{Comparison with Other Architectures}
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{|l|l|l|l|l|}
-\hline
-\textbf{Architecture} & \textbf{Relational} & \textbf{Spatial} & \textbf{Complexity} & \textbf{Adoption} \\
-\hline
-\textbf{MLP} & None & None & $O(d)$ & High \\
-\hline
-\textbf{CNN} & Local & Grid-based & $O(WHD)$ & Medium \\
-\hline
-\textbf{Transformer} & Global & Learned & $O(n^2)$ & Growing \\
-\hline
-\textbf{GNN} & Explicit & Graph & $O(n^2)$ & Low \\
-\hline
-\end{tabular}
-\end{table}
-
-
 \subsection{Deep Reinforcement Learning Context}
 
 The neural architectures discussed above are typically integrated within \textbf{deep reinforcement learning (DRL)} frameworks, where the network serves as a function approximator for value functions or policies. This section briefly contextualizes the role of neural networks in the broader DRL pipeline.
@@ -593,16 +860,49 @@ This hybrid approach leverages the strengths of both learned and hand-crafted me
 
 \subsection{Summary}
 
-Neural network architectures for combinatorial optimization in packing have evolved from simple feedforward networks to sophisticated models incorporating attention mechanisms, graph structure, and deep reinforcement learning. \textbf{DQN} provides a foundational framework for learning placement policies via value function approximation, while \textbf{Double DQN} addresses overestimation bias for more stable training. \textbf{Transformers} and \textbf{Set Transformers} enable relational reasoning over variable-size sets of items and candidates, learning which patterns lead to efficient packings without manual feature engineering. \textbf{Single-problem networks} specialize to individual instances, trading generalization for maximum performance on specific problem configurations. \textbf{Graph Neural Networks} encode explicit relational structure through message passing, though at higher computational cost.
+Neural network architectures for 3D bin packing span multiple paradigms, each offering distinct capabilities for processing geometric, relational, and sequential aspects of the problem. This section reviewed foundational architectures before examining their integration with reinforcement learning frameworks.
 
-The choice of architecture depends on the problem characteristics and available computational resources:
+\paragraph{Foundational Architectures:}
 
 \begin{itemize}
-\item \textbf{Fixed-size feature representations}: MLP-based DQN
-\item \textbf{Spatial grid representations}: CNN-based architectures
-\item \textbf{Variable-size item/candidate sets}: Transformer or Set Transformer
-\item \textbf{Explicit relational reasoning}: Graph Neural Networks
-\item \textbf{Recurring static problems}: Instance-specialized networks
+\item \textbf{Convolutional Neural Networks (CNNs)}: Excel at processing spatial representations (heightmaps, occupancy grids, voxelized containers) through hierarchical feature learning. CNNs provide translation equivariance and parameter efficiency but require discretization and struggle with long-range relational reasoning.
+
+\item \textbf{Graph Neural Networks (GNNs)}: Explicitly encode relational structure through message passing over graphs representing items, placements, and spatial relationships. GNNs naturally capture support dependencies and constraints but incur graph construction overhead and scalability challenges.
+
+\item \textbf{Recurrent Neural Networks (RNNs)}: Model sequential dependencies in packing trajectories through internal hidden states. LSTM and GRU variants handle long-range temporal dependencies, making them suitable for tracking placement history and container evolution, though they process sequentially and cannot parallelize.
 \end{itemize}
 
-Hybrid architectures combining multiple paradigms (e.g., CNN for spatial processing + Transformer for relational reasoning) represent current state-of-the-art approaches, balancing expressiveness, computational cost, and sample efficiency. These architectures provide a foundation for understanding how neural networks can learn effective policies for complex combinatorial optimization problems. The specific application of these techniques to particular packing scenarios, including architectural adaptations and domain-specific innovations, is explored in subsequent implementation chapters.
+\paragraph{Reinforcement Learning Integration:}
+
+These foundational architectures are typically integrated within deep reinforcement learning frameworks:
+
+\begin{itemize}
+\item \textbf{Deep Q-Networks (DQN)}: Learn value functions $Q(s, a)$ for placement decisions, using experience replay and target networks for stable training. DQN can incorporate any of the above architectures as its function approximator.
+
+\item \textbf{Double DQN}: Addresses overestimation bias through decoupled action selection and evaluation, providing more stable learning in large action spaces.
+
+\item \textbf{Transformers and Set Transformers}: Enable permutation-invariant relational reasoning over variable-size sets of items and candidates, learning attention patterns that identify compatible placements without manual feature engineering.
+\end{itemize}
+
+\paragraph{Architecture Selection Guidelines:}
+
+The choice of architecture depends on problem characteristics and computational constraints:
+
+\begin{itemize}
+\item \textbf{Spatial grid representations}: CNN-based architectures for heightmaps and voxel grids
+\item \textbf{Explicit relational constraints}: Graph Neural Networks for support and adjacency relationships
+\item \textbf{Sequential placement trajectories}: RNN/LSTM for temporal dependency modeling
+\item \textbf{Variable-size item/candidate sets}: Transformer or Set Transformer architectures
+\item \textbf{Fixed-size feature vectors}: MLP-based networks within DQN framework
+\end{itemize}
+
+\paragraph{State-of-the-Art Approaches:}
+
+Modern packing systems increasingly employ \textbf{hybrid architectures} that combine multiple paradigms to leverage complementary strengths:
+\begin{itemize}
+\item CNN for spatial feature extraction + Transformer for relational reasoning
+\item GNN for constraint encoding + DQN for reinforcement learning
+\item RNN for sequence modeling + Attention for candidate selection
+\end{itemize}
+
+These hybrid approaches balance expressiveness, computational cost, and sample efficiency, representing the current frontier in learned packing methods. The specific instantiation of these architectures for particular packing scenarios, including training procedures, hyperparameter choices, and domain-specific adaptations, is explored in subsequent implementation chapters.
