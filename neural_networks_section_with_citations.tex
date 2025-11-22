@@ -303,3 +303,165 @@ Set transformers are particularly relevant for combinatorial optimization becaus
 Transformers have been successfully applied to routing problems (TSP, VRP), scheduling, and packing tasks. Their ability to model long-range dependencies and attend to all elements simultaneously makes them effective for problems where global context is important. For packing problems, transformers can attend over all items and candidate placements, learning complex relationships between geometric configurations.
 
 In the context of bin packing, Xiong et al.~\cite{xiong2024packing} use a Packing Transformer to model interactions between items and empty maximal spaces, demonstrating that attention mechanisms can capture spatial relationships relevant for placement decisions.
+
+\subsection{Neural Architecture Search}
+
+Neural Architecture Search (NAS) addresses the fundamental challenge of designing optimal neural network architectures for specific tasks. Rather than manually engineering network topologies, NAS employs automated methods to explore the space of possible architectures, discovering configurations that may surpass human-designed networks. This section traces the evolution of NAS from genetic algorithm-based approaches to modern gradient-based and reinforcement learning methods.
+
+\subsubsection{Genetic Algorithms for Neural Network Optimization}
+
+One of the foundational approaches to automated neural network design employs genetic algorithms to evolve both network topology and connection weights. Ding et al.~\cite{ding2010genetic} present a comprehensive framework for using genetic algorithms to optimize artificial neural networks, establishing key principles that influenced subsequent NAS research.
+
+\textbf{Candidate Representation.} The genetic algorithm represents neural network candidates through a dual encoding scheme that captures both structural and parametric aspects:
+
+\begin{enumerate}
+\item \textbf{Connectivity Encoding:} The network topology is encoded as a binary connectivity matrix $\mathbf{C} \in \{0,1\}^{n \times n}$, where $n$ is the maximum number of neurons. Entry $C_{ij} = 1$ indicates a connection from neuron $i$ to neuron $j$, while $C_{ij} = 0$ indicates no connection. This representation naturally supports variable-topology networks and allows evolution to determine the optimal number of hidden neurons and their connectivity patterns.
+
+\item \textbf{Weight Encoding:} Connection weights are encoded as real-valued genes $\mathbf{W} \in \mathbb{R}^{n \times n}$, where $W_{ij}$ represents the weight of the connection from neuron $i$ to neuron $j$. Only weights corresponding to active connections ($C_{ij} = 1$) are meaningful and subject to evolution.
+
+\item \textbf{Combined Chromosome:} The complete genotype combines both encodings into a single chromosome representation: $\mathbf{G} = [\mathbf{C}, \mathbf{W}]$. This allows simultaneous evolution of network structure and parameters, enabling co-adaptation between topology and weights.
+\end{enumerate}
+
+\textbf{Evolutionary Operators.} The genetic algorithm evolves the population of network candidates through standard evolutionary operations adapted for neural network optimization:
+
+\textbf{Fitness Evaluation:} Each candidate network is evaluated on the training task, with fitness typically defined as classification accuracy or the inverse of mean squared error:
+\begin{equation}
+f(\mathbf{G}) = \frac{1}{1 + \text{MSE}(\mathbf{G})}
+\end{equation}
+where $\text{MSE}(\mathbf{G})$ is the mean squared error of the network encoded by genotype $\mathbf{G}$ on the training set.
+
+\textbf{Selection:} Parent candidates are selected for reproduction using tournament selection or fitness-proportionate selection. Tournament selection randomly samples $k$ individuals and selects the fittest, providing selection pressure while maintaining diversity:
+\begin{equation}
+\text{selected} = \arg\max_{\mathbf{G}_i \in \text{Tournament}} f(\mathbf{G}_i)
+\end{equation}
+
+\textbf{Crossover:} Two parent networks exchange genetic material to produce offspring. For the structural component, single-point or uniform crossover operates on the connectivity matrix. For weights, arithmetic crossover computes:
+\begin{equation}
+W_{ij}^{\text{child}} = \alpha W_{ij}^{\text{parent1}} + (1-\alpha) W_{ij}^{\text{parent2}}
+\end{equation}
+where $\alpha \in [0,1]$ is a random mixing coefficient.
+
+\textbf{Mutation:} Random modifications introduce variation. Structural mutation randomly adds or removes connections by flipping bits in the connectivity matrix with probability $p_m$. Weight mutation applies Gaussian noise:
+\begin{equation}
+W_{ij}^{\text{new}} = W_{ij}^{\text{old}} + \mathcal{N}(0, \sigma^2)
+\end{equation}
+where $\sigma$ controls the magnitude of weight perturbations.
+
+\textbf{Evolutionary Process.} The algorithm proceeds iteratively:
+
+\begin{enumerate}
+\item Initialize a population of random network topologies with random weights
+\item Evaluate the fitness of each individual by training and testing the network
+\item Select parents based on fitness
+\item Apply crossover and mutation to generate offspring
+\item Replace low-fitness individuals with offspring
+\item Repeat until convergence or maximum generations reached
+\end{enumerate}
+
+This approach demonstrates several advantages: it can discover unconventional topologies not constrained by layer-wise assumptions, it automatically determines appropriate network size, and it optimizes both structure and parameters simultaneously. However, fitness evaluation requires full network training, making the process computationally expensive.
+
+\subsubsection{NeuroEvolution of Augmenting Topologies (NEAT)}
+
+Stanley and Miikkulainen~\cite{stanley2002evolving} introduced NEAT, which refines genetic algorithm-based neural evolution through three key innovations that address fundamental challenges in topology optimization.
+
+\textbf{Historical Markings for Crossover.} NEAT assigns a unique global innovation number to each new gene (connection) that appears through mutation. When crossing over two parent networks, genes with matching innovation numbers are aligned and combined, while disjoint and excess genes are inherited from the more fit parent. This historical marking scheme solves the competing conventions problem, where functionally equivalent networks may have different genetic representations that produce poor offspring when crossed over naively.
+
+\textbf{Speciation for Topology Protection.} The algorithm explicitly protects topological innovation through speciation. Individuals are grouped into species based on structural similarity, measured by a compatibility distance:
+\begin{equation}
+\delta(\mathbf{G}_1, \mathbf{G}_2) = c_1 \frac{E}{N} + c_2 \frac{D}{N} + c_3 \cdot \overline{W}
+\end{equation}
+where $E$ is the number of excess genes, $D$ is the number of disjoint genes, $\overline{W}$ is the average weight difference of matching genes, $N$ normalizes for genome size, and $c_1, c_2, c_3$ are weighting coefficients.
+
+Fitness sharing adjusts individual fitness based on species size, protecting novel structures from being eliminated before they can optimize:
+\begin{equation}
+f'(\mathbf{G}_i) = \frac{f(\mathbf{G}_i)}{\sum_{j \in \text{species}(i)} \text{sh}(\delta(\mathbf{G}_i, \mathbf{G}_j))}
+\end{equation}
+where $\text{sh}(\delta)$ is a sharing function that equals 1 for conspecifics and 0 otherwise.
+
+\textbf{Incremental Growth from Minimal Structure.} NEAT begins with a population of minimal networks (only input and output nodes, fully connected) and incrementally complexifies through mutation. Two structural mutations are possible: adding a connection between previously unconnected nodes, or splitting an existing connection by inserting a new hidden node. This complexification strategy enables the algorithm to search through increasingly complex topologies while maintaining a bias toward simpler solutions.
+
+The incremental approach provides several benefits: it starts in a low-dimensional search space and only increases dimensionality when necessary; it naturally implements a form of regularization favoring smaller networks; and it allows the discovery of optimal complexity for each specific task.
+
+\subsubsection{Large-Scale NAS with Reinforcement Learning}
+
+As deep learning scaled to larger networks and datasets, NAS methods evolved to handle more complex search spaces. Zoph and Le~\cite{zoph2017neural} pioneered the use of reinforcement learning to search for convolutional architectures on large-scale image classification tasks.
+
+\textbf{Controller RNN.} A recurrent neural network controller generates variable-length architecture descriptions by sequentially outputting architectural hyperparameters. For convolutional networks, the controller specifies for each layer: filter height, filter width, stride height, stride width, and number of filters. The output sequence of the controller defines a complete architecture specification.
+
+The controller is trained with reinforcement learning to maximize expected accuracy on a validation set:
+\begin{equation}
+J(\theta_c) = \mathbb{E}_{a \sim \pi(a;\theta_c)}[R(a)]
+\end{equation}
+where $\theta_c$ are the controller parameters, $a$ is a sampled architecture, and $R(a)$ is the validation accuracy of the child network trained on the target task.
+
+\textbf{Policy Gradient Optimization.} Since the reward signal (validation accuracy) is non-differentiable with respect to the controller parameters, the REINFORCE algorithm provides gradient estimates:
+\begin{equation}
+\nabla_{\theta_c} J(\theta_c) = \mathbb{E}_{a \sim \pi(a;\theta_c)}[R(a) \nabla_{\theta_c} \log \pi(a;\theta_c)]
+\end{equation}
+
+In practice, a baseline $b$ is subtracted from the reward to reduce variance:
+\begin{equation}
+\nabla_{\theta_c} J(\theta_c) \approx \frac{1}{m}\sum_{i=1}^m [(R(a_i) - b) \nabla_{\theta_c} \log \pi(a_i;\theta_c)]
+\end{equation}
+where $m$ sampled architectures are evaluated in each iteration, and $b$ is the exponential moving average of previous rewards.
+
+This approach discovered architectures that matched or exceeded the best human-designed networks on CIFAR-10 and achieved competitive results on ImageNet. However, the computational cost is substantial: the search requires training thousands of networks to convergence, consuming thousands of GPU days.
+
+\subsubsection{Efficient NAS with Weight Sharing}
+
+To address computational costs, Pham et al.~\cite{pham2018efficient} introduced ENAS (Efficient Neural Architecture Search), which achieves dramatic speedups through weight sharing among child models.
+
+\textbf{Supergraph Construction.} Rather than training each candidate architecture from scratch, ENAS constructs a large supergraph that encompasses all architectures in the search space. Different architectures correspond to different subgraphs of this supergraph. The weights of the supergraph are shared across all child models, so discovering a good architecture reduces to finding a well-performing subgraph of the trained supergraph.
+
+\textbf{Joint Training.} The search alternates between:
+\begin{enumerate}
+\item Training the shared weights $\mathbf{w}$ to minimize the expected loss over sampled architectures:
+\begin{equation}
+\mathcal{L}_{\text{train}}(\mathbf{w}) = \mathbb{E}_{a \sim \pi(a;\theta_c)}[\mathcal{L}(a, \mathbf{w})]
+\end{equation}
+
+\item Training the controller parameters $\theta_c$ via policy gradient to maximize expected reward:
+\begin{equation}
+\nabla_{\theta_c} J(\theta_c) = \mathbb{E}_{a \sim \pi(a;\theta_c)}[(R(a,\mathbf{w}) - b) \nabla_{\theta_c} \log \pi(a;\theta_c)]
+\end{equation}
+\end{enumerate}
+
+This weight-sharing strategy reduces search time from thousands of GPU hours to less than a single GPU day, making NAS practical for resource-constrained settings. The discovered architectures achieve competitive performance while requiring orders of magnitude less computational resources for the search process.
+
+\subsubsection{Gradient-Based Architecture Search (DARTS)}
+
+Liu et al.~\cite{liu2019darts} introduced a fundamentally different approach that makes the architecture search space continuous, enabling gradient-based optimization.
+
+\textbf{Continuous Relaxation.} Instead of selecting a single operation for each edge in the computational graph, DARTS relaxes the categorical choice to a softmax over all possible operations. For edge $(i,j)$ connecting nodes $i$ and $j$, the mixed operation is:
+\begin{equation}
+\bar{o}^{(i,j)}(\mathbf{x}) = \sum_{o \in \mathcal{O}} \frac{\exp(\alpha_o^{(i,j)})}{\sum_{o' \in \mathcal{O}} \exp(\alpha_{o'}^{(i,j)})} o(\mathbf{x})
+\end{equation}
+where $\mathcal{O}$ is the set of candidate operations (convolutions of different sizes, pooling, skip connections, etc.), $\mathbf{x}$ is the input to the edge, and $\boldsymbol{\alpha}^{(i,j)}$ are architecture parameters that weight each operation.
+
+\textbf{Bilevel Optimization.} Architecture search becomes a bilevel optimization problem:
+\begin{align}
+\min_{\boldsymbol{\alpha}} \quad & \mathcal{L}_{\text{val}}(\mathbf{w}^*(\boldsymbol{\alpha}), \boldsymbol{\alpha}) \\
+\text{s.t.} \quad & \mathbf{w}^*(\boldsymbol{\alpha}) = \arg\min_{\mathbf{w}} \mathcal{L}_{\text{train}}(\mathbf{w}, \boldsymbol{\alpha})
+\end{align}
+
+The inner optimization finds the optimal weights $\mathbf{w}^*$ for a given architecture $\boldsymbol{\alpha}$, while the outer optimization updates the architecture parameters to minimize validation loss.
+
+\textbf{Approximate Gradient.} Computing the exact gradient $\nabla_{\boldsymbol{\alpha}} \mathcal{L}_{\text{val}}(\mathbf{w}^*(\boldsymbol{\alpha}), \boldsymbol{\alpha})$ requires computing the Hessian, which is expensive. DARTS approximates it using a first-order Taylor expansion:
+\begin{equation}
+\nabla_{\boldsymbol{\alpha}} \mathcal{L}_{\text{val}}(\mathbf{w} - \xi \nabla_{\mathbf{w}} \mathcal{L}_{\text{train}}(\mathbf{w}, \boldsymbol{\alpha}), \boldsymbol{\alpha})
+\end{equation}
+where $\xi$ is the learning rate for weight updates.
+
+After search completes, a discrete architecture is derived by retaining only the operation with the highest $\alpha$ value for each edge. This gradient-based approach reduces search time to a few GPU days while discovering competitive architectures on image classification, language modeling, and other tasks.
+
+\subsubsection{Applications to Combinatorial Optimization}
+
+While NAS was primarily developed for supervised learning tasks, recent work has begun applying these techniques to optimize neural architectures for combinatorial optimization and reinforcement learning:
+
+\textbf{Task-Specific Architecture Discovery.} Generic architectures designed for image classification may not be optimal for discrete optimization problems. NAS can discover specialized architectures that better capture the structure of combinatorial problems, such as identifying the most effective types of graph convolutions for routing problems or determining optimal combinations of convolutional and attention layers for packing tasks.
+
+\textbf{Sample Efficiency.} Reinforcement learning often requires millions of environment interactions. NAS can identify architectures that learn more sample-efficiently, reducing the computational cost of training RL agents for complex optimization problems.
+
+\textbf{Generalization Across Problem Instances.} NAS methods can search for architectures that generalize well across problem instances of varying sizes and characteristics, rather than overfitting to specific training distributions.
+
+The integration of NAS with reinforcement learning for combinatorial optimization remains an active research area, with promising results in automated design of graph neural network architectures for routing problems and specialized policy network architectures for packing and scheduling tasks.
