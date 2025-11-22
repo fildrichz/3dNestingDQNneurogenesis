@@ -1,0 +1,603 @@
+\section{Neural Network Architectures for Bin Packing}
+
+The application of deep learning to combinatorial optimization has transformed bin packing from a domain of hand-crafted heuristics to one where neural networks learn placement strategies directly from experience. This section reviews the key neural network architectures employed in modern bin packing systems, with particular focus on deep reinforcement learning approaches that treat packing as a sequential decision-making problem.
+
+\subsection{Deep Q-Networks (DQN)}
+
+Deep Q-Networks revolutionized reinforcement learning by combining Q-learning with deep neural networks, enabling agents to learn policies directly from high-dimensional state representations \cite{MKS+15}. For bin packing, DQN provides a natural framework: the agent learns to select placements (actions) that maximize long-term packing efficiency (cumulative reward).
+
+\subsubsection{The Q-Learning Foundation}
+
+Q-learning seeks to learn an action-value function $Q(s, a)$ that estimates the expected cumulative reward of taking action $a$ in state $s$ and following the optimal policy thereafter. The optimal Q-function satisfies the \textbf{Bellman equation}:
+
+\begin{equation}
+Q^*(s, a) = \mathbb{E}_{s'}\left[r + \gamma \max_{a'} Q^*(s', a')\right]
+\end{equation}
+
+where $r$ is the immediate reward, $\gamma \in [0, 1]$ is the discount factor, and $s'$ is the next state. Traditional Q-learning uses a table to store $Q(s, a)$ for every state-action pair, which is infeasible for large or continuous state spaces.
+
+\subsubsection{Neural Function Approximation}
+
+DQN replaces the Q-table with a neural network $Q(s, a; \theta)$ parameterized by weights $\theta$. The network is trained to minimize the \textbf{temporal difference (TD) error}:
+
+\begin{equation}
+\mathcal{L}(\theta) = \mathbb{E}_{(s, a, r, s') \sim \mathcal{D}}\left[\left(r + \gamma \max_{a'} Q(s', a'; \theta^-) - Q(s, a; \theta)\right)^2\right]
+\end{equation}
+
+where $\mathcal{D}$ is a \textbf{replay buffer} storing past experiences $(s, a, r, s')$, and $\theta^-$ are the parameters of a \textbf{target network} that is updated periodically to stabilize training.
+
+\paragraph{Key Innovations:}
+
+\begin{enumerate}
+\item \textbf{Experience Replay}: Past transitions $(s, a, r, s')$ are stored in a buffer and randomly sampled during training. This breaks temporal correlations in sequential data and improves sample efficiency.
+
+\item \textbf{Target Network}: A separate network with frozen weights $\theta^-$ is used to compute the TD target $r + \gamma \max_{a'} Q(s', a'; \theta^-)$. The target network is updated every $C$ steps by copying $\theta \to \theta^-$, preventing divergence caused by the ``moving target'' problem.
+
+\item \textbf{$\varepsilon$-greedy Exploration}: The agent selects the greedy action $a = \arg\max_a Q(s, a; \theta)$ with probability $1 - \varepsilon$, and a random action with probability $\varepsilon$. Epsilon is annealed from $\varepsilon_{\text{start}}$ to $\varepsilon_{\text{end}}$ over training.
+\end{enumerate}
+
+\subsubsection{Application to Bin Packing}
+
+In the bin packing domain, the DQN framework is instantiated as follows:
+
+\begin{itemize}
+\item \textbf{State $s$}: The current packing configuration, encoded as feature vectors (Section 3.1.2), heightmaps, or voxel grids. Includes:
+  \begin{itemize}
+  \item Container state: occupied positions, utilization, heightmap
+  \item Current item: dimensions, weight, orientation constraints
+  \item Remaining items: count, volume distribution
+  \end{itemize}
+
+\item \textbf{Action $a$}: A discrete choice of placement candidate. For $K$ candidate positions (e.g., extreme points or EMS), $a \in \{1, \ldots, K\}$. Some systems also include orientation selection as part of the action space.
+
+\item \textbf{Reward $r$}: Immediate feedback signal. Common reward structures:
+  \begin{itemize}
+  \item \textbf{Utilization increment}: $r = V_{\text{item}} / V_{\text{container}}$ (reward for packing volume)
+  \item \textbf{Sparse completion reward}: $r = 0$ during packing, $r = \text{final utilization}$ at episode end
+  \item \textbf{Penalty-based}: $r = -1$ per bin opened (minimizes bin count)
+  \item \textbf{Shaped rewards}: Additional terms for support quality, fragmentation, or constraint violations
+  \end{itemize}
+
+\item \textbf{Episode Termination}: When all items are placed or no feasible placements remain for the current item.
+\end{itemize}
+
+\paragraph{Network Architecture:}
+
+The Q-network typically consists of:
+
+\begin{enumerate}
+\item \textbf{Input encoding}: State features $\mathbf{s} \in \mathbb{R}^d$ (item + container + global features)
+\item \textbf{Shared trunk}: Multi-layer perceptron (MLP) or convolutional layers to process spatial representations
+\item \textbf{Action-value heads}: Outputs $Q(s, a)$ for each candidate action $a$
+\end{enumerate}
+
+For $K$ candidate placements, one can use:
+\begin{itemize}
+\item \textbf{Separate forward passes}: Encode each $(state, candidate_k)$ pair and evaluate $Q(s, a_k)$ separately
+\item \textbf{Single forward pass}: Encode state once, then score all candidates via attention or separate heads
+\end{itemize}
+
+\paragraph{Advantages:}
+
+\begin{itemize}
+\item \textbf{End-to-end learning}: No need to manually design scoring functions; the network learns what features correlate with good outcomes
+\item \textbf{Generalization}: Networks trained on diverse problem instances can generalize to unseen items and container sizes
+\item \textbf{Implicit constraint handling}: Through negative rewards, the agent learns to avoid infeasible placements
+\end{itemize}
+
+\paragraph{Limitations:}
+
+\begin{itemize}
+\item \textbf{Overestimation bias}: The $\max$ operator in the Bellman update introduces positive bias, leading to overoptimistic Q-values and unstable learning (addressed by Double DQN)
+\item \textbf{Discrete action spaces}: DQN requires discretization of continuous placement positions, limiting precision
+\item \textbf{Sample inefficiency}: Requires many episodes to learn effective policies, especially for large combinatorial action spaces
+\item \textbf{Hyperparameter sensitivity}: Learning rate, replay buffer size, target update frequency, and epsilon schedule require careful tuning
+\end{itemize}
+
+
+\subsection{Double DQN}
+
+Standard DQN suffers from \textbf{overestimation bias}: the $\max$ operator in the Bellman target tends to select overestimated action values, leading to inflated Q-values and unstable learning \cite{HGS16}. Double DQN addresses this by decoupling action selection from action evaluation.
+
+\subsubsection{The Overestimation Problem}
+
+In DQN, the target is computed as:
+
+\begin{equation}
+y_{\text{DQN}} = r + \gamma \max_{a'} Q(s', a'; \theta^-)
+\end{equation}
+
+The same network (or target network) is used both to \textbf{select} the best action ($\arg\max$) and \textbf{evaluate} its value ($Q$). If the Q-function has estimation errors, the $\max$ will preferentially select actions with \textbf{positive errors}, causing systematic overestimation.
+
+\subsubsection{Double Q-Learning Solution}
+
+Double DQN uses the \textbf{online network} to select the action and the \textbf{target network} to evaluate it:
+
+\begin{equation}
+y_{\text{Double}} = r + \gamma Q(s', \arg\max_{a'} Q(s', a'; \theta); \theta^-)
+\end{equation}
+
+\paragraph{Breakdown:}
+
+\begin{enumerate}
+\item \textbf{Action selection}: Use current weights $\theta$ to find the best action:
+   \begin{equation}
+   a^* = \arg\max_{a'} Q(s', a'; \theta)
+   \end{equation}
+
+\item \textbf{Action evaluation}: Use target weights $\theta^-$ to evaluate that action:
+   \begin{equation}
+   Q(s', a^*; \theta^-)
+   \end{equation}
+\end{enumerate}
+
+This separation reduces overestimation because positive errors in the online network (selecting $a^*$) are unlikely to correlate with positive errors in the target network (evaluating $a^*$).
+
+\subsubsection{Impact on Bin Packing}
+
+For bin packing, Double DQN provides:
+
+\begin{itemize}
+\item \textbf{More stable Q-values}: Especially important when reward signals are sparse (e.g., only at episode end)
+\item \textbf{Better convergence}: Reduced oscillation in learned policies during training
+\item \textbf{Improved sample efficiency}: Faster learning with fewer episodes
+\end{itemize}
+
+Empirical results \cite{HGS16} show that Double DQN often achieves higher final performance and more consistent learning curves compared to standard DQN, particularly in domains with large action spaces---such as selecting among hundreds of candidate placements in a complex 3D packing scenario.
+
+
+\subsection{Transformer Architectures}
+
+Transformers, originally developed for natural language processing \cite{VSP+17}, have become a dominant architecture for modeling relational structures in combinatorial optimization \cite{KW19, XGP+24}. Unlike convolutional or recurrent networks, Transformers process \textbf{sets} of elements (items, placements, spatial regions) via \textbf{self-attention}, learning which relationships matter for decision-making.
+
+\subsubsection{The Attention Mechanism}
+
+The core operation is \textbf{scaled dot-product attention}:
+
+\begin{equation}
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right) V
+\end{equation}
+
+where:
+\begin{itemize}
+\item $Q \in \mathbb{R}^{n \times d_k}$: \textbf{Queries} (what we're looking for)
+\item $K \in \mathbb{R}^{m \times d_k}$: \textbf{Keys} (what's available)
+\item $V \in \mathbb{R}^{m \times d_v}$: \textbf{Values} (content to aggregate)
+\item $d_k$: Dimension of keys/queries (scaling prevents gradient vanishing)
+\end{itemize}
+
+\textbf{Interpretation}: For each query $q_i$, compute attention weights over all keys $k_j$ via softmax of dot products, then aggregate the corresponding values $v_j$. High $q_i \cdot k_j$ means element $i$ ``attends to'' element $j$.
+
+\subsubsection{Multi-Head Attention}
+
+To capture diverse relationships, Transformers use \textbf{multiple attention heads}:
+
+\begin{equation}
+\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h) W^O
+\end{equation}
+
+where each head learns different attention patterns:
+
+\begin{equation}
+\text{head}_i = \text{Attention}(QW_i^Q, KW_i^K, VW_i^V)
+\end{equation}
+
+Different heads might focus on:
+\begin{itemize}
+\item Spatial proximity (items near each other)
+\item Size compatibility (items with similar dimensions)
+\item Constraint relationships (fragile items avoiding heavy items above)
+\end{itemize}
+
+\subsubsection{Transformer Encoder}
+
+A full Transformer encoder layer consists of:
+
+\begin{enumerate}
+\item \textbf{Multi-head self-attention}: Elements attend to each other
+\item \textbf{Feed-forward network}: Per-element MLP
+\item \textbf{Residual connections} and \textbf{layer normalization} for stable training
+\end{enumerate}
+
+\begin{align}
+\mathbf{Z} &= \text{LayerNorm}(\mathbf{X} + \text{MultiHead}(\mathbf{X}, \mathbf{X}, \mathbf{X})) \\
+\mathbf{H} &= \text{LayerNorm}(\mathbf{Z} + \text{FFN}(\mathbf{Z}))
+\end{align}
+
+Multiple encoder layers are stacked to form deep representations.
+
+\subsubsection{Application to Bin Packing}
+
+Transformers are well-suited to bin packing because packing involves \textbf{relational reasoning} over sets:
+
+\begin{itemize}
+\item \textbf{Items}: Which items pack well together?
+\item \textbf{Placements}: Which candidate positions create favorable configurations?
+\item \textbf{Constraints}: Which items are blocked by current placements?
+\end{itemize}
+
+\paragraph{Example: GOPT \cite{XGP+24}}
+
+Xiong et al. (2024) propose a \textbf{Packing Transformer} for online 3D bin packing with robotic arms:
+
+\begin{enumerate}
+\item \textbf{Item Encoding}: Each item $i$ is embedded as $\mathbf{e}_i \in \mathbb{R}^d$ (dimensions, weight, orientation)
+
+\item \textbf{EMS Encoding}: Each empty maximal space $j$ is embedded as $\mathbf{c}_j \in \mathbb{R}^d$ (position, available volume)
+
+\item \textbf{Cross-Attention}: Items attend to EMS candidates:
+   \begin{equation}
+   \mathbf{h}_j = \text{Attention}(Q=\mathbf{c}_j, K=\{\mathbf{e}_i\}, V=\{\mathbf{e}_i\})
+   \end{equation}
+
+   This computes, for each candidate position $j$, which items are relevant (compatible size, waiting to be packed).
+
+\item \textbf{Heightmap Integration}: A 2D heightmap is processed by a CNN to extract spatial features $\mathbf{f}_{\text{spatial}}$, then concatenated with item/EMS embeddings.
+
+\item \textbf{Policy Head}: The attended representations are passed to an MLP that outputs placement probabilities or Q-values.
+\end{enumerate}
+
+\paragraph{Benefits for Bin Packing:}
+
+\begin{itemize}
+\item \textbf{Permutation invariance}: Attention is invariant to the order of items/candidates, making the network robust to different input sequences
+\item \textbf{Variable-length sets}: Can process different numbers of items or candidates without architectural changes
+\item \textbf{Learned relationships}: Discovers which spatial patterns matter (e.g., ``place large items first near corners'')
+\end{itemize}
+
+\subsubsection{Comparison with CNNs and MLPs}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|p{5.5cm}|p{5.5cm}|}
+\hline
+\textbf{Architecture} & \textbf{Strengths} & \textbf{Weaknesses} \\
+\hline
+\textbf{MLP} & Simple, fast, good for fixed-size feature vectors & Cannot model spatial structure or variable sets \\
+\hline
+\textbf{CNN} & Excellent for grid-based representations (heightmaps) & Requires spatial discretization, limited relational reasoning \\
+\hline
+\textbf{Transformer} & Handles variable sets, learns relational patterns & Computationally expensive ($O(n^2)$ in sequence length), needs large datasets \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\subsection{Set Transformers}
+
+Standard Transformers are permutation-equivariant (output order matches input order) but produce one output per input element. For combinatorial optimization, we often need a \textbf{permutation-invariant} summary of a set, followed by set-to-element or set-to-set operations. \textbf{Set Transformers} \cite{LSK+19} extend Transformers with specialized attention mechanisms for set-structured data.
+
+\subsubsection{Motivation}
+
+In bin packing, we often need to:
+
+\begin{enumerate}
+\item \textbf{Aggregate item information}: Summarize all remaining items into a global context vector
+\item \textbf{Score variable-size sets}: Evaluate sets of candidates of different sizes
+\item \textbf{Maintain permutation invariance}: The set $\{\text{item}_1, \text{item}_2\}$ should be processed identically to $\{\text{item}_2, \text{item}_1\}$
+\end{enumerate}
+
+Set Transformers provide building blocks for these operations.
+
+\subsubsection{Induced Set Attention Block (ISAB)}
+
+Standard self-attention has $O(n^2)$ complexity for a set of size $n$. \textbf{ISAB} reduces this to $O(nm)$ by introducing $m$ \textbf{inducing points} $\mathbf{I} \in \mathbb{R}^{m \times d}$ (learnable parameters):
+
+\begin{enumerate}
+\item Aggregate input set $\mathbf{X}$ into inducing points:
+   \begin{equation}
+   \mathbf{H} = \text{Attention}(Q=\mathbf{I}, K=\mathbf{X}, V=\mathbf{X})
+   \end{equation}
+
+\item Project inducing points back to output:
+   \begin{equation}
+   \mathbf{Y} = \text{Attention}(Q=\mathbf{X}, K=\mathbf{H}, V=\mathbf{H})
+   \end{equation}
+\end{enumerate}
+
+This is analogous to bottleneck layers in CNNs: compress information through inducing points, then expand.
+
+\subsubsection{Pooling by Multihead Attention (PMA)}
+
+To produce a \textbf{fixed-size} output from a variable-size set, PMA uses $k$ learnable \textbf{seed vectors} $\mathbf{S} \in \mathbb{R}^{k \times d}$:
+
+\begin{equation}
+\mathbf{Z} = \text{Attention}(Q=\mathbf{S}, K=\mathbf{X}, V=\mathbf{X})
+\end{equation}
+
+The seeds attend to the entire input set, producing $k$ summary vectors. For $k=1$, this gives a \textbf{single global representation} of the set, similar to global average pooling but learned.
+
+\subsubsection{Application to Bin Packing}
+
+\paragraph{Item Set Encoding:} Given a set of items $\{\mathbf{v}_i\}$ to be packed:
+
+\begin{enumerate}
+\item Embed each item: $\mathbf{e}_i = \text{Embed}(\mathbf{v}_i)$ (dimensions, weight, etc.)
+\item Apply ISAB layers: Learn inter-item relationships (e.g., clustering by size)
+\item Pool with PMA: Produce a global item set representation $\mathbf{z}_{\text{items}}$
+\end{enumerate}
+
+\paragraph{Candidate Scoring:} Given a set of candidate placements $\{\mathbf{p}_j\}$:
+
+\begin{enumerate}
+\item Embed each candidate: $\mathbf{c}_j = \text{Embed}(\mathbf{p}_j)$ (position, available volume)
+\item Attend to item set:
+   \begin{equation}
+   \mathbf{h}_j = \text{Attention}(Q=\mathbf{c}_j, K=\mathbf{z}_{\text{items}}, V=\mathbf{z}_{\text{items}})
+   \end{equation}
+\item Score candidates: $Q(s, a_j) = \text{MLP}(\mathbf{h}_j)$
+\end{enumerate}
+
+\paragraph{Advantages:}
+
+\begin{itemize}
+\item \textbf{Handles variable-size inputs}: Number of items or candidates can vary
+\item \textbf{Scalable}: ISAB reduces quadratic complexity to linear in the number of inducing points
+\item \textbf{Interpretable attention}: Attention weights reveal which items influence which placements
+\end{itemize}
+
+\paragraph{Limitations:}
+
+\begin{itemize}
+\item \textbf{Inducing point tuning}: Choosing the number of inducing points $m$ requires experimentation
+\item \textbf{Less common}: Fewer pre-trained models or established best practices compared to standard Transformers
+\end{itemize}
+
+
+\subsection{Single-Problem Neural Networks}
+
+Most neural approaches aim to learn \textbf{general policies} that generalize across problem instances. An alternative paradigm is \textbf{single-problem learning}: training a neural network (or evolving an architecture) specifically for \textbf{one fixed problem instance} \cite{ACG21, VMP20}.
+
+\subsubsection{Motivation}
+
+For recurring packing tasks (e.g., warehouses packing the same set of product SKUs daily, or shipping containers with similar item distributions), a specialized network may outperform a general one by exploiting instance-specific structure.
+
+\subsubsection{Training Paradigm}
+
+Given a fixed bin packing instance $I = (W, D, H, \{v_1, \ldots, v_n\})$:
+
+\begin{enumerate}
+\item \textbf{Network initialization}: Random weights or a pre-trained general model
+\item \textbf{Episode generation}: Sample random item orderings (or learn the ordering jointly)
+\item \textbf{Reinforcement learning}: Train via DQN, policy gradient, or evolutionary methods to maximize utilization on $I$
+\item \textbf{Convergence}: Train until performance plateaus (often 1000s of episodes)
+\end{enumerate}
+
+\paragraph{Key Difference from General Learning:}
+
+\begin{itemize}
+\item \textbf{No generalization pressure}: Network can overfit to $I$, learning idiosyncrasies (e.g., ``item 3 always goes in the bottom-left corner'')
+\item \textbf{Faster convergence}: Smaller effective hypothesis space $\to$ quicker training
+\item \textbf{Optimal for static problems}: If the item set never changes, generalization is unnecessary
+\end{itemize}
+
+\subsubsection{Use Cases}
+
+\begin{enumerate}
+\item \textbf{Static packing problems}: Manufacturing with fixed product lines
+\item \textbf{Warm-starting for similar problems}: Train on a representative instance, then fine-tune for variations
+\item \textbf{Benchmarking}: Measure the performance ceiling of neural approaches on standard test instances
+\end{enumerate}
+
+\subsubsection{Limitations}
+
+\begin{itemize}
+\item \textbf{No generalization}: Catastrophic failure on different item sets or container sizes
+\item \textbf{Training cost}: Full RL training per instance can be expensive
+\item \textbf{Overfitting risk}: Network may exploit spurious correlations specific to $I$ (e.g., item ordering artifacts)
+\end{itemize}
+
+
+\subsection{Graph Neural Networks (GNNs)}
+
+Graph Neural Networks provide a natural framework for encoding the \textbf{relational structure} of bin packing: items, empty spaces, and spatial relationships can be represented as nodes and edges in a graph \cite{SZL+22, ZWL+24}.
+
+\subsubsection{Graph Representation of Packing State}
+
+A packing configuration can be modeled as a graph $G = (V, E)$ where:
+
+\paragraph{Nodes $V$:}
+\begin{itemize}
+\item \textbf{Item nodes}: Each placed item $i$ with features $\mathbf{x}_i = [w_i, h_i, d_i, x_i, y_i, z_i, \text{weight}_i]$
+\item \textbf{EMS nodes}: Each empty maximal space $j$ with features $\mathbf{x}_j = [x_j, y_j, z_j, w_j, h_j, d_j]$
+\item \textbf{Container node}: Global state $\mathbf{x}_{\text{bin}} = [\text{utilization}, \text{num\_items\_placed}]$
+\item \textbf{Item-to-place node}: The current item awaiting placement
+\end{itemize}
+
+\paragraph{Edges $E$:}
+\begin{itemize}
+\item \textbf{Support edges}: $(i, j)$ if item $i$ supports item $j$ (geometric contact)
+\item \textbf{Proximity edges}: $(i, j)$ if items $i$ and $j$ are within distance $\epsilon$
+\item \textbf{Containment edges}: $(i, \text{EMS}_k)$ if placing item $i$ in EMS $k$ is feasible
+\item \textbf{Global edges}: All nodes connected to the container node
+\end{itemize}
+
+\subsubsection{Message Passing Framework}
+
+GNNs learn node representations by iteratively \textbf{aggregating information} from neighbors. At each layer $\ell$:
+
+\begin{enumerate}
+\item \textbf{Message computation}: For each edge $(i, j)$:
+   \begin{equation}
+   \mathbf{m}_{ij}^{(\ell)} = \text{Message}(\mathbf{h}_i^{(\ell-1)}, \mathbf{h}_j^{(\ell-1)}, \mathbf{e}_{ij})
+   \end{equation}
+   where $\mathbf{h}_i$ is the hidden state of node $i$, and $\mathbf{e}_{ij}$ are edge features (e.g., distance, contact area).
+
+\item \textbf{Aggregation}: Collect messages from all neighbors:
+   \begin{equation}
+   \mathbf{a}_i^{(\ell)} = \text{Aggregate}\left(\{\mathbf{m}_{ji}^{(\ell)} : j \in \mathcal{N}(i)\}\right)
+   \end{equation}
+   Common aggregators: sum, mean, max, or attention-weighted sum.
+
+\item \textbf{Update}: Combine aggregated messages with current state:
+   \begin{equation}
+   \mathbf{h}_i^{(\ell)} = \text{Update}(\mathbf{h}_i^{(\ell-1)}, \mathbf{a}_i^{(\ell)})
+   \end{equation}
+   Typically a neural network (MLP or GRU).
+\end{enumerate}
+
+After $L$ layers, each node has a representation $\mathbf{h}_i^{(L)}$ that aggregates information from its $L$-hop neighborhood.
+
+\subsubsection{GNN Variants for Bin Packing}
+
+\paragraph{Graph Convolutional Networks (GCN) \cite{KW17}:}
+\begin{equation}
+\mathbf{h}_i^{(\ell)} = \sigma\left(W^{(\ell)} \sum_{j \in \mathcal{N}(i) \cup \{i\}} \frac{\mathbf{h}_j^{(\ell-1)}}{\sqrt{|\mathcal{N}(i)||\mathcal{N}(j)|}}\right)
+\end{equation}
+
+Simple and efficient, but fixed aggregation (mean).
+
+\paragraph{Graph Attention Networks (GAT) \cite{VCC+18}:}
+\begin{equation}
+\mathbf{h}_i^{(\ell)} = \sigma\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} W^{(\ell)} \mathbf{h}_j^{(\ell-1)}\right)
+\end{equation}
+
+where $\alpha_{ij}$ are learned attention weights. Allows the network to focus on relevant neighbors (e.g., items that directly support the current item).
+
+\paragraph{Relational GCN (R-GCN) \cite{SKB+18}:}
+
+Uses different weight matrices for different edge types:
+\begin{equation}
+\mathbf{h}_i^{(\ell)} = \sigma\left(\sum_{r \in \mathcal{R}} \sum_{j \in \mathcal{N}_r(i)} \frac{1}{|\mathcal{N}_r(i)|} W_r^{(\ell)} \mathbf{h}_j^{(\ell-1)}\right)
+\end{equation}
+
+where $\mathcal{R}$ is the set of relation types (support, proximity, containment). Useful when different relationships have different semantics.
+
+\subsubsection{Application to Placement Selection}
+
+Given a graph representation of the current packing state:
+
+\begin{enumerate}
+\item \textbf{Graph construction}: Build $G$ from placed items, EMS candidates, and the item to place
+\item \textbf{Message passing}: Run $L$ GNN layers to compute node embeddings $\{\mathbf{h}_i^{(L)}\}$
+\item \textbf{Readout}:
+  \begin{itemize}
+  \item \textbf{Node-level}: Score each EMS node: $Q(s, a_j) = \text{MLP}(\mathbf{h}_j^{(L)})$
+  \item \textbf{Graph-level}: Pool all EMS embeddings and decode: $Q(s, a) = \text{MLP}(\text{Pool}(\{\mathbf{h}_j^{(L)}\}))$
+  \end{itemize}
+\end{enumerate}
+
+\paragraph{Advantages:}
+
+\begin{itemize}
+\item \textbf{Explicit relational structure}: Encodes support, adjacency, and blocking relationships directly
+\item \textbf{Inductive bias}: Message passing naturally captures spatial dependencies (e.g., ``supported items depend on supporters'')
+\item \textbf{Interpretability}: Attention weights or message values reveal which relationships drive decisions
+\end{itemize}
+
+\paragraph{Challenges:}
+
+\begin{itemize}
+\item \textbf{Graph construction overhead}: Building and updating the graph at each packing step is computationally expensive
+\item \textbf{Dynamic graphs}: Adding/removing nodes (items/EMS) requires re-indexing and re-initializing embeddings
+\item \textbf{Scalability}: Large packing problems (100s of items) lead to dense graphs with $O(n^2)$ edges
+\item \textbf{Limited adoption}: GNNs for bin packing remain less common than CNNs or Transformers, with fewer established architectures
+\end{itemize}
+
+\subsubsection{Comparison with Other Architectures}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Architecture} & \textbf{Relational} & \textbf{Spatial} & \textbf{Complexity} & \textbf{Adoption} \\
+\hline
+\textbf{MLP} & None & None & $O(d)$ & High \\
+\hline
+\textbf{CNN} & Local & Grid-based & $O(WHD)$ & Medium \\
+\hline
+\textbf{Transformer} & Global & Learned & $O(n^2)$ & Growing \\
+\hline
+\textbf{GNN} & Explicit & Graph & $O(n^2)$ & Low \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\subsection{Deep Reinforcement Learning Context}
+
+The neural architectures discussed above are typically integrated within \textbf{deep reinforcement learning (DRL)} frameworks, where the network serves as a function approximator for value functions or policies. This section briefly contextualizes the role of neural networks in the broader DRL pipeline.
+
+\subsubsection{Value-Based vs. Policy-Based Methods}
+
+\paragraph{Value-Based (DQN, Double DQN):}
+
+\begin{itemize}
+\item Learn $Q(s, a)$ or $V(s)$
+\item Policy is derived implicitly: $\pi(s) = \arg\max_a Q(s, a)$
+\item Off-policy: Can learn from experiences collected by different policies
+\item Sample efficient but limited to discrete action spaces
+\end{itemize}
+
+\paragraph{Policy-Based (REINFORCE, PPO, A3C):}
+
+\begin{itemize}
+\item Learn $\pi(a|s; \theta)$ directly
+\item Sample actions from the policy: $a \sim \pi(\cdot|s)$
+\item On-policy: Requires recent experience from the current policy
+\item Works with continuous action spaces but higher variance
+\end{itemize}
+
+\paragraph{Actor-Critic (A2C, PPO):}
+
+\begin{itemize}
+\item Combine both: Learn $\pi(a|s)$ (actor) and $V(s)$ or $Q(s, a)$ (critic)
+\item Critic reduces variance of policy gradient estimates
+\item State-of-the-art for many RL tasks
+\end{itemize}
+
+\subsubsection{Sample Efficiency and Curriculum Learning}
+
+DRL often requires millions of environment steps to converge. For bin packing:
+
+\begin{itemize}
+\item \textbf{Simulated environments}: Fast physics-free collision checks enable rapid data collection
+\item \textbf{Curriculum learning}: Train on easy instances (few items, simple shapes) before hard ones
+\item \textbf{Transfer learning}: Pre-train on synthetic data, fine-tune on real-world distributions
+\end{itemize}
+
+
+\subsection{Hybrid Architectures and Integration}
+
+Modern packing systems often \textbf{combine} multiple neural components:
+
+\paragraph{CNN + Transformer (GOPT \cite{XGP+24}):}
+\begin{itemize}
+\item CNN processes heightmap $\to$ spatial features
+\item Transformer processes item/EMS embeddings $\to$ relational features
+\item Concatenate and feed to policy/value head
+\end{itemize}
+
+\paragraph{GNN + DQN:}
+\begin{itemize}
+\item GNN encodes packing state as graph
+\item DQN uses GNN embeddings to score actions
+\item Experience replay and target networks stabilize training
+\end{itemize}
+
+\paragraph{Attention + Heuristics:}
+\begin{itemize}
+\item Neural network scores candidates
+\item Heuristic filters infeasible placements
+\item Combine scores: $\text{final\_score} = \alpha \cdot \text{NN\_score} + (1-\alpha) \cdot \text{heuristic\_score}$
+\end{itemize}
+
+This hybrid approach leverages the strengths of both learned and hand-crafted methods: neural networks adapt to data distributions, while heuristics guarantee feasibility and provide inductive biases.
+
+
+\subsection{Summary}
+
+Neural network architectures for bin packing have evolved from simple MLPs to sophisticated models incorporating attention, graph structure, and deep reinforcement learning. \textbf{DQN} provides a foundational framework for learning placement policies via value function approximation, while \textbf{Double DQN} addresses overestimation bias for more stable training. \textbf{Transformers} and \textbf{Set Transformers} enable relational reasoning over variable-size sets of items and candidates, learning which spatial patterns matter without explicit geometric programming. \textbf{Single-problem networks} specialize to individual instances, trading generalization for instance-specific performance. \textbf{Graph Neural Networks} encode explicit relational structure (support, proximity, blocking), though at higher computational cost.
+
+The choice of architecture depends on the problem characteristics:
+
+\begin{itemize}
+\item \textbf{Small, fixed state spaces}: MLP-based DQN
+\item \textbf{Spatial grid representations}: CNN + DQN
+\item \textbf{Variable-size item/candidate sets}: Transformer or Set Transformer
+\item \textbf{Explicit relational constraints}: GNN
+\item \textbf{Recurring static problems}: Single-problem specialized networks
+\end{itemize}
+
+Hybrid architectures combining multiple paradigms (e.g., CNN for spatial processing + Transformer for relational reasoning) represent the current state-of-the-art, balancing expressiveness, computational cost, and sample efficiency. The neurogenesis framework proposed in this thesis (Chapter 4) extends this landscape by evolving neural architectures tailored to the specific inductive biases of 3D bin packing, searching over network topologies to discover effective combinations of spatial, relational, and value-based processing.
