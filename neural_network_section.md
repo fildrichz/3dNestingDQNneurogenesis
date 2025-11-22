@@ -1,10 +1,14 @@
 # 3.2 Neural Network Architectures for Combinatorial Optimization
 
-The application of deep learning to combinatorial optimization has transformed bin packing from a domain of hand-crafted heuristics to one where neural networks learn placement strategies directly from experience. Rather than manually encoding rules for item selection and placement, modern approaches leverage neural networks as function approximators that discover effective policies through interaction with the problem space. This section reviews the key neural network architectures employed for learning-based packing systems, with particular focus on deep reinforcement learning approaches that treat packing as a sequential decision-making problem where an agent learns to maximize long-term packing efficiency.
+Neural networks have emerged as powerful function approximators for learning solution strategies in combinatorial optimization domains. Unlike traditional approaches that rely on hand-crafted heuristics and domain-specific rules, neural architectures can discover effective decision-making policies through direct interaction with problem instances. This learning-based paradigm is particularly well-suited to sequential decision-making formulations, where an agent must select a sequence of actions to optimize a cumulative objective.
+
+Deep reinforcement learning (DRL) provides the primary framework for training such neural policies. In DRL, an agent learns through trial and error: it observes the current state of the problem, selects an action (e.g., which decision to make next), receives a reward signal indicating immediate progress, and updates its policy to maximize long-term cumulative reward. The neural network serves as the core function approximator, either estimating the value of state-action pairs (value-based methods) or directly parameterizing a stochastic policy over actions (policy-based methods).
+
+This section reviews the key neural network architectures employed in learning-based approaches to combinatorial optimization, with particular focus on their application to sequential placement problems. We examine how different architectural choices—from feedforward networks to attention mechanisms and graph-structured models—provide varying inductive biases for capturing problem structure and supporting generalization across problem instances.
 
 ## 3.2.1 Deep Q-Networks (DQN)
 
-Deep Q-Networks revolutionized reinforcement learning by combining Q-learning with deep neural networks, enabling agents to learn policies directly from high-dimensional state representations [MKS+15]. For bin packing, DQN provides a natural framework: the agent learns to select placements (actions) that maximize long-term packing efficiency (cumulative reward).
+Deep Q-Networks revolutionized reinforcement learning by combining Q-learning with deep neural networks, enabling agents to learn policies directly from high-dimensional state representations [MKS+15]. DQN provides a natural framework for sequential decision problems with discrete action spaces: the agent learns to evaluate actions based on their long-term value, building up policies that maximize cumulative reward over entire solution trajectories.
 
 ### The Q-Learning Foundation
 
