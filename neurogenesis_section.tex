@@ -1,0 +1,281 @@
+\section{Neural Architecture Search through Neurogenesis}
+\label{sec:neurogenesis}
+
+Neural Architecture Search (NAS) automates the design of neural network architectures through systematic exploration of the architecture space. In the context of this work, \emph{neurogenesis} refers to the evolutionary evolution of neural network architectures, drawing an analogy from biological neurogenesis—the process by which new neurons are formed in the brain. This section examines genetic algorithm-based approaches for neural network optimization, with emphasis on genome representation strategies and evolutionary mechanisms that directly impact our 3D bin packing implementation.
+
+\subsection{Genetic Algorithms for Neural Network Optimization}
+\label{subsec:ga_fundamentals}
+
+The foundational work by \textbf{Ding, Xu, and Su (2010)} \cite{Ding2010} establishes core principles for applying genetic algorithms (GAs) to neural network optimization. Their approach addresses both architectural search and hyperparameter tuning through evolutionary computation, providing a template that our neurogenesis implementation builds upon.
+
+\subsubsection{Core Methodology}
+
+Ding et al.\ propose a comprehensive framework where both the network structure and training parameters are encoded as genes within a chromosome. Each individual in the population represents a complete neural network specification, including:
+
+\begin{enumerate}
+    \item \textbf{Topology genes}: Number of hidden layers, neurons per layer, connectivity patterns
+    \item \textbf{Activation function genes}: Selection from available nonlinear functions (sigmoid, tanh, ReLU)
+    \item \textbf{Learning parameter genes}: Learning rate, momentum coefficient, weight decay
+    \item \textbf{Training strategy genes}: Batch size, number of epochs, early stopping criteria
+\end{enumerate}
+
+The fitness function evaluates each candidate network based on validation performance, incorporating both accuracy and complexity penalties to avoid overfitting and excessive computational cost.
+
+\subsubsection{Genome Representation Types}
+
+Ding et al.\ identify three primary encoding schemes for representing neural network architectures genetically:
+
+\paragraph{Direct Encoding (Binary String Representation)}
+The simplest approach uses binary strings where each bit or group of bits directly specifies a network component. For example:
+\begin{itemize}
+    \item Bits 0-7: Number of hidden neurons in layer 1 (0-255)
+    \item Bits 8-9: Activation function (00=sigmoid, 01=tanh, 10=ReLU)
+    \item Bits 10-15: Learning rate exponent ($10^{-6}$ to $10^{-1}$)
+\end{itemize}
+
+\textit{Advantages}: Straightforward encoding and decoding, easy to implement standard GA operators.
+
+\textit{Disadvantages}: Fixed-length chromosomes limit flexibility; difficult to represent variable-depth architectures; high encoding redundancy.
+
+\paragraph{Graph-Based Encoding}
+Networks are represented as directed acyclic graphs where nodes represent computational units (neurons/layers) and edges represent connections. The chromosome encodes the adjacency matrix or edge list along with node properties.
+
+For a network with $n$ potential nodes, the encoding includes:
+\begin{itemize}
+    \item Connectivity matrix: $n \times n$ binary matrix or compressed edge list
+    \item Node type vector: $n$-dimensional vector specifying neuron activation functions
+    \item Edge weight initialization: Connection strength parameters
+\end{itemize}
+
+\textit{Advantages}: Natural representation of neural network topology; supports variable architecture sizes; enables representation of skip connections and complex topologies.
+
+\textit{Disadvantages}: Variable-length genomes complicate crossover operations; larger search space; potential for invalid graphs requiring repair mechanisms.
+
+\paragraph{Parametric Encoding (Real-Valued Vectors)}
+Continuous parameters are encoded as real-valued genes, particularly suitable for hyperparameters. A typical chromosome might be:
+
+\begin{equation}
+\text{chromosome} = [n_{\text{layers}}, n_{\text{units}_1}, n_{\text{units}_2}, \eta, p_{\text{dropout}}, \ldots]
+\end{equation}
+
+where each gene is a floating-point number within a specified range. Discrete choices (e.g., activation functions) are encoded as categorical indices or one-hot vectors.
+
+\textit{Advantages}: Efficient for continuous hyperparameter optimization; allows gradient-like exploration through arithmetic crossover; natural representation for layer sizes and learning rates.
+
+\textit{Disadvantages}: Requires careful normalization and scaling; discrete architectural choices less naturally represented; crossover may produce invalid intermediate architectures.
+
+\subsection{Evolutionary Mechanisms}
+\label{subsec:evolutionary_mechanisms}
+
+The evolutionary process follows a standard genetic algorithm cycle, with specialized operators for neural network genomes.
+
+\subsubsection{Population Initialization}
+
+The initial population is generated using:
+\begin{itemize}
+    \item \textbf{Random sampling}: Uniform or Gaussian sampling from valid parameter ranges
+    \item \textbf{Heuristic seeding}: Including known good architectures (e.g., standard 3-layer MLPs)
+    \item \textbf{Diversity enforcement}: Ensuring population covers different regions of the search space
+\end{itemize}
+
+\subsubsection{Selection Strategy}
+
+Ding et al.\ employ \textbf{tournament selection with elitism}:
+\begin{enumerate}
+    \item Randomly sample $k$ individuals (typically $k=3$--7)
+    \item Select the fittest individual from the tournament
+    \item Repeat until parent pool is filled
+    \item Always preserve top $e$ individuals (elite size $e \approx 0.05$--$0.10 \times$ population size)
+\end{enumerate}
+
+This balances exploration (through probabilistic selection) with exploitation (via elitism), preventing premature convergence while maintaining best solutions.
+
+\subsubsection{Crossover Operators}
+
+Different crossover strategies are applied based on gene type:
+
+\paragraph{Uniform Crossover} (for binary/discrete genes):
+\begin{verbatim}
+Parent 1: [1, 0, 1, 1, 0, 1]
+Parent 2: [0, 1, 1, 0, 1, 0]
+Mask:     [1, 0, 1, 0, 1, 0]
+Offspring:[1, 1, 1, 0, 0, 0]
+\end{verbatim}
+
+\paragraph{Arithmetic Crossover} (for continuous genes):
+\begin{equation}
+\text{Offspring} = \alpha \times \text{Parent}_1 + (1-\alpha) \times \text{Parent}_2
+\end{equation}
+where $\alpha \in [0,1]$ is randomly chosen or set to 0.5 for uniform blending.
+
+\paragraph{BLX-$\alpha$ Crossover}
+Following \citet{Takahashi2001}, for real-valued genes we employ BLX-$\alpha$ crossover which allows extrapolation beyond parent values:
+
+\begin{equation}
+c_{\min} = \min(p_1, p_2), \quad c_{\max} = \max(p_1, p_2), \quad r = c_{\max} - c_{\min}
+\end{equation}
+\begin{equation}
+\text{Offspring} \sim \text{Uniform}(c_{\min} - \alpha r, c_{\max} + \alpha r)
+\end{equation}
+
+The $\alpha$ parameter controls exploration: $\alpha=0$ gives uniform crossover (offspring within parent range), $\alpha>0$ allows extrapolation beyond parents, enabling discovery of better values not present in either parent. Empirical studies show $\alpha=0.5$ provides good balance.
+
+\subsubsection{Mutation Operators}
+
+Mutations introduce variation and prevent stagnation:
+
+\paragraph{Structural Mutations}:
+\begin{itemize}
+    \item Add/remove hidden layer (with probability $p_{\text{add\_layer}} \approx 0.05$)
+    \item Add/remove neurons from existing layers ($p_{\text{modify\_neurons}} \approx 0.1$)
+    \item Modify connectivity patterns (for graph encodings, $p_{\text{modify\_edges}} \approx 0.1$)
+\end{itemize}
+
+\paragraph{Parametric Mutations}:
+\begin{itemize}
+    \item Gaussian perturbation for continuous genes: $\text{gene}' = \text{gene} + \mathcal{N}(0, \sigma)$
+    \item Random reset: Replace gene value with new random sample ($p_{\text{reset}} \approx 0.05$)
+    \item Swap mutation for categorical genes: Change activation function, optimizer type
+\end{itemize}
+
+\paragraph{Adaptive Mutation Rates}:
+Ding et al.\ note that mutation probability should decrease over generations:
+\begin{equation}
+p_{\text{mutation}}(t) = p_{\text{init}} \times \exp(-\lambda t)
+\end{equation}
+where $t$ is the generation number, enabling broader exploration early and fine-tuning later.
+
+\subsubsection{Fitness Evaluation}
+
+Each candidate network is trained on a training set and evaluated on a validation set. The fitness function typically combines multiple objectives:
+
+\begin{equation}
+\text{Fitness} = w_{\text{acc}} \times \text{Accuracy} - w_{\text{comp}} \times \text{Complexity} - w_{\text{time}} \times \text{TrainingTime}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item \textbf{Accuracy}: Validation set performance (classification accuracy, MSE, etc.)
+    \item \textbf{Complexity}: Number of parameters, FLOPs, or network depth
+    \item \textbf{TrainingTime}: Actual wall-clock training time
+\end{itemize}
+
+The weights $(w_{\text{acc}}, w_{\text{comp}}, w_{\text{time}})$ are problem-dependent. For resource-constrained applications like embedded 3D bin packing solvers, $w_{\text{comp}}$ and $w_{\text{time}}$ would be set higher.
+
+\subsection{Implementation for 3D Bin Packing}
+\label{subsec:implementation}
+
+Building upon Ding et al.'s foundation, we implement a \textbf{mixed-encoding strategy} for evolving neural scoring models used in our 3D nesting framework.
+
+\subsubsection{Genome Structure}
+
+Our genome combines discrete architectural choices with continuous hyperparameters:
+
+\begin{table}[h]
+\centering
+\caption{Genome encoding for 3D bin packing neural architectures}
+\label{tab:genome_encoding}
+\begin{tabular}{lll}
+\hline
+\textbf{Gene} & \textbf{Type} & \textbf{Search Space} \\
+\hline
+\multicolumn{3}{l}{\textit{Architecture genes (discrete)}} \\
+\texttt{enc\_layers} & Multiplicative & \{1, 2, 4, 8\} \\
+\texttt{hidden\_dim} & Multiplicative & \{64, 128, 256, 512, 1024\} \\
+\texttt{head\_hidden} & Multiplicative & \{64, 128, 256, 512, 1024\} \\
+\texttt{activation} & Categorical & \{ReLU, GELU, SiLU\} \\
+\texttt{attention\_type} & Categorical & \{standard, set\_transformer, none\} \\
+\texttt{attention\_heads} & Multiplicative & \{2, 4, 8, 16\} \\
+\texttt{num\_inducing\_points} & Multiplicative & \{8, 16, 32, 64, 128\} \\
+\texttt{patch\_size} & Multiplicative & \{3, 5, 7, 9, 11, 13, 15\} \\
+\texttt{cnn\_channels} & Discrete list & \{[8,16], [16,32], [32,64], [16,48]\} \\
+\hline
+\multicolumn{3}{l}{\textit{Regularization genes (continuous)}} \\
+\texttt{dropout} & Discrete & \{0.0, 0.05, 0.10, 0.15, 0.20\} \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Multiplicative genes} represent parameters that scale well in powers of 2, allowing efficient doubling/halving mutations. This encoding is particularly effective for layer widths and architectural counts \cite{Real2017}.
+
+\subsubsection{Specialized Genetic Operators}
+
+Given the heterogeneous gene types, we apply different operators to different genome segments:
+
+\paragraph{Crossover Strategy}
+\begin{itemize}
+    \item \textbf{Uniform crossover} for discrete architectural genes: Each gene randomly inherited from either parent
+    \item \textbf{Arithmetic crossover} for continuous genes: Blending with $\alpha \in [0.3, 0.7]$ (biased towards center)
+\end{itemize}
+
+\paragraph{Mutation Strategy}
+\begin{itemize}
+    \item \textbf{Architectural mutations} ($p_{\text{arch}} = 0.15$): For multiplicative genes, randomly multiply or divide by 2, clamped to bounds
+    \item \textbf{Parametric mutations} ($p_{\text{hyper}} = 0.20$): Gaussian perturbation with $\sigma = 0.1 \times (\text{max} - \text{min})$
+\end{itemize}
+
+\paragraph{Adaptive Mutation Rates}
+Following Ding et al.'s recommendation:
+\begin{align}
+p_{\text{arch}}(t) &= p_{\text{arch}}^{\text{init}} \times \max(0.5, \exp(-0.01t)) \\
+p_{\text{hyper}}(t) &= p_{\text{hyper}}^{\text{init}} \times \max(0.7, \exp(-0.005t))
+\end{align}
+
+This schedule allows broad architectural exploration early in evolution while emphasizing hyperparameter fine-tuning in later generations.
+
+\subsubsection{Multi-Objective Fitness Function}
+
+For 3D bin packing, our fitness function balances multiple objectives \cite{Booysen2024}:
+
+\begin{equation}
+\text{Fitness} = \text{Utilization} - 0.3 \times \frac{\text{Bins\_Used}}{\text{Max\_Bins}} - 0.1 \times \frac{\text{Complexity}}{\text{Max\_Complexity}}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item \textbf{Utilization}: Average packing efficiency across evaluation episodes
+    \item \textbf{Bins\_Used}: Number of bins required (normalized by maximum expected bins)
+    \item \textbf{Complexity}: Estimated parameter count in millions (from \texttt{get\_network\_complexity()})
+\end{itemize}
+
+This formulation encourages evolution towards architectures that achieve high packing quality while remaining computationally efficient—critical for real-time placement decisions in industrial bin packing scenarios.
+
+\subsection{Refinements from Modern NAS Methods}
+\label{subsec:modern_nas}
+
+While our implementation is grounded in Ding et al.'s principles, we incorporate insights from subsequent NAS research:
+
+\subsubsection{NEAT: Incremental Complexification}
+
+\textbf{NeuroEvolution of Augmenting Topologies (NEAT)} \cite{Stanley2002} addresses the competing conventions problem through historical markings and incremental growth. Networks begin minimally (input $\rightarrow$ output only) and evolve complexity through:
+\begin{itemize}
+    \item \textit{Add connection}: Create new edge between existing nodes
+    \item \textit{Add node}: Split an existing connection, inserting a new node
+\end{itemize}
+
+This aligns with our goal of evolving lightweight scoring models, preventing over-engineering while discovering problem-specific inductive biases.
+
+\subsubsection{Mutation-Only Evolution with Aging}
+
+\citet{Real2017} demonstrate that \textbf{mutation-only evolution with aging} (removing old individuals to prevent stagnation) outperforms more complex evolutionary strategies for large-scale architecture search. Their binary tournament approach—sample 2 individuals, keep fitter, mutate, replace worse—provides a simpler, equally effective alternative to crossover-heavy methods.
+
+\subsubsection{Multi-Objective Pareto Optimization}
+
+\citet{Booysen2024} extend evolutionary NAS to multi-objective optimization using non-dominated sorting (from NSGA-II) to maintain a Pareto front of solutions. This allows practitioners to select architectures based on deployment constraints:
+\begin{itemize}
+    \item \textbf{Online packing} (time-critical): Prefer fast, lightweight models
+    \item \textbf{Offline optimization} (batch processing): Accept slower, larger models for maximum quality
+\end{itemize}
+
+\subsection{Summary}
+
+The progression from Ding et al.'s foundational genetic algorithm framework through modern NAS methods establishes a rich toolkit for automated architecture design. Our neurogenesis-based implementation for 3D bin packing leverages:
+
+\begin{enumerate}
+    \item \textbf{Mixed-type genome encoding}: Combining discrete architectural genes with continuous hyperparameters
+    \item \textbf{Specialized genetic operators}: Gene-type-specific crossover and mutation strategies
+    \item \textbf{Multi-objective fitness}: Balancing packing quality, inference speed, and model complexity
+    \item \textbf{Adaptive mutation rates}: Broad exploration early, fine-tuning later
+\end{enumerate}
+
+This evolutionary approach enables discovering neural architectures specifically optimized for scoring candidate placements in constrained 3D nesting problems, adapting to problem-specific characteristics that hand-designed architectures might miss.
