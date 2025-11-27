@@ -79,6 +79,10 @@ def compare_architectures(problem_path: str,
         'cnn_channels': [16, 32],      # Default CNN channels
         'dropout': 0.0,                # No dropout in baseline
         'activation': 'relu',          # ReLU activation
+        # Hyperparameters (NEW: now part of genome)
+        'lr': 1e-4,
+        'batch_size': 128,
+        'gamma': 0.992,
     })
     
     baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device)
