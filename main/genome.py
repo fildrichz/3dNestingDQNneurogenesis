@@ -7,6 +7,9 @@ Based on "Using Genetic Algorithms to Optimize Artificial Neural Networks"
 The genome encodes network architecture parameters using parameterization coding,
 which captures the most important characteristics: number of layers, neurons,
 connections, and structural components.
+
+EXTENDED: Co-evolution of architecture and training hyperparameters (Neuvo NAS+ 2025).
+Now also evolves learning rate, batch size, and discount factor alongside architecture.
 """
 
 import numpy as np
@@ -17,17 +20,19 @@ from dqn_core.dqn_enhanced import DQNConfigEnhanced
 class NetworkGenome:
     """
     Encodes neural network architecture as an evolvable genome.
-    
+
     Genes represent architectural parameters (Section 3.2):
     - Number of hidden layers
     - Number of neurons per layer
     - Attention mechanism configuration
     - Spatial feature extraction parameters
-    
-    Learning parameters (Section 3.3) are kept fixed for this study.
+
+    NEW: Also evolves key training hyperparameters (Neuvo NAS+ 2025):
+    - Learning rate, batch size, discount factor
+    - Other learning parameters (Section 3.3) remain fixed
     """
     
-    # Define search spaces for each gene (Section 3.2 parameters only)
+    # Define search spaces for each gene (Section 3.2 parameters + hyperparameters)
     # Multiplicative genes: {'type': 'multiplicative', 'base': X, 'min': Y, 'max': Z}
     # Discrete genes: list of valid values
     GENE_SPACES = {
@@ -50,13 +55,16 @@ class NetworkGenome:
 
         # Activation function - discrete (categorical)
         'activation': ['relu', 'gelu', 'silu'],
+
+        # Training hyperparameters (NEW: Neuvo NAS+ 2025 - co-evolution of architecture & hyperparameters)
+        'lr': [1e-5, 5e-5, 1e-4, 5e-4, 1e-3],
+        'batch_size': [64, 128, 256],
+        'gamma': [0.98, 0.985, 0.99, 0.992, 0.995],
     }
     
     # Fixed parameters (not evolved)
+    # NOTE: lr, batch_size, gamma are now evolved as genes (Neuvo NAS+ 2025)
     FIXED_PARAMS = {
-        'lr': 1e-4,
-        'batch_size': 128,
-        'gamma': 0.992,
         'n_step': 15,  # Match main training (was 3) - better credit assignment for sparse rewards
         'eps_start': 1.0,
         'eps_end': 0.15,
@@ -143,20 +151,25 @@ class NetworkGenome:
             max_actions=max_actions,
             device=device,
 
-            # EVOLVED PARAMETERS (Section 3.2)
+            # EVOLVED ARCHITECTURE PARAMETERS (Section 3.2)
             hidden=self.genes['hidden_dim'],
             enc_layers=self.genes['enc_layers'],
             head_hidden=self.genes['head_hidden'],
             use_attention=use_attention,
             attention_type=attention_type if use_attention else 'standard',
-            attention_heads=self.genes['attention_heads'],  # ✅ Now passed to config
+            attention_heads=self.genes['attention_heads'],
             num_inducing_points=self.genes['num_inducing_points'],
             heightmap_patch_size=self.genes['patch_size'],
             cnn_channels=self.genes['cnn_channels'],
             dropout=self.genes['dropout'],
             activation=self.genes['activation'],
 
-            # FIXED PARAMETERS (not part of Section 3.2 evolution)
+            # EVOLVED TRAINING HYPERPARAMETERS (NEW: Neuvo NAS+ 2025)
+            lr=self.genes['lr'],
+            batch_size=self.genes['batch_size'],
+            gamma=self.genes['gamma'],
+
+            # FIXED PARAMETERS (not evolved)
             **self.FIXED_PARAMS
         )
     
