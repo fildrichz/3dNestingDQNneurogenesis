@@ -79,6 +79,9 @@ def compare_architectures(problem_path: str,
         'cnn_channels': [16, 32],      # Default CNN channels
         'dropout': 0.0,                # No dropout in baseline
         'activation': 'relu',          # ReLU activation
+        'lr': 1e-4,
+        'batch_size': 128,
+        'gamma': 0.992,
     })
     
     baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device)
@@ -323,12 +326,13 @@ def train_with_evolved_genome(problem_path: str,
             avg_loss = sum(losses) / len(losses) if losses else 0
 
             print(f"Ep {ep+1:4d}/{episodes} | "
-                  f"Items: {avg_items:.1f}/{len(items)} | "
-                  f"Bins: {avg_bins:.1f} | "
-                  f"Util: {avg_util:.3f} | "
-                  f"Return: {avg_return:+.2f} | "
-                  f"Loss: {avg_loss:.4f} | "
-                  f"ε: {agent.epsilon:.3f}")
+            f"Items: {avg_items:.1f}/{len(items)} | "
+            f"Bins: {avg_bins:.1f} | "
+            f"Util: {avg_util:.3f} | "
+            f"Return: {avg_return:+.2f} | "
+            f"Loss: {avg_loss:.4f} | "
+            f"ε: {agent._eps:.3f}")
+
 
     # Final results
     print(f"\n{'='*80}")

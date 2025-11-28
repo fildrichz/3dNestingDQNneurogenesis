@@ -11,6 +11,12 @@ Implements the complete GA loop:
 4. Crossover (create offspring)
 5. Mutation (introduce variation)
 6. Repeat until convergence
+
+EXTENDED with modern improvements:
+- Adaptive population sizing (2024) - dynamic exploration/exploitation phases
+- Multi-objective fitness with parsimony pressure
+- Adaptive mutation rates with diversity tracking
+- Co-evolution of architecture and hyperparameters (Neuvo NAS+ 2025)
 """
 
 import numpy as np
@@ -22,6 +28,45 @@ from pathlib import Path
 from genome import NetworkGenome, create_initial_population, tournament_selection
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
 from nesting.dataset_loader import load_problem, BinPackingProblem
+
+
+def get_adaptive_population_size(generation: int,
+                                 total_generations: int,
+                                 base_population_size: int,
+                                 exploration_ratio: float = 1.5,
+                                 exploitation_ratio: float = 0.75) -> int:
+    """
+    Calculate dynamic population size based on evolution phase (2024 improvement).
+
+    Strategy:
+    - Early phase (first 1/3): Larger population for exploration (exploration_ratio × base)
+    - Middle phase (middle 1/3): Normal population (1.0 × base)
+    - Late phase (final 1/3): Smaller population for exploitation (exploitation_ratio × base)
+
+    This adapts computational resources to the search phase:
+    - More diversity early when exploring the space
+    - Focus on refining best solutions later
+
+    Args:
+        generation: Current generation (0-indexed)
+        total_generations: Total number of generations
+        base_population_size: Base population size parameter
+        exploration_ratio: Multiplier for early phase (default 1.5)
+        exploitation_ratio: Multiplier for late phase (default 0.75)
+
+    Returns:
+        Adjusted population size (integer)
+    """
+    progress = generation / max(total_generations - 1, 1)  # 0.0 to 1.0
+
+    if progress < 1.0 / 3.0:  # Early: exploration
+        ratio = exploration_ratio
+    elif progress > 2.0 / 3.0:  # Late: exploitation
+        ratio = exploitation_ratio
+    else:  # Middle: stable
+        ratio = 1.0
+
+    return int(base_population_size * ratio)
 
 
 def evaluate_genome_fitness(genome: NetworkGenome,
@@ -127,6 +172,9 @@ def evolve_architecture(problem,
                        elite_size: int = 2,
                        mutation_rate: float = 0.2,
                        adaptive_mutation: bool = True,
+                       adaptive_population: bool = True,
+                       exploration_ratio: float = 1.5,
+                       exploitation_ratio: float = 0.75,
                        crossover_method: str = 'uniform',
                        tournament_size: int = 3,
                        seed: Optional[int] = None,
@@ -137,12 +185,15 @@ def evolve_architecture(problem,
 
     Args:
         problem: BinPackingProblem instance
-        population_size: Number of genomes per generation
+        population_size: Base population size (will be dynamically adjusted if adaptive_population=True)
         generations: Number of generations to evolve
         episodes_per_eval: Episodes to train each architecture
         elite_size: Number of top genomes to preserve (elitism)
         mutation_rate: Initial probability of gene mutation
         adaptive_mutation: If True, decay mutation rate over generations
+        adaptive_population: If True, dynamically adjust population size across generations (2024)
+        exploration_ratio: Population multiplier for early exploration phase (default 1.5)
+        exploitation_ratio: Population multiplier for late exploitation phase (default 0.75)
         crossover_method: 'uniform' or 'single_point'
         tournament_size: Size of tournament for selection
         seed: Random seed for reproducibility (None = random)
@@ -185,15 +236,31 @@ def evolve_architecture(problem,
         print(f"GA-BASED NEURAL ARCHITECTURE EVOLUTION")
         print(f"{'='*80}")
         print(f"Problem: {W}×{D}×{H} container, {len(items)} items")
-        print(f"Population size: {population_size}")
+        print(f"Base population size: {population_size}")
+        if adaptive_population:
+            print(f"Adaptive population: ENABLED (exploration={exploration_ratio}×, exploitation={exploitation_ratio}×)")
+        else:
+            print(f"Adaptive population: DISABLED (fixed size)")
         print(f"Generations: {generations}")
         print(f"Episodes per evaluation: {episodes_per_eval}")
         print(f"Elite size: {elite_size}")
-        print(f"Mutation rate: {mutation_rate}")
+        print(f"Mutation rate: {mutation_rate} (adaptive: {adaptive_mutation})")
         print(f"{'='*80}\n")
-    
-    # Initialize population
-    population = create_initial_population(population_size)
+
+    # Initialize population with starting size
+    # For adaptive population, start with exploration size
+    if adaptive_population:
+        initial_size = get_adaptive_population_size(
+            0, generations, population_size, exploration_ratio, exploitation_ratio
+        )
+    else:
+        initial_size = population_size
+
+    population = create_initial_population(initial_size)
+
+    if verbose and adaptive_population:
+        print(f"Initial population size: {initial_size} (exploration phase)")
+        print()
     
     # Track best genome across all generations
     best_genome_ever = None
@@ -202,6 +269,7 @@ def evolve_architecture(problem,
     # Track evolution history
     history = {
         'generation': [],
+        'population_size': [],  # Track actual population size per generation
         'best_fitness': [],
         'avg_fitness': [],
         'std_fitness': [],
@@ -285,6 +353,7 @@ def evolve_architecture(problem,
         diversity_score /= len(NetworkGenome.GENE_SPACES)  # Normalize
 
         history['generation'].append(gen + 1)
+        history['population_size'].append(len(population))
         history['best_fitness'].append(gen_best.fitness)
         history['avg_fitness'].append(avg_fitness)
         history['std_fitness'].append(std_fitness)
@@ -300,6 +369,7 @@ def evolve_architecture(problem,
         if verbose:
             print(f"\n{'─'*80}")
             print(f"Generation {gen + 1} Summary:")
+            print(f"  Population size: {len(population)}")
             print(f"  Best fitness: {gen_best.fitness:.4f}")
             print(f"  Avg fitness: {avg_fitness:.4f} ± {std_fitness:.4f}")
             print(f"  Best utilization: {gen_best.metrics['avg_utilization']:.3f}")
@@ -323,10 +393,20 @@ def evolve_architecture(problem,
         
         # Create next generation
         if gen < generations - 1:  # Don't create new generation on last iteration
+            # Calculate target population size for next generation
+            if adaptive_population:
+                target_size = get_adaptive_population_size(
+                    gen + 1, generations, population_size,
+                    exploration_ratio, exploitation_ratio
+                )
+            else:
+                target_size = population_size
+
             next_population = []
 
-            # Elitism: Keep top performers
-            next_population.extend(population[:elite_size])
+            # Elitism: Keep top performers (but not more than target size)
+            num_elites = min(elite_size, target_size)
+            next_population.extend(population[:num_elites])
 
             # Adaptive mutation rate
             current_mutation_rate = mutation_rate
@@ -337,15 +417,19 @@ def evolve_architecture(problem,
                 current_mutation_rate = mutation_rate * (1.0 - 0.75 * progress)
 
                 # Boost mutation if population diversity is low
+                # Use relative threshold based on fitness range
                 fitness_std = np.std([g.fitness for g in population])
-                if fitness_std < 0.01:  # Low diversity threshold
+                fitness_mean = np.mean([g.fitness for g in population])
+                # Relative diversity: coefficient of variation
+                relative_diversity = fitness_std / max(abs(fitness_mean), 0.01)
+                if relative_diversity < 0.05:  # Low diversity threshold (5% CoV)
                     current_mutation_rate = min(mutation_rate * 1.5, 0.5)
                     if verbose:
-                        print(f"  ⚠ Low diversity detected (σ={fitness_std:.4f}), "
+                        print(f"  ⚠ Low diversity detected (CoV={relative_diversity:.4f}), "
                               f"boosting mutation to {current_mutation_rate:.3f}")
 
             # Fill rest of population with offspring
-            while len(next_population) < population_size:
+            while len(next_population) < target_size:
                 # Tournament selection
                 parent1 = tournament_selection(population, tournament_size)
                 parent2 = tournament_selection(population, tournament_size)
@@ -357,12 +441,15 @@ def evolve_architecture(problem,
                 child = child.mutate(mutation_rate=current_mutation_rate)
 
                 # Assign ID
-                child.genome_id = len(next_population) + gen * population_size
+                child.genome_id = len(next_population) + gen * max(target_size, population_size)
 
                 next_population.append(child)
 
-            if verbose and adaptive_mutation:
-                print(f"  Mutation rate: {current_mutation_rate:.3f}")
+            if verbose:
+                if adaptive_mutation:
+                    print(f"  Mutation rate: {current_mutation_rate:.3f}")
+                if adaptive_population and target_size != len(population):
+                    print(f"  Population size: {len(population)} → {target_size}")
 
             # Update mutation rate in history
             history['mutation_rate'][-1] = current_mutation_rate
