@@ -1,0 +1,448 @@
+\chapter{Proposed Method}
+\label{ch:proposed_method}
+
+This chapter presents our proposed method for solving the 3D bin packing problem with complex constraints. We begin by providing an overview of the system architecture, followed by detailed explanations of each component and the rationale behind our design choices.
+
+\section{Overview}
+
+Our approach combines geometric heuristics with deep reinforcement learning to address the multi-bin 3D packing problem defined in Section~\ref{sec:problem_definition}. The system follows a two-stage decision process:
+
+\begin{enumerate}
+    \item \textbf{Candidate Generation}: The Empty Maximal Spaces (EMS) heuristic generates a set of feasible placement positions for each item-bin pair.
+    \item \textbf{Candidate Scoring}: A Deep Q-Network (DQN) scores each candidate placement, and the highest-scoring valid action is selected.
+\end{enumerate}
+
+This hybrid architecture leverages the strengths of both approaches: EMS provides geometric reasoning and constraint filtering, while the neural network learns to optimize long-term packing quality through reinforcement learning.
+
+The overall system architecture is illustrated in Figure~\ref{fig:system_architecture}. At each decision step, the environment enumerates all valid actions (bin, item, EMS, rotation combinations), extracts state features and heightmap patches for each action, and passes them through the Q-network to obtain Q-values. The action with the highest Q-value is executed, placing the item and updating the bin state.
+
+\section{Reinforcement Learning Framework}
+
+\subsection{Why Reinforcement Learning?}
+
+Unlike supervised learning approaches that require large labeled datasets of optimal solutions~\cite{gao2020learning, zhao2021hybrid}, the 3D bin packing problem lacks such training data. The problem is NP-hard~\cite{garey1979computers}, and computing optimal solutions is intractable for realistic problem sizes. Even near-optimal solutions from heuristics are expensive to generate and may not generalize well across different problem instances.
+
+Reinforcement learning addresses this challenge by learning directly from interaction with the environment~\cite{sutton2018reinforcement}. RL agents learn through trial and error, receiving rewards based on the quality of their packing decisions. This eliminates the need for pre-computed optimal solutions and allows the agent to discover effective strategies through self-play.
+
+Furthermore, the sequential nature of bin packing---where each placement decision affects future possibilities---aligns naturally with the Markov Decision Process (MDP) framework that underlies reinforcement learning. The agent learns to maximize cumulative reward over the entire packing sequence, not just immediate placement quality.
+
+\subsection{Deep Q-Networks}
+
+We employ Deep Q-Networks (DQN)~\cite{mnih2015human}, a value-based reinforcement learning algorithm. DQN learns a Q-function $Q(s, a)$ that estimates the expected cumulative reward of taking action $a$ in state $s$ and following the optimal policy thereafter.
+
+The key advantages of DQN for our problem include:
+
+\begin{itemize}
+    \item \textbf{Sample Efficiency}: Experience replay allows the agent to learn from past experiences multiple times, improving sample efficiency.
+    \item \textbf{Stability}: Target networks provide stable learning targets, preventing the oscillations common in tabular Q-learning.
+    \item \textbf{Generalization}: Deep neural networks can generalize across similar states, learning patterns rather than memorizing individual configurations.
+\end{itemize}
+
+\subsection{Double DQN}
+
+We adopt the Double DQN variant~\cite{van2016deep} to address Q-value overestimation. Standard DQN uses the max operator for both action selection and evaluation, which introduces a positive bias:
+
+\begin{equation}
+Q(s, a) \leftarrow r + \gamma \max_{a'} Q_{\text{target}}(s', a')
+\end{equation}
+
+Double DQN decouples these operations, using the online network for action selection and the target network for evaluation:
+
+\begin{equation}
+Q(s, a) \leftarrow r + \gamma Q_{\text{target}}(s', \argmax_{a'} Q_{\text{online}}(s', a'))
+\end{equation}
+
+This reduces overestimation and leads to more accurate Q-value estimates, particularly important in our domain where many actions may have similar immediate rewards but different long-term consequences.
+
+\section{State and Action Space}
+
+\subsection{State Representation}
+
+The state representation captures both global packing progress and local geometric information:
+
+\paragraph{Global State Features} (scalar values):
+\begin{itemize}
+    \item Current bin utilization
+    \item Number of items placed
+    \item Number of items remaining
+    \item Current bin index
+    \item Total number of bins
+    \item Bin dimensions and weight capacity
+\end{itemize}
+
+These features provide context about overall packing efficiency and progress, allowing the agent to adjust its strategy based on how much of the problem remains.
+
+\paragraph{Item Features} (per-item vectors):
+\begin{itemize}
+    \item Dimensions (width, depth, height)
+    \item Weight
+    \item Incompatibility flags
+    \item Affinity group ID
+    \item Relative positioning constraints
+\end{itemize}
+
+The item features are processed through a permutation-invariant encoder (described in Section~\ref{sec:set_transformer}) to handle the variable number of remaining items.
+
+\subsection{Action Space and EMS Heuristic}
+
+\subsubsection{Why Empty Maximal Spaces?}
+
+As discussed in Section~\ref{sec:geometric_heuristics}, two main geometric heuristics exist for 3D bin packing: Extreme Points (EP)~\cite{crainic2008extreme} and Empty Maximal Spaces (EMS)~\cite{crainic2012packing}. We choose EMS for several critical advantages:
+
+\begin{enumerate}
+    \item \textbf{Collision-Free by Construction}: Each EMS represents a maximal empty rectangular volume. Any item placement within an EMS is guaranteed not to collide with existing items, eliminating the need for collision checking at decision time.
+
+    \item \textbf{Efficient Updates}: When an item is placed, we only need to update the EMS set once---splitting intersected spaces and removing dominated ones. With Extreme Points, collision checks must be performed for every candidate action at every decision step, which is computationally expensive.
+
+    \item \textbf{Bounded Action Space}: EMS naturally prunes infeasible placements. If an item is too large to fit in any EMS, it is automatically excluded from the action set. This keeps the action space manageable.
+
+    \item \textbf{Quality Metric}: The size and shape of available EMS spaces provides a geometric quality metric (described in Section~\ref{sec:ems_quality}) that can guide learning through reward shaping.
+\end{enumerate}
+
+The computational efficiency of EMS is particularly important for reinforcement learning, which requires millions of environment interactions during training. The collision-free guarantee and single-update-per-placement property significantly accelerate training.
+
+\subsubsection{Action Encoding}
+
+Each action is represented as an 8-tuple:
+\begin{equation}
+a = (\text{bin\_idx}, \text{item\_idx}, \text{ems\_idx}, \text{rot\_idx}, \text{ems}, \text{size}, \text{weight}, \text{item\_id})
+\end{equation}
+
+We extract a 25-dimensional feature vector for each action:
+\begin{itemize}
+    \item EMS corner position $(x, y, z)$ normalized by container dimensions
+    \item EMS dimensions $(w, d, h)$ normalized by container dimensions
+    \item Item dimensions $(w, d, h)$ in the selected rotation, normalized
+    \item Item weight normalized by bin capacity
+    \item Bin utilization after placement
+    \item Fit metrics: $(\frac{w_{\text{item}}}{w_{\text{ems}}}, \frac{d_{\text{item}}}{d_{\text{ems}}}, \frac{h_{\text{item}}}{h_{\text{ems}}})$
+    \item Space efficiency: $\frac{V_{\text{item}}}{V_{\text{ems}}}$
+    \item Flags: is\_corner\_placement, is\_bottom\_placement, is\_wall\_adjacent
+    \item Number of supporting boxes below
+    \item Center of mass distance from bin center
+    \item Remaining bin weight capacity after placement
+\end{itemize}
+
+These features capture both geometric properties (position, fit, support) and global context (utilization, capacity), enabling the network to reason about placement quality.
+
+\subsection{Heightmap Representation}
+
+In addition to the action features, we extract a $7 \times 7$ heightmap patch around each placement position. The heightmap is a 2D grid where each cell stores the maximum occupied height at that $(x, y)$ location in the bin.
+
+\subsubsection{Why Heightmaps?}
+
+Heightmaps provide crucial spatial context that scalar features cannot capture:
+
+\begin{enumerate}
+    \item \textbf{Local Geometry}: A patch around the placement position reveals the terrain---whether the location is in a corner, against a wall, in a valley, or on a plateau.
+    \item \textbf{Support Patterns}: The height variation indicates how well the new item will be supported and whether it might create unstable configurations.
+    \item \textbf{Future Packing Potential}: Placing an item in a valley creates a flat surface for future items, while placing on a peak creates fragmentation.
+\end{enumerate}
+
+This local spatial information complements the global action features, allowing the network to make placement decisions based on both immediate geometric fit and long-term packing potential.
+
+The $7 \times 7$ patch size provides sufficient context ($\pm 3$ cells around the placement) while keeping the computational cost manageable. Patches are normalized by container height to ensure values are in the $[0, 1]$ range.
+
+\section{Reward Design}
+
+\subsection{The Sparse Reward Problem}
+
+Bin packing is naturally a sparse reward problem. The primary objective---minimizing the number of bins---only provides feedback at the end of an episode when all items are placed. Intermediate placement decisions receive no signal about their quality.
+
+This sparsity creates severe learning challenges:
+\begin{itemize}
+    \item \textbf{Credit Assignment}: Which of the hundreds of placement decisions led to needing an extra bin?
+    \item \textbf{Exploration}: Random exploration rarely produces good solutions, providing little learning signal.
+    \item \textbf{Slow Learning}: The agent may take millions of episodes to discover reward-producing behaviors.
+\end{itemize}
+
+Reward shaping addresses this by providing intermediate rewards that guide learning while preserving the optimal policy~\cite{ng1999policy}.
+
+\subsection{Potential-Based Reward Shaping}
+
+We employ potential-based reward shaping~\cite{ng1999policy}, which augments the environment reward with a shaping function based on state potential:
+
+\begin{equation}
+r_{\text{shaped}}(s, a, s') = r_{\text{env}}(s, a, s') + \gamma \cdot \Phi(s') - \Phi(s)
+\end{equation}
+
+where $\Phi(s)$ is the potential function. This formulation guarantees that the optimal policy under the shaped reward is identical to the optimal policy under the original reward, as proven by Ng et al.~\cite{ng1999policy}.
+
+\subsubsection{Our Potential Function}
+
+We define the potential as a combination of bin utilization and EMS quality:
+
+\begin{equation}
+\Phi(s) = \text{bin\_utilization}(s) + 0.3 \cdot \text{ems\_quality}(s)
+\end{equation}
+
+\begin{itemize}
+    \item \textbf{Bin Utilization}: The ratio of occupied volume to total bin capacity. This encourages tight packing and efficient space usage.
+    \item \textbf{EMS Quality}: A measure of how well-shaped the remaining empty spaces are (detailed in Section~\ref{sec:ems_quality}). This discourages fragmentation.
+\end{itemize}
+
+The coefficient 0.3 was chosen empirically to balance immediate packing efficiency (utilization) with future packing potential (EMS quality).
+
+\subsection{EMS Quality Metric}
+\label{sec:ems_quality}
+
+Fragmentation---creating many small, irregularly-shaped empty spaces---is a major challenge in bin packing. To discourage this, we define an EMS quality metric:
+
+\begin{equation}
+\text{ems\_quality}(\text{bin}) = \frac{\sqrt[3]{\text{avg\_volume\_top3\_largest\_ems}}}{H_{\text{bin}}}
+\end{equation}
+
+We use the cube root to convert volume back to a linear scale comparable to height. By focusing on the top-3 largest spaces rather than all spaces, we emphasize maintaining a few large packing opportunities rather than many tiny crevices.
+
+This metric provides a continuous signal: placements that preserve large, usable spaces receive higher rewards than those that create fragmentation.
+
+\subsection{Terminal Reward}
+
+Upon successfully packing all items, the agent receives a terminal reward based on the number of bins used:
+
+\begin{equation}
+r_{\text{terminal}} = 100 - 20 \cdot (\text{num\_bins\_used} - 1)
+\end{equation}
+
+This provides a strong signal for bin minimization while still rewarding valid solutions. The shaped intermediate rewards guide the agent toward configurations that achieve this terminal goal.
+
+\section{Neural Network Architecture}
+
+Our Q-network architecture processes three types of inputs: global state features, per-action features, and per-action heightmap patches. These are combined through specialized modules and an attention mechanism to produce Q-values for each candidate action.
+
+\subsection{Heightmap CNN}
+
+\subsubsection{Why Convolutional Neural Networks?}
+
+Convolutional Neural Networks~\cite{lecun1998gradient} excel at extracting spatial features from grid-structured data. The heightmap patches are precisely such data: a 2D grid where spatial patterns (corners, edges, valleys, plateaus) indicate geometric properties.
+
+Standard fully-connected networks would not exploit the spatial structure---they treat each grid cell independently and must learn from scratch that adjacent cells are related. CNNs, through their local receptive fields and weight sharing, inherently capture spatial patterns.
+
+\subsubsection{Architecture}
+
+Our heightmap CNN processes each $7 \times 7$ patch through the following layers:
+
+\begin{equation}
+\begin{aligned}
+&\text{Input:} \quad (1, 7, 7) \text{ single-channel heightmap patch} \\
+&\quad \downarrow \\
+&\text{Conv2d}(1 \to 32, k=3 \times 3, p=1) + \text{ReLU} \\
+&\quad \downarrow \\
+&\text{Conv2d}(32 \to 64, k=3 \times 3, p=1) + \text{ReLU} \\
+&\quad \downarrow \\
+&\text{AdaptiveAvgPool2d}(1 \times 1) \quad \text{(Global average pooling)} \\
+&\quad \downarrow \\
+&\text{Flatten} \to \text{Linear}(64 \to 64) + \text{ReLU} \\
+&\quad \downarrow \\
+&\text{Output:} \quad 64\text{-dimensional embedding}
+\end{aligned}
+\end{equation}
+
+The two convolutional layers extract increasingly abstract spatial features: the first layer detects basic patterns (edges, gradients), while the second combines these into higher-level structures (corners, valleys). Global average pooling aggregates spatial information into a fixed-size representation, and the final linear layer produces a 64-dimensional embedding.
+
+This design is lightweight yet effective, processing each heightmap patch in parallel (one per action) with minimal computational cost.
+
+\subsection{Set Transformer for Actions}
+\label{sec:set_transformer}
+
+\subsubsection{Why Attention Mechanisms?}
+
+The number of valid actions varies dramatically across states---from a few dozen to several hundred depending on the number of remaining items, available EMS spaces, and constraint satisfaction. Traditional approaches either:
+
+\begin{enumerate}
+    \item \textbf{Pad to fixed size}: Wastes computation on padding tokens.
+    \item \textbf{Process sequentially}: Loses parallelism and inter-action relationships.
+\end{enumerate}
+
+Transformer architectures~\cite{vaswani2017attention} solve this through self-attention, which allows each action to attend to all others and learn relational patterns. In bin packing, this is crucial: the value of placing item A in position 1 depends on whether item B has better alternative placements.
+
+\subsubsection{Set Transformer}
+
+We employ the Set Transformer architecture~\cite{lee2019set}, specifically the Induced Set Attention Block (ISAB), which achieves permutation invariance---essential since action order is arbitrary.
+
+The ISAB uses a set of learnable inducing points to reduce computational complexity from $\mathcal{O}(N^2)$ to $\mathcal{O}(NM)$, where $M$ is the number of inducing points (we use $M=32$). This allows efficient processing of large action sets.
+
+\subsubsection{Architecture}
+
+\begin{equation}
+\begin{aligned}
+&\text{Input:} \quad (A, d_{\text{action}}) \text{ action features, where } A \text{ varies} \\
+&\quad \downarrow \\
+&\text{ISAB}(d_{\text{action}}, \text{num\_heads}=4, \text{num\_inducing}=32) \\
+&\quad \downarrow \\
+&\text{ISAB}(d_{\text{action}}, \text{num\_heads}=4, \text{num\_inducing}=32) \\
+&\quad \downarrow \\
+&\text{Output:} \quad (A, d_{\text{action}}) \text{ contextual action embeddings}
+\end{aligned}
+\end{equation}
+
+Each action's embedding is updated based on all other actions, allowing the network to reason about action interdependencies and competition for resources.
+
+\subsection{Complete Q-Network Architecture}
+
+The complete architecture integrates all components:
+
+\begin{enumerate}
+    \item \textbf{State Encoder}: \\
+    Global state $\to$ MLP(3 layers, [128, 128, 64]) $\to$ state\_embedding (64-dim)
+
+    \item \textbf{Action Encoder}: \\
+    Action features (25-dim) $\to$ MLP(2 layers, [128, 128]) $\to$ action\_embedding (128-dim)
+
+    \item \textbf{Heightmap Processing}: \\
+    For each action: heightmap\_patch ($7 \times 7$) $\to$ CNN $\to$ heightmap\_embedding (64-dim)
+
+    \item \textbf{Feature Fusion}: \\
+    Concatenate: [action\_embedding, heightmap\_embedding, state\_embedding] \\
+    $\to$ combined\_features ($128 + 64 + 64 = 256$-dim per action)
+
+    \item \textbf{Attention}: \\
+    combined\_features ($A, 256$) $\to$ Set Transformer ISABs $\to$ contextualized\_features ($A, 256$)
+
+    \item \textbf{Q-Value Head}: \\
+    For each action: contextualized\_features $\to$ MLP(2 layers, [128, 1]) $\to$ $Q(s, a)$
+\end{enumerate}
+
+This architecture allows the network to:
+\begin{itemize}
+    \item Extract spatial patterns from heightmaps (CNN)
+    \item Reason about action relationships (Set Transformer)
+    \item Integrate global state context (state embedding broadcast to all actions)
+    \item Produce Q-values that account for both local geometry and global optimization
+\end{itemize}
+
+\section{Training Strategy}
+
+\subsection{Experience Replay}
+
+We use experience replay~\cite{mnih2015human} with a buffer size of 100,000 transitions. Each transition stores:
+\begin{equation}
+(s_t, a_t, r_t, s_{t+1}, \text{done}_t, \text{action\_mask}_{t+1})
+\end{equation}
+
+The action\_mask is crucial for handling variable action spaces: it indicates which actions are valid in the next state, ensuring the target Q-value computation only considers feasible actions.
+
+Replay provides two benefits:
+\begin{enumerate}
+    \item \textbf{Sample Efficiency}: Each environment interaction can be reused for multiple gradient updates.
+    \item \textbf{Decorrelation}: Sampling random minibatches breaks temporal correlations, stabilizing learning.
+\end{enumerate}
+
+\subsection{N-Step Returns}
+
+Standard Q-learning uses 1-step returns:
+\begin{equation}
+Q(s, a) \leftarrow r + \gamma \max_{a'} Q(s', a')
+\end{equation}
+
+We employ n-step returns~\cite{sutton2018reinforcement} with $n=15$ to propagate terminal rewards more rapidly:
+\begin{equation}
+Q(s, a) \leftarrow \sum_{i=0}^{n-1} \gamma^i r_{t+i} + \gamma^n \max_{a'} Q(s_{t+n}, a')
+\end{equation}
+
+This is particularly important given the sparse terminal reward for bin minimization. With 1-step returns, the terminal reward would require hundreds of episodes to propagate back to early decisions. N-step returns accelerate this credit assignment, allowing the agent to learn which early placements lead to bin savings.
+
+\subsection{Target Network Updates}
+
+The target network is updated every 1,000 training steps using a soft update with $\tau=0.005$:
+\begin{equation}
+\theta_{\text{target}} \leftarrow \tau \theta_{\text{online}} + (1 - \tau) \theta_{\text{target}}
+\end{equation}
+
+This provides stable learning targets while allowing gradual incorporation of improvements from the online network.
+
+\subsection{Exploration Strategy}
+
+We use $\varepsilon$-greedy exploration with exponential decay:
+\begin{itemize}
+    \item Initial $\varepsilon = 1.0$ (pure exploration)
+    \item Final $\varepsilon = 0.05$ (5\% exploration)
+    \item Decay over 500,000 steps
+\end{itemize}
+
+Early exploration helps discover diverse packing strategies, while later exploitation refines the learned policy.
+
+\subsection{Curriculum Learning}
+
+Training begins with simpler problem instances (fewer items, fewer constraints) and gradually increases difficulty. This curriculum approach~\cite{bengio2009curriculum} helps the agent master basic packing before tackling complex constraint satisfaction.
+
+\section{Neural Architecture Search with Neurogenesis}
+
+\subsection{Motivation}
+
+The neural architecture described in Section~\ref{sec:set_transformer} contains numerous hyperparameters: network depths, layer widths, number of attention heads, CNN channels, activation functions, and more. Manual hyperparameter tuning is time-consuming and may miss better configurations.
+
+Neural Architecture Search (NAS)~\cite{elsken2019neural} automates this process. We employ an evolutionary approach inspired by neurogenesis---the growth of new neurons in biological neural networks~\cite{kempermann2015activity}.
+
+\subsection{Genome Encoding}
+
+Each candidate architecture is encoded as a genome---a dictionary of hyperparameters:
+
+\begin{itemize}
+    \item \textbf{State encoder}: depth $\in \{2, 3, 4\}$, width $\in \{64, 128, 256\}$
+    \item \textbf{Action encoder}: depth $\in \{1, 2, 3\}$, width $\in \{64, 128, 256\}$
+    \item \textbf{Heightmap CNN}: channels $\in \{[16, 32], [32, 64], [64, 128]\}$
+    \item \textbf{Attention}: num\_heads $\in \{2, 4, 8\}$, num\_inducing $\in \{16, 32, 64\}$, num\_isab\_blocks $\in \{1, 2, 3\}$
+    \item \textbf{Q-value head}: depth $\in \{1, 2, 3\}$, width $\in \{64, 128, 256\}$
+    \item \textbf{Training}: learning\_rate $\in \{10^{-4}, 3 \times 10^{-4}, 10^{-3}\}$, gamma $\in \{0.95, 0.99, 0.995\}$, n\_step $\in \{1, 5, 15\}$
+    \item \textbf{Activation}: $\in \{\text{ReLU}, \text{ELU}, \text{LeakyReLU}\}$
+\end{itemize}
+
+\subsection{Evolutionary Algorithm}
+
+The evolutionary process follows these steps:
+
+\begin{enumerate}
+    \item \textbf{Initialization}: Generate a population of $N$ random genomes.
+    \item \textbf{Evaluation}: Train each genome's architecture for $K$ episodes and evaluate on a validation set.
+    \item \textbf{Selection}: Select the top $M$ performers as parents.
+    \item \textbf{Crossover}: Create offspring by combining parent genomes.
+    \item \textbf{Mutation}: Randomly modify offspring genomes with probability $p_{\text{mut}}$.
+    \item \textbf{Iteration}: Repeat for $G$ generations.
+\end{enumerate}
+
+This process explores the architecture space efficiently, leveraging successful configurations through crossover and discovering novel designs through mutation~\cite{real2019regularized}.
+
+\subsection{Fitness Function}
+
+Genomes are evaluated on multiple criteria:
+\begin{itemize}
+    \item \textbf{Packing performance}: Average number of bins used on validation instances.
+    \item \textbf{Training stability}: Variance in episode returns during training.
+    \item \textbf{Computational cost}: Number of parameters and inference time.
+\end{itemize}
+
+The fitness function balances these objectives, favoring architectures that pack efficiently without excessive complexity.
+
+\section{System Integration}
+
+The complete system integrates all components described above:
+
+\begin{enumerate}
+    \item \textbf{Problem instances} are loaded with items, bins, and constraints.
+    \item The \textbf{EMS-based environment} generates valid actions at each step.
+    \item \textbf{Heightmap patches} are extracted around each action's placement position.
+    \item The \textbf{Q-network} scores all actions based on features, heightmaps, and attention.
+    \item The \textbf{highest-scoring valid action} is executed.
+    \item The \textbf{reward shaping function} provides learning signals.
+    \item \textbf{Experience replay} stores transitions for training.
+    \item \textbf{Double DQN with n-step returns} updates the Q-network.
+    \item \textbf{Neurogenesis} searches for optimal architectures.
+\end{enumerate}
+
+This integration creates a complete learning system that addresses the challenges of 3D bin packing: constraint satisfaction (EMS + environment), long-term optimization (RL + reward shaping), spatial reasoning (heightmap CNN), and action relationships (Set Transformer).
+
+\section{Summary}
+
+Our proposed method combines classical geometric heuristics (EMS) with modern deep reinforcement learning (DQN, Transformers) to solve constrained 3D bin packing. The key innovations include:
+
+\begin{enumerate}
+    \item \textbf{EMS for efficiency}: Collision-free candidate generation with single-update-per-placement.
+    \item \textbf{Reward shaping for learning}: Potential-based shaping using utilization and EMS quality to address sparse rewards.
+    \item \textbf{Heightmap CNN for spatial reasoning}: Convolutional networks extract local geometric patterns.
+    \item \textbf{Set Transformer for action relationships}: Attention mechanisms model interdependencies between placements.
+    \item \textbf{N-step returns for credit assignment}: Multi-step bootstrapping propagates terminal rewards rapidly.
+    \item \textbf{Neurogenesis for architecture search}: Evolutionary optimization discovers effective network designs.
+\end{enumerate}
+
+Each design choice is motivated by specific problem characteristics identified in Chapter~\ref{ch:problem_analysis} and builds upon state-of-the-art methods reviewed in Chapter~\ref{ch:state_of_art}. The result is a system that learns effective packing strategies without labeled training data, handles complex real-world constraints, and optimizes for long-term bin minimization.
