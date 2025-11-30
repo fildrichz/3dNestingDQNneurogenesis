@@ -46,26 +46,13 @@ a = (\text{bin\_idx}, \text{item\_idx}, \text{ems\_idx}, \text{rot\_idx})
 
 At each decision step, the environment enumerates all valid combinations: for each bin, for each remaining item, for each EMS that can fit the item, for each of the 6 possible rotations. This generates anywhere from dozens to hundreds of candidate actions depending on problem state.
 
-Each action is encoded as a 25-dimensional feature vector capturing:
-
-\begin{itemize}
-    \item EMS corner position $(x, y, z)$ and dimensions $(w, d, h)$, normalized by container dimensions
-    \item Item dimensions $(w, d, h)$ in the selected rotation, normalized
-    \item Item weight normalized by bin capacity
-    \item Fit metrics: $(\frac{w_{\text{item}}}{w_{\text{ems}}}, \frac{d_{\text{item}}}{d_{\text{ems}}}, \frac{h_{\text{item}}}{h_{\text{ems}}})$
-    \item Space efficiency: $\frac{V_{\text{item}}}{V_{\text{ems}}}$
-    \item Geometric flags: is\_corner\_placement, is\_bottom\_placement, is\_wall\_adjacent
-    \item Support and stability: number of supporting boxes, center of mass distance from bin center
-    \item Bin utilization after placement, remaining weight capacity
-\end{itemize}
-
-These features capture both immediate geometric properties and global context.
+To enable learning, each action must be represented numerically. We encode actions as feature vectors capturing geometric properties (positions, dimensions, fit metrics), stability indicators (support, center of mass), and contextual information (bin utilization, remaining capacity). These features provide the neural network with information about both immediate placement quality and global packing state.
 
 \subsection{Heightmap Representation}
 
-Scalar features alone cannot capture spatial structure. Consider two placements with identical utilization and fit metrics, but one places an item in a valley (creating a flat surface for future items) while the other creates a protruding tower (fragmenting the space).
+Scalar features alone cannot capture spatial structure. Consider two placements with identical utilization and fit metrics, but one places an item in a valley (creating a flat surface for future items) while the other creates a protruding tower (fragmenting the space). To address this, we need a spatial representation.
 
-We represent each bin as a heightmap: a 2D grid where each cell stores the maximum occupied height at that $(x, y)$ location. For each candidate action, we extract a $7 \times 7$ patch centered on the placement position.
+We represent each bin as a heightmap: a 2D grid where each cell stores the maximum occupied height at that $(x, y)$ location. For each candidate action, we extract a local patch centered on the placement position, providing a window into the surrounding geometry.
 
 % \begin{figure}[h]
 % \centering
@@ -81,7 +68,7 @@ This local spatial information reveals:
     \item \textbf{Future Packing Potential}: Whether placement creates a flat surface or fragmentation
 \end{itemize}
 
-The $7 \times 7$ patch size provides sufficient context ($\pm 3$ cells around placement) while keeping computational cost manageable. Patches are normalized by container height to ensure values in $[0, 1]$ range.
+The patch must be large enough to capture surrounding context, yet small enough to remain computationally tractable during training.
 
 \section{Learning to Pack: Reinforcement Learning}
 
@@ -150,35 +137,22 @@ Bin packing presents a sparse reward problem: the primary objective (minimizing 
     \item \textbf{Slow Learning}: Random exploration rarely produces good solutions
 \end{itemize}
 
-We employ potential-based reward shaping~\cite{ng1999policy}, which augments environment reward with a shaping function:
+To address this, we employ potential-based reward shaping~\cite{ng1999policy}, which augments the sparse environment reward with auxiliary signals:
 
 \begin{equation}
 r_{\text{shaped}}(s, a, s') = r_{\text{env}}(s, a, s') + \gamma \cdot \Phi(s') - \Phi(s)
 \end{equation}
 
-This formulation guarantees the optimal policy under shaped reward is identical to the optimal policy under original reward.
+This formulation has a critical theoretical property: it guarantees the optimal policy under shaped reward is identical to the optimal policy under the original reward. We can guide learning without biasing the final solution.
 
-Our potential function combines bin utilization and EMS quality:
+Our potential function $\Phi(s)$ combines two intuitions:
 
-\begin{equation}
-\Phi(s) = \text{bin\_utilization}(s) + 0.3 \cdot \text{ems\_quality}(s)
-\end{equation}
+\begin{itemize}
+    \item \textbf{Bin Utilization}: Reward filling bins efficiently, measured by volume utilization
+    \item \textbf{Space Quality}: Reward maintaining well-shaped empty spaces that can accommodate future items. EMS provides a natural metric---the largest remaining spaces indicate packing potential. By focusing on the largest spaces rather than total empty volume, we discourage fragmentation into many small, unusable gaps.
+\end{itemize}
 
-where EMS quality measures how well-shaped the remaining empty spaces are:
-
-\begin{equation}
-\text{ems\_quality}(\text{bin}) = \frac{\sqrt[3]{\text{avg\_volume\_top3\_largest\_ems}}}{H_{\text{bin}}}
-\end{equation}
-
-The cube root converts volume to a linear scale. By focusing on the top-3 largest spaces, we emphasize maintaining large packing opportunities rather than many tiny crevices. This discourages fragmentation.
-
-Upon successfully packing all items, the agent receives:
-
-\begin{equation}
-r_{\text{terminal}} = 100 - 20 \cdot (\text{num\_bins\_used} - 1)
-\end{equation}
-
-The shaped intermediate rewards guide the agent toward configurations achieving this terminal goal.
+At episode termination, the agent receives reward based on the number of bins used, with strong penalties for exceeding the minimum. The shaped intermediate rewards guide the agent toward configurations that achieve this terminal objective.
 
 \section{Neural Architecture}
 
@@ -188,62 +162,39 @@ Now that we have established what to learn (Q-function via DQN) and what signals
 
 Heightmap patches are 2D grids where spatial patterns indicate geometric properties. Convolutional Neural Networks~\cite{lecun1998gradient} excel at extracting features from such grid-structured data through local receptive fields and weight sharing.
 
-Our heightmap CNN processes each $7 \times 7$ patch:
-
-\begin{equation}
-\begin{aligned}
-&\text{Input:} \quad (1, 7, 7) \\
-&\quad \downarrow \\
-&\text{Conv2d}(1 \to 32, k=3, p=1) + \text{ReLU} \\
-&\quad \downarrow \\
-&\text{Conv2d}(32 \to 64, k=3, p=1) + \text{ReLU} \\
-&\quad \downarrow \\
-&\text{GlobalAvgPool2d} \to \text{Linear}(64 \to 64) + \text{ReLU} \\
-&\quad \downarrow \\
-&\text{Output:} \quad 64\text{-dim embedding}
-\end{aligned}
-\end{equation}
-
-The first layer detects basic patterns (edges, gradients), the second combines these into higher-level structures (corners, valleys). Global pooling aggregates spatial information into fixed-size representation.
+We employ a CNN to process heightmap patches. Early convolutional layers detect basic spatial patterns like edges and gradients. Deeper layers combine these into higher-level geometric structures such as corners, valleys, and plateaus. Finally, pooling aggregates the spatial information into a fixed-size embedding suitable for downstream processing.
 
 % \begin{figure}[h]
 % \centering
 % \includegraphics[width=0.9\textwidth]{figures/heightmap_cnn.png}
-% \caption{Heightmap CNN architecture processing $7 \times 7$ patches to extract spatial features.}
+% \caption{Heightmap CNN architecture processing patches to extract spatial features.}
 % \label{fig:heightmap_cnn}
 % \end{figure}
 
 \subsection{Modeling Action Relationships: Set Transformer}
 
-The number of valid actions varies dramatically---from dozens to hundreds depending on remaining items and available spaces. The value of placing item A in position 1 depends on whether item B has better alternatives.
+The number of valid actions varies dramatically---from dozens to hundreds depending on remaining items and available spaces. The value of placing item A in position 1 depends on whether item B has better alternatives. To address this interdependency, we need a mechanism for actions to reason about each other.
 
-Transformer architectures~\cite{vaswani2017attention} allow each action to attend to all others through self-attention. We employ the Set Transformer~\cite{lee2019set}, specifically Induced Set Attention Blocks (ISAB), which achieve permutation invariance (essential since action order is arbitrary) and reduce complexity from $\mathcal{O}(N^2)$ to $\mathcal{O}(NM)$ using $M=32$ inducing points.
+Transformer architectures~\cite{vaswani2017attention} allow each action to attend to all others through self-attention. We employ the Set Transformer~\cite{lee2019set}, specifically Induced Set Attention Blocks (ISAB), which achieve two critical properties:
 
-\begin{equation}
-\begin{aligned}
-&\text{Input:} \quad (A, d) \text{ action features, } A \text{ varies} \\
-&\quad \downarrow \\
-&\text{ISAB}(d, \text{heads}=4, \text{inducing}=32) \\
-&\quad \downarrow \\
-&\text{ISAB}(d, \text{heads}=4, \text{inducing}=32) \\
-&\quad \downarrow \\
-&\text{Output:} \quad (A, d) \text{ contextualized embeddings}
-\end{aligned}
-\end{equation}
+\begin{enumerate}
+    \item \textbf{Permutation Invariance}: The action set has no inherent order---action ordering is arbitrary. Set operations must respect this symmetry.
+    \item \textbf{Computational Efficiency}: Standard attention has $\mathcal{O}(N^2)$ complexity where $N$ is the number of actions. ISABs use inducing points to reduce this to $\mathcal{O}(NM)$ where $M \ll N$, making attention tractable even when hundreds of actions are available.
+\end{enumerate}
 
-Each action's embedding is updated based on all other actions, enabling reasoning about interdependencies and resource competition.
+Through self-attention, each action's representation is contextualized by all other actions, enabling the network to reason about interdependencies, competition for resources, and relative action quality.
 
 \subsection{Complete Architecture}
 
-The complete Q-network integrates all components:
+The complete Q-network integrates all components in a multi-stream architecture:
 
 \begin{enumerate}
-    \item \textbf{State Encoder}: Global state $\to$ MLP(3 layers, [128, 128, 64]) $\to$ 64-dim embedding
-    \item \textbf{Action Encoder}: Action features (25-dim) $\to$ MLP(2 layers, [128, 128]) $\to$ 128-dim embedding
-    \item \textbf{Heightmap Processing}: For each action: patch $\to$ CNN $\to$ 64-dim embedding
-    \item \textbf{Fusion}: Concatenate [action, heightmap, state] $\to$ 256-dim per action
-    \item \textbf{Attention}: Set Transformer ISABs $\to$ contextualized 256-dim features
-    \item \textbf{Q-Head}: MLP(2 layers, [128, 1]) $\to$ $Q(s, a)$
+    \item \textbf{State Encoder}: Processes global state features (bin utilization, remaining items, constraints) through fully-connected layers to produce a state embedding
+    \item \textbf{Action Encoder}: Processes action feature vectors through fully-connected layers to produce action embeddings
+    \item \textbf{Heightmap Processing}: For each action, processes the corresponding heightmap patch through the CNN to extract spatial embeddings
+    \item \textbf{Fusion}: Combines action, heightmap, and state embeddings for each candidate action
+    \item \textbf{Attention}: Set Transformer processes all action embeddings jointly, producing contextualized representations
+    \item \textbf{Q-Head}: Final layers map contextualized embeddings to Q-values $Q(s, a)$
 \end{enumerate}
 
 % \begin{figure}[h]
@@ -257,57 +208,59 @@ This architecture extracts spatial patterns (CNN), reasons about action relation
 
 \subsection{Training Strategy}
 
-\paragraph{Experience Replay} We use a replay buffer of 100,000 transitions $(s_t, a_t, r_t, s_{t+1}, \text{done}_t, \text{action\_mask}_{t+1})$. The action mask indicates valid actions in the next state, crucial for variable action spaces. Replay provides sample efficiency and decorrelates training data.
+\paragraph{Experience Replay} We use a replay buffer storing transitions $(s_t, a_t, r_t, s_{t+1}, \text{done}_t, \text{action\_mask}_{t+1})$. The action mask indicates valid actions in the next state, crucial for variable action spaces. Replay provides sample efficiency (learning from each transition multiple times) and decorrelates training data (breaking temporal correlations that can destabilize learning).
 
-\paragraph{N-Step Returns} Standard Q-learning uses 1-step returns. We employ $n=15$ step returns~\cite{sutton2018reinforcement}:
+\paragraph{N-Step Returns} Standard Q-learning uses 1-step returns, which propagate rewards slowly. We encounter a credit assignment problem: when packing fails, which of the hundreds of placement decisions was responsible? To address this, we employ multi-step returns~\cite{sutton2018reinforcement}:
 
 \begin{equation}
 Q(s, a) \leftarrow \sum_{i=0}^{n-1} \gamma^i r_{t+i} + \gamma^n \max_{a'} Q(s_{t+n}, a')
 \end{equation}
 
-This propagates terminal rewards more rapidly. With 1-step returns, terminal reward requires hundreds of episodes to propagate back to early decisions. N-step accelerates credit assignment.
+This propagates terminal rewards more rapidly through the episode. With 1-step returns, terminal reward requires hundreds of episodes to propagate back to early decisions. Multi-step returns accelerate credit assignment by incorporating multiple future rewards directly.
 
-\paragraph{Target Networks} Updated every 1,000 steps via soft update with $\tau=0.005$:
+\paragraph{Target Networks} We use soft updates to the target network:
 \begin{equation}
 \theta_{\text{target}} \leftarrow \tau \theta_{\text{online}} + (1 - \tau) \theta_{\text{target}}
 \end{equation}
 
-\paragraph{Exploration} $\varepsilon$-greedy with decay from $\varepsilon=1.0$ to $\varepsilon=0.05$ over 500,000 steps.
+This provides stable learning targets while allowing the target network to track the online network's improvements.
 
-\paragraph{Curriculum Learning} Training begins with simpler instances (fewer items, fewer constraints) and gradually increases difficulty~\cite{bengio2009curriculum}.
+\paragraph{Exploration} We employ $\varepsilon$-greedy exploration with gradual decay, balancing exploration of new strategies with exploitation of learned policies.
+
+\paragraph{Curriculum Learning} Training begins with simpler instances (fewer items, fewer constraints) and gradually increases difficulty~\cite{bengio2009curriculum}. This allows the agent to build foundational packing skills before tackling complex constraint combinations.
 
 \section{Evolving the Architecture: Neurogenesis}
 
-The neural architecture contains numerous hyperparameters: network depths, layer widths, attention heads, CNN channels, activation functions. Manual tuning is time-consuming and may miss better configurations.
+The neural architecture contains numerous hyperparameters: network depths, layer widths, attention heads, CNN channels, activation functions. We encounter a design challenge: manual tuning is time-consuming, requires domain expertise, and may miss better configurations in the vast hyperparameter space.
 
-Neural Architecture Search (NAS)~\cite{elsken2019neural} automates this process. We employ an evolutionary approach inspired by neurogenesis---the growth of new neurons in biological networks~\cite{kempermann2015activity}.
+To address this, we turn to Neural Architecture Search (NAS)~\cite{elsken2019neural}, which automates the architecture design process. We employ an evolutionary approach inspired by neurogenesis---the growth of new neurons in biological networks~\cite{kempermann2015activity}.
 
 \subsection{Genome Encoding}
 
-Each candidate architecture is encoded as a genome (hyperparameter dictionary):
+Each candidate architecture is encoded as a genome---a structured representation of the hyperparameter configuration. The genome specifies architectural choices across all network components:
 
 \begin{itemize}
-    \item State encoder: depth $\in \{2, 3, 4\}$, width $\in \{64, 128, 256\}$
-    \item Action encoder: depth $\in \{1, 2, 3\}$, width $\in \{64, 128, 256\}$
-    \item Heightmap CNN: channels $\in \{[16, 32], [32, 64], [64, 128]\}$
-    \item Attention: num\_heads $\in \{2, 4, 8\}$, num\_inducing $\in \{16, 32, 64\}$, num\_blocks $\in \{1, 2, 3\}$
-    \item Q-head: depth $\in \{1, 2, 3\}$, width $\in \{64, 128, 256\}$
-    \item Training: learning\_rate $\in \{10^{-4}, 3 \times 10^{-4}, 10^{-3}\}$, gamma $\in \{0.95, 0.99, 0.995\}$, n\_step $\in \{1, 5, 15\}$
-    \item Activation $\in \{\text{ReLU}, \text{ELU}, \text{LeakyReLU}\}$
+    \item \textbf{Network Structure}: Encoder depths and widths, CNN channel configurations, attention mechanisms
+    \item \textbf{Training Hyperparameters}: Learning rate, discount factor, temporal credit assignment horizon
+    \item \textbf{Activation Functions}: Nonlinearity choices affecting gradient flow and expressiveness
 \end{itemize}
+
+The search space encompasses architectures ranging from small, fast networks to large, expressive ones, allowing the evolutionary process to discover the right balance for our problem.
 
 \subsection{Evolutionary Process}
 
+The evolutionary algorithm operates as follows:
+
 \begin{enumerate}
-    \item \textbf{Initialization}: Generate population of $N$ random genomes
-    \item \textbf{Evaluation}: Train each architecture for $K$ episodes, evaluate on validation set
-    \item \textbf{Selection}: Select top $M$ performers as parents
-    \item \textbf{Crossover}: Combine parent genomes to create offspring
-    \item \textbf{Mutation}: Randomly modify offspring with probability $p_{\text{mut}}$
-    \item \textbf{Iteration}: Repeat for $G$ generations
+    \item \textbf{Initialization}: Generate a population of $N$ random genomes to explore diverse regions of the architecture space
+    \item \textbf{Evaluation}: Train each architecture for $K$ episodes, evaluate on validation set to measure generalization
+    \item \textbf{Selection}: Select top $M$ performers as parents, preserving successful traits
+    \item \textbf{Crossover}: Combine parent genomes to create offspring, inheriting complementary strengths
+    \item \textbf{Mutation}: Randomly modify offspring with probability $p_{\text{mut}}$, introducing variation and exploring nearby configurations
+    \item \textbf{Iteration}: Repeat for $G$ generations, progressively refining the population
 \end{enumerate}
 
-This explores the architecture space efficiently, leveraging successful configurations through crossover and discovering novel designs through mutation~\cite{real2019regularized}.
+This process explores the architecture space efficiently. Crossover leverages successful configurations by combining proven components, while mutation discovers novel designs by perturbing existing ones~\cite{real2019regularized}. The evolutionary approach naturally balances exploration (trying new architectures) and exploitation (refining successful ones).
 
 \subsection{Fitness Function}
 
