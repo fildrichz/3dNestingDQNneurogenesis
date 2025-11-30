@@ -1,14 +1,14 @@
 \chapter{Proposed Method}
 \label{ch:proposed_method}
 
-This chapter presents our approach to solving the constrained 3D bin packing problem. Rather than describing the system by component type, we follow the development journey: starting with the geometric foundation of 3D nesting, building up a reinforcement learning framework to learn packing strategies, designing a neural architecture to process spatial information, and finally employing evolutionary methods to optimize the architecture itself.
+This chapter presents our approach to solving the constrained 3D bin packing problem. We follow the development journey: starting with the geometric foundation of 3D nesting, building up a reinforcement learning framework to learn packing strategies, designing a neural architecture to process spatial information, and finally employing evolutionary methods to optimize the architecture itself.
 
 \section{Introduction}
 
 From the problem analysis in Chapter~\ref{ch:problem_analysis} and the survey of existing methods in Chapter~\ref{ch:state_of_art}, several key insights emerged:
 
 \begin{itemize}
-    \item The problem is NP-hard with no polynomial-time optimal solution~\cite{garey1979computers}.
+    \item The problem is NP-hard~\cite{garey1979computers}, requiring exponential time for optimal solutions.
     \item Supervised learning approaches require labeled datasets of optimal solutions, which are intractable to compute at scale.
     \item Heuristic methods struggle with the combinatorial complexity of multiple constraints (incompatibility, affinity, relative positioning).
     \item Spatial reasoning is crucial---placement decisions must account for local geometry and long-term packing potential.
@@ -22,7 +22,7 @@ The first challenge is the geometry itself: how do we efficiently generate valid
 
 \subsection{Empty Maximal Spaces}
 
-As discussed in Section~\ref{sec:geometric_heuristics}, two main geometric heuristics exist: Extreme Points (EP)~\cite{crainic2008extreme} and Empty Maximal Spaces (EMS)~\cite{crainic2012packing}. We choose EMS for several critical advantages:
+Two main geometric heuristics exist: Extreme Points (EP)~\cite{crainic2008extreme} and Empty Maximal Spaces (EMS)~\cite{crainic2012packing}. We choose EMS for several critical advantages:
 
 \begin{enumerate}
     \item \textbf{Collision-Free by Construction}: Each EMS represents a maximal empty rectangular volume. Any item placement within an EMS is guaranteed not to collide with existing items, eliminating the need for collision checking at decision time.
@@ -50,7 +50,7 @@ To enable learning, each action must be represented numerically. We encode actio
 
 \subsection{Heightmap Representation}
 
-Scalar features alone cannot capture spatial structure. Consider two placements with identical utilization and fit metrics, but one places an item in a valley (creating a flat surface for future items) while the other creates a protruding tower (fragmenting the space). To address this, we need a spatial representation.
+Spatial structure requires more than scalar features. Consider two placements with identical utilization and fit metrics: one places an item in a valley, creating a flat surface for future items, while the other creates a protruding tower, fragmenting the space. We need a spatial representation to distinguish these scenarios.
 
 We represent each bin as a heightmap: a 2D grid where each cell stores the maximum occupied height at that $(x, y)$ location. For each candidate action, we extract a local patch centered on the placement position, providing a window into the surrounding geometry.
 
@@ -76,11 +76,11 @@ With the geometric foundation established, the question becomes: given dozens or
 
 \subsection{Why Reinforcement Learning?}
 
-Traditional supervised learning requires labeled training data---optimal solutions for problem instances. But computing optimal solutions to 3D bin packing is intractable due to NP-hardness~\cite{garey1979computers}. Even near-optimal heuristic solutions are expensive to generate and may not generalize.
+Traditional supervised learning requires labeled training data---optimal solutions for problem instances. Computing optimal solutions to 3D bin packing is intractable due to NP-hardness~\cite{garey1979computers}. Near-optimal heuristic solutions are expensive to generate and may fail to generalize.
 
 Reinforcement learning learns directly from interaction~\cite{sutton2018reinforcement}. The agent learns through trial and error, receiving rewards based on packing quality. This eliminates the need for pre-computed solutions.
 
-Furthermore, bin packing is inherently sequential: each placement affects future possibilities. This aligns naturally with the Markov Decision Process (MDP) framework underlying RL. The agent learns to maximize cumulative reward over the entire packing sequence, not just immediate placement quality.
+Furthermore, bin packing is inherently sequential: each placement affects future possibilities. This aligns naturally with the Markov Decision Process (MDP) framework underlying RL. The agent learns to maximize cumulative reward over the entire packing sequence, optimizing for long-term packing quality.
 
 \subsection{Deep Q-Networks}
 
@@ -137,7 +137,7 @@ Bin packing presents a sparse reward problem: the primary objective (minimizing 
     \item \textbf{Slow Learning}: Random exploration rarely produces good solutions
 \end{itemize}
 
-To address this, we employ potential-based reward shaping~\cite{ng1999policy}, which augments the sparse environment reward with auxiliary signals:
+We employ potential-based reward shaping~\cite{ng1999policy}, augmenting the sparse environment reward with auxiliary signals:
 
 \begin{equation}
 r_{\text{shaped}}(s, a, s') = r_{\text{env}}(s, a, s') + \gamma \cdot \Phi(s') - \Phi(s)
@@ -173,12 +173,12 @@ We employ a CNN to process heightmap patches. Early convolutional layers detect 
 
 \subsection{Modeling Action Relationships: Set Transformer}
 
-The number of valid actions varies dramatically---from dozens to hundreds depending on remaining items and available spaces. The value of placing item A in position 1 depends on whether item B has better alternatives. To address this interdependency, we need a mechanism for actions to reason about each other.
+The number of valid actions varies dramatically---from dozens to hundreds depending on remaining items and available spaces. The value of placing item A in position 1 depends on whether item B has better alternatives. Actions must reason about each other to resolve these interdependencies.
 
 Transformer architectures~\cite{vaswani2017attention} allow each action to attend to all others through self-attention. We employ the Set Transformer~\cite{lee2019set}, specifically Induced Set Attention Blocks (ISAB), which achieve two critical properties:
 
 \begin{enumerate}
-    \item \textbf{Permutation Invariance}: The action set has no inherent order---action ordering is arbitrary. Set operations must respect this symmetry.
+    \item \textbf{Permutation Invariance}: Action ordering is arbitrary. Set operations must respect this symmetry.
     \item \textbf{Computational Efficiency}: Standard attention has $\mathcal{O}(N^2)$ complexity where $N$ is the number of actions. ISABs use inducing points to reduce this to $\mathcal{O}(NM)$ where $M \ll N$, making attention tractable even when hundreds of actions are available.
 \end{enumerate}
 
@@ -231,9 +231,9 @@ This provides stable learning targets while allowing the target network to track
 
 \section{Evolving the Architecture: Neurogenesis}
 
-The neural architecture contains numerous hyperparameters: network depths, layer widths, attention heads, CNN channels, activation functions. We encounter a design challenge: manual tuning is time-consuming, requires domain expertise, and may miss better configurations in the vast hyperparameter space.
+The neural architecture contains numerous hyperparameters: network depths, layer widths, attention heads, CNN channels, activation functions. Manual tuning is time-consuming, requires domain expertise, and explores only a fraction of the vast hyperparameter space.
 
-To address this, we turn to Neural Architecture Search (NAS)~\cite{elsken2019neural}, which automates the architecture design process. We employ an evolutionary approach inspired by neurogenesis---the growth of new neurons in biological networks~\cite{kempermann2015activity}.
+Neural Architecture Search (NAS)~\cite{elsken2019neural} automates the architecture design process. We employ an evolutionary approach inspired by neurogenesis---the growth of new neurons in biological networks~\cite{kempermann2015activity}.
 
 \subsection{Genome Encoding}
 
