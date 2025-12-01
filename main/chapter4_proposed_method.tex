@@ -38,15 +38,23 @@ The computational efficiency is particularly important for reinforcement learnin
 
 \subsection{Action Space}
 
-With EMS providing the geometric foundation, we define the action space. Each action represents a complete placement decision:
+With EMS providing the geometric foundation, we define the action space. Each action represents a complete placement decision: selecting a bin, an item, an EMS location within that bin, and a rotation orientation. Formally:
 
 \begin{equation}
 a = (\text{bin\_idx}, \text{item\_idx}, \text{ems\_idx}, \text{rot\_idx})
 \end{equation}
 
-At each decision step, the environment enumerates all valid combinations: for each bin, for each remaining item, for each EMS that can fit the item, for each of the 6 possible rotations. This generates anywhere from dozens to hundreds of candidate actions depending on problem state.
+At each decision step, the environment enumerates all valid combinations: for each bin, for each remaining item, for each EMS that can fit the item, for each of the possible rotations. This generates a variable-size action set—anywhere from dozens to hundreds of candidates—depending on problem state.
 
-To enable learning, each action must be represented numerically. We encode actions as feature vectors capturing geometric properties (positions, dimensions, fit metrics), stability indicators (support, center of mass), and contextual information (bin utilization, remaining capacity). These features provide the neural network with information about both immediate placement quality and global packing state.
+To enable neural network processing, each action is encoded as a numerical feature vector. These features capture:
+\begin{itemize}
+    \item \textbf{Geometric Properties}: Item and EMS dimensions, placement position, spatial fit quality
+    \item \textbf{Utilization Metrics}: Volume efficiency, slack space, tightness of fit
+    \item \textbf{Stability Indicators}: Support characteristics, height, local geometry
+    \item \textbf{Contextual Information}: Bin state, remaining capacity, constraint status
+\end{itemize}
+
+The feature engineering balances expressiveness (providing sufficient information for discriminating action quality) with dimensionality (keeping inputs tractable for neural network learning). Implementation details appear in Chapter~\ref{ch:implementation}.
 
 \subsection{Heightmap Representation}
 
@@ -68,7 +76,7 @@ This local spatial information reveals:
     \item \textbf{Future Packing Potential}: Whether placement creates a flat surface or fragmentation
 \end{itemize}
 
-The patch must be large enough to capture surrounding context, yet small enough to remain computationally tractable during training.
+The patch size balances two competing objectives: capturing sufficient surrounding context for informed decisions while remaining computationally tractable for efficient training on thousands of actions. The specific grid resolution and patch dimensions are implementation choices detailed in Chapter~\ref{ch:implementation}.
 
 \section{Learning to Pack: Reinforcement Learning}
 
@@ -109,23 +117,16 @@ This reduces overestimation, particularly important where many actions have simi
 
 \subsection{State Representation}
 
-The state representation must capture both global progress and local geometry. We encode:
+The state representation must capture both global progress and local geometry. We encode information about:
 
-\paragraph{Global Features} (scalars):
 \begin{itemize}
-    \item Current bin utilization, bin index, total bins
-    \item Number of items placed and remaining
-    \item Bin dimensions and weight capacity
+    \item \textbf{Global Progress}: Current packing efficiency, number of bins used, remaining items to place
+    \item \textbf{Geometric State}: Available space characteristics, spatial distribution of placed items
+    \item \textbf{Capacity Metrics}: Weight utilization, volume utilization
+    \item \textbf{Constraint Status}: Active constraints affecting current placement options
 \end{itemize}
 
-\paragraph{Item Features} (per-item vectors for remaining items):
-\begin{itemize}
-    \item Dimensions, weight
-    \item Incompatibility flags, affinity group ID
-    \item Relative positioning constraints
-\end{itemize}
-
-Item features are processed through a permutation-invariant encoder to handle variable numbers of remaining items.
+These features are encoded as normalized numerical values to enable effective neural network processing. The specific dimensions and feature engineering choices are detailed in Chapter~\ref{ch:implementation}.
 
 \subsection{Reward Design}
 \label{sec:reward_shaping}
@@ -208,26 +209,21 @@ This architecture extracts spatial patterns (CNN), reasons about action relation
 
 \subsection{Training Strategy}
 
-\paragraph{Experience Replay} We use a replay buffer storing transitions $(s_t, a_t, r_t, s_{t+1}, \text{done}_t, \text{action\_mask}_{t+1})$. The action mask indicates valid actions in the next state, crucial for variable action spaces. Replay provides sample efficiency (learning from each transition multiple times) and decorrelates training data (breaking temporal correlations that can destabilize learning).
+\paragraph{Experience Replay} We store transitions in a replay buffer, recording state, action, reward, next state, and action validity masks for the next state. The action mask is crucial for our variable action space—it indicates which actions are valid at each state. Replay provides sample efficiency by learning from each transition multiple times and decorrelates training data by breaking temporal correlations that can destabilize learning.
 
-\paragraph{N-Step Returns} Standard Q-learning uses 1-step returns, which propagate rewards slowly. We encounter a credit assignment problem: when packing fails, which of the hundreds of placement decisions was responsible? To address this, we employ multi-step returns~\cite{sutton2018reinforcement}:
+\paragraph{Multi-Step Returns} Standard Q-learning uses single-step returns, which propagate rewards slowly. We face a severe credit assignment problem: when packing fails after hundreds of placement decisions, which decisions were responsible? Multi-step returns~\cite{sutton2018reinforcement} address this by incorporating multiple future rewards:
 
 \begin{equation}
 Q(s, a) \leftarrow \sum_{i=0}^{n-1} \gamma^i r_{t+i} + \gamma^n \max_{a'} Q(s_{t+n}, a')
 \end{equation}
 
-This propagates terminal rewards more rapidly through the episode. With 1-step returns, terminal reward requires hundreds of episodes to propagate back to early decisions. Multi-step returns accelerate credit assignment by incorporating multiple future rewards directly.
+This propagates terminal rewards more rapidly through episodes. Instead of requiring hundreds of episodes for early decisions to receive signal from terminal outcomes, multi-step returns accelerate credit assignment by directly incorporating future rewards. The horizon $n$ balances immediate feedback (small $n$) against long-term consequences (large $n$).
 
-\paragraph{Target Networks} We use soft updates to the target network:
-\begin{equation}
-\theta_{\text{target}} \leftarrow \tau \theta_{\text{online}} + (1 - \tau) \theta_{\text{target}}
-\end{equation}
+\paragraph{Target Networks} We maintain a separate target network for computing learning targets, updated periodically from the online network. This prevents the moving target problem where Q-value updates chase constantly shifting targets, stabilizing training.
 
-This provides stable learning targets while allowing the target network to track the online network's improvements.
+\paragraph{Exploration} We employ $\varepsilon$-greedy exploration with gradual decay, balancing exploration of new strategies with exploitation of learned policies. Early in training, high exploration discovers diverse packing strategies; later, reduced exploration refines the best discovered approaches.
 
-\paragraph{Exploration} We employ $\varepsilon$-greedy exploration with gradual decay, balancing exploration of new strategies with exploitation of learned policies.
-
-\paragraph{Curriculum Learning} Training begins with simpler instances (fewer items, fewer constraints) and gradually increases difficulty~\cite{bengio2009curriculum}. This allows the agent to build foundational packing skills before tackling complex constraint combinations.
+\paragraph{Curriculum Learning} Training begins with simpler instances (fewer items, fewer constraints) and gradually increases difficulty~\cite{bengio2009curriculum}. This allows the agent to build foundational packing skills—basic placement strategies, constraint satisfaction, spatial reasoning—before tackling complex constraint combinations that require coordinating multiple objectives simultaneously.
 
 \section{Evolving the Architecture: Neurogenesis}
 

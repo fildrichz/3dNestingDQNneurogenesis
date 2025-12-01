@@ -1,0 +1,1306 @@
+\chapter{Implementation}
+\label{ch:implementation}
+
+This chapter details the concrete implementation of the system proposed in Chapter~\ref{ch:proposed_method}. We specify the technologies, libraries, data structures, algorithms, and architectural choices that realize the conceptual framework.
+
+\section{Development Environment and Technologies}
+
+\subsection{Programming Language and Platform}
+
+The entire system is implemented in Python 3.11.14, chosen for several practical reasons:
+
+\begin{itemize}
+    \item \textbf{Deep Learning Ecosystem}: Python dominates the deep learning landscape with mature frameworks and extensive community support
+    \item \textbf{Rapid Prototyping}: Dynamic typing and high-level abstractions enable fast iteration during algorithm development
+    \item \textbf{Scientific Computing}: Rich ecosystem of numerical libraries (NumPy, SciPy) accelerates implementation
+    \item \textbf{Debugging and Profiling}: Excellent tooling for performance analysis and debugging complex training loops
+\end{itemize}
+
+\subsection{Core Dependencies}
+
+\paragraph{PyTorch 2.x} serves as the deep learning framework for all neural network components. We chose PyTorch over TensorFlow for:
+\begin{itemize}
+    \item Dynamic computation graphs enabling easier debugging and variable-length action sequences
+    \item Pythonic API that integrates naturally with standard Python code
+    \item Strong support for custom architectures and operations
+    \item Efficient GPU acceleration through CUDA integration
+\end{itemize}
+
+\paragraph{NumPy 1.24+} handles all numerical array operations outside the neural network:
+\begin{itemize}
+    \item 3D bin state representation and heightmap tracking
+    \item Collision detection computations
+    \item Feature vector construction
+    \item EMS geometric operations
+\end{itemize}
+
+\paragraph{Matplotlib 3.7+} provides visualization capabilities:
+\begin{itemize}
+    \item 3D plotting of packing solutions for verification
+    \item Training curves and learning diagnostics
+    \item Heightmap visualization during development
+\end{itemize}
+
+\paragraph{Python Standard Library}:
+\begin{itemize}
+    \item \texttt{dataclasses}: Type-safe configuration management for hyperparameters
+    \item \texttt{collections.deque}: Efficient replay buffer implementation with $\mathcal{O}(1)$ append and pop
+    \item \texttt{typing}: Static type hints for improved code reliability
+\end{itemize}
+
+\section{Code Architecture and Structure}
+
+The implementation consists of approximately 6,300 lines of Python code organized into modular components. Table~\ref{tab:code_structure} summarizes the key modules.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{Module} & \textbf{Lines} & \textbf{Purpose} \\
+\midrule
+dqn\_enhanced.py & 605 & DQN agent with CNN and attention \\
+packing\_core\_enhanced.py & 899 & EMS algorithm and 3D container \\
+packing\_with\_dqncore2\_enhanced.py & 1,094 & RL environment and training loop \\
+genome.py & 390 & Genome representation for NAS \\
+ga\_evolution.py & 468 & Genetic algorithm evolution \\
+dataset\_loader.py & 216 & Problem file parsing \\
+heightmap\_utils.py & 104 & Spatial feature extraction \\
+\bottomrule
+\end{tabular}
+\caption{Code organization showing main modules and their responsibilities}
+\label{tab:code_structure}
+\end{table}
+
+\subsection{Design Patterns}
+
+\paragraph{Double Buffering} The DQN implementation maintains two identical networks:
+\begin{itemize}
+    \item \textit{Online network} ($\theta$): Updated every training step, used for action selection
+    \item \textit{Target network} ($\theta^-$): Updated every 1,000 steps via hard copy: $\theta^- \leftarrow \theta$
+\end{itemize}
+
+This prevents the moving target problem where Q-value updates chase a constantly shifting target.
+
+\paragraph{Experience Replay} Transitions are stored in a circular buffer implemented using \texttt{collections.deque} with maximum capacity 200,000. Each transition tuple contains:
+\begin{itemize}
+    \item State: 8-dimensional global feature vector
+    \item Action index: Integer selecting from valid actions
+    \item Reward: Scalar shaped reward
+    \item Next state: 8-dimensional feature vector
+    \item Done flag: Boolean episode termination indicator
+    \item Action features: Current and next state action feature matrices
+    \item Action masks: Binary validity indicators for current and next states
+    \item Heightmap patches: 7×7 spatial grids for current and next states
+\end{itemize}
+
+\paragraph{Configuration Management} All hyperparameters are encapsulated in dataclasses:
+
+\begin{lstlisting}[language=Python]
+@dataclass
+class DQNConfigEnhanced:
+    # Network architecture
+    obs_dim: int = 8
+    action_feat_dim: int = 25
+    hidden: int = 256
+    enc_layers: int = 2
+    head_hidden: int = 256
+
+    # Attention mechanism
+    use_attention: bool = True
+    attention_type: str = "standard"
+    attention_heads: int = 4
+    num_inducing_points: int = 32
+
+    # CNN configuration
+    heightmap_patch_size: int = 7
+    cnn_channels: list = field(default_factory=lambda: [16, 32])
+
+    # Training hyperparameters
+    gamma: float = 0.985
+    lr: float = 2e-4
+    batch_size: int = 64
+    grad_clip: float = 1.0
+
+    # Exploration
+    eps_start: float = 1.0
+    eps_end: float = 0.05
+    eps_decay_steps: int = 20_000
+
+    # Experience replay
+    buffer_size: int = 200_000
+    n_step: int = 1
+    warmup_steps: int = 1000
+
+    # Target network
+    target_update_interval: int = 1_000
+    tau: float = 0.0  # Hard updates
+
+    # Algorithm variants
+    double_dqn: bool = True
+\end{lstlisting}
+
+This enables easy experimentation and ensures all parameters are explicitly documented.
+
+\section{3D Nesting Implementation Details}
+
+\subsection{Data Structures}
+
+\paragraph{Empty Maximal Space (EMS)} representation:
+
+\begin{lstlisting}[language=Python]
+@dataclass
+class EMS:
+    x: int  # Corner X position
+    y: int  # Corner Y position
+    z: int  # Corner Z position
+    w: int  # Width (X dimension)
+    d: int  # Depth (Y dimension)
+    h: int  # Height (Z dimension)
+
+    def volume(self) -> int:
+        return self.w * self.d * self.h
+
+    def dominates(self, other: EMS) -> bool:
+        """Check if this EMS completely contains other"""
+        return (self.x <= other.x and
+                self.y <= other.y and
+                self.z <= other.z and
+                self.x + self.w >= other.x + other.w and
+                self.y + self.d >= other.y + other.d and
+                self.z + self.h >= other.z + other.h)
+\end{lstlisting}
+
+\paragraph{Box (Placed Item)} representation:
+
+\begin{lstlisting}[language=Python]
+@dataclass
+class Box:
+    item_id: int      # Original item identifier
+    x: int            # Placement position
+    y: int
+    z: int
+    w: int            # Rotated dimensions
+    d: int
+    h: int
+    weight: int       # Item weight
+    original_w: int   # Original dimensions before rotation
+    original_d: int
+    original_h: int
+\end{lstlisting}
+
+\paragraph{Container State} tracks:
+\begin{itemize}
+    \item Dimensions $(W, D, H)$ and maximum weight capacity
+    \item List of placed boxes
+    \item List of current EMS spaces
+    \item 2D heightmap array (NumPy \texttt{float32})
+    \item Current weight and volume utilization
+\end{itemize}
+
+\subsection{EMS Algorithm Implementation}
+
+\subsubsection{Placement Process}
+
+The \texttt{place\_at\_ems} method implements the complete placement logic:
+
+\begin{enumerate}
+    \item \textbf{Initial Validation}: Check if item fits within EMS bounds and container dimensions
+    \item \textbf{Constraint Checking}: Verify weight capacity, incompatibility, affinity, and relative positioning constraints
+    \item \textbf{Gravity Application}: Drop item until it contacts ground or another box
+    \item \textbf{Final Validation}: Re-check constraints at final position after gravity
+    \item \textbf{Commit Placement}: Add box to placed list
+    \item \textbf{EMS Update}: Recompute empty spaces (detailed below)
+    \item \textbf{Heightmap Update}: Update 2D height grid
+\end{enumerate}
+
+\subsubsection{Gravity Algorithm}
+
+The gravity implementation finds the highest supporting surface:
+
+\begin{lstlisting}[language=Python]
+def apply_gravity(self, x: int, y: int, z: int,
+                  w: int, d: int, h: int) -> int:
+    """Find maximum Z where box can rest"""
+    max_z = 0  # Ground level
+
+    for placed_box in self.placed:
+        # Check XY footprint overlap
+        if (self._overlaps_1d(x, x+w, placed_box.x, placed_box.x+placed_box.w) and
+            self._overlaps_1d(y, y+d, placed_box.y, placed_box.y+placed_box.d)):
+            # Update max_z to top of overlapping box
+            max_z = max(max_z, placed_box.z + placed_box.h)
+
+    return max_z
+
+def _overlaps_1d(self, a1: int, a2: int, b1: int, b2: int) -> bool:
+    """Check if 1D intervals [a1, a2) and [b1, b2) overlap"""
+    return not (a2 <= b1 or b2 <= a1)
+\end{lstlisting}
+
+This has $\mathcal{O}(n)$ complexity where $n$ is the number of placed items. For typical problem sizes (20-50 items), this is acceptably fast.
+
+\subsubsection{EMS Update: 6-Way Difference}
+
+When an item is placed, each intersected EMS is replaced by up to 6 sub-spaces:
+
+\begin{lstlisting}[language=Python]
+def update_ems(self, placed_box: Box):
+    """Update EMS set after placement using 6-way difference"""
+    new_ems = []
+
+    for ems in self.ems_spaces:
+        if not ems.intersects(placed_box):
+            # No intersection, keep original
+            new_ems.append(ems)
+            continue
+
+        # Generate up to 6 sub-spaces
+        # Left slice (x < box.x)
+        if ems.x < placed_box.x:
+            new_ems.append(EMS(
+                ems.x, ems.y, ems.z,
+                placed_box.x - ems.x, ems.d, ems.h
+            ))
+
+        # Right slice (x > box.x + box.w)
+        if ems.x + ems.w > placed_box.x + placed_box.w:
+            new_ems.append(EMS(
+                placed_box.x + placed_box.w, ems.y, ems.z,
+                (ems.x + ems.w) - (placed_box.x + placed_box.w), ems.d, ems.h
+            ))
+
+        # Similar logic for front, back, bottom, top slices...
+
+    # Remove dominated EMS
+    self.ems_spaces = self._prune_dominated(new_ems)
+
+    # Keep only largest 50 EMS by volume
+    self.ems_spaces.sort(key=lambda e: e.volume(), reverse=True)
+    self.ems_spaces = self.ems_spaces[:50]
+\end{lstlisting}
+
+\subsubsection{Collision Detection}
+
+Collision detection uses Axis-Aligned Bounding Box (AABB) overlap testing:
+
+\begin{lstlisting}[language=Python]
+def _fits_collision_free(self, x: int, y: int, z: int,
+                         w: int, d: int, h: int) -> bool:
+    """Check if box at (x,y,z) with size (w,d,h) collides with any placed box"""
+    for placed_box in self.placed:
+        if (self._overlaps_1d(x, x+w, placed_box.x, placed_box.x+placed_box.w) and
+            self._overlaps_1d(y, y+d, placed_box.y, placed_box.y+placed_box.d) and
+            self._overlaps_1d(z, z+h, placed_box.z, placed_box.z+placed_box.h)):
+            return False  # 3D overlap detected
+    return True
+\end{lstlisting}
+
+Since EMS guarantees collision-free candidate positions, this check is primarily used during the gravity application step to verify the final position remains valid.
+
+\subsection{Heightmap Implementation}
+
+The heightmap is a 2D NumPy array tracking maximum occupied height at each grid cell.
+
+\paragraph{Grid Resolution} is adaptive:
+\begin{lstlisting}[language=Python]
+resolution = max(1, min(W, D) // 20)
+grid_width = (W + resolution - 1) // resolution
+grid_depth = (D + resolution - 1) // resolution
+heightmap = np.zeros((grid_width, grid_depth), dtype=np.float32)
+\end{lstlisting}
+
+For a $(100, 80, 60)$ bin, this creates approximately a $(5, 4)$ grid.
+
+\paragraph{Update Process} after each placement:
+\begin{lstlisting}[language=Python]
+def update_heightmap(self, box: Box):
+    """Update heightmap after placing box"""
+    # Convert box coordinates to grid coordinates
+    gx_start = box.x // self.resolution
+    gx_end = (box.x + box.w - 1) // self.resolution + 1
+    gy_start = box.y // self.resolution
+    gy_end = (box.y + box.d - 1) // self.resolution + 1
+
+    # Update affected cells to maximum height
+    top_height = box.z + box.h
+    self.heightmap[gx_start:gx_end, gy_start:gy_end] = np.maximum(
+        self.heightmap[gx_start:gx_end, gy_start:gy_end],
+        top_height / self.H  # Normalize to [0, 1]
+    )
+\end{lstlisting}
+
+\paragraph{Patch Extraction} for CNN processing:
+\begin{lstlisting}[language=Python]
+def extract_patch(self, center_x: int, center_y: int,
+                  patch_size: int = 7) -> np.ndarray:
+    """Extract patch_size x patch_size heightmap patch centered at (x, y)"""
+    # Convert to grid coordinates
+    gx = center_x // self.resolution
+    gy = center_y // self.resolution
+
+    half_patch = patch_size // 2
+    patch = np.zeros((patch_size, patch_size), dtype=np.float32)
+
+    for i in range(patch_size):
+        for j in range(patch_size):
+            src_gx = gx - half_patch + i
+            src_gy = gy - half_patch + j
+
+            # Handle boundaries: use 0 (ground) for out-of-bounds
+            if 0 <= src_gx < self.grid_width and 0 <= src_gy < self.grid_depth:
+                patch[i, j] = self.heightmap[src_gx, src_gy]
+
+    return patch
+\end{lstlisting}
+
+\subsection{Constraint Implementation}
+
+\subsubsection{Weight Constraints}
+
+Weight tracking is straightforward:
+\begin{lstlisting}[language=Python]
+if self.max_weight is not None:
+    if self.current_weight + item.weight > self.max_weight:
+        return False  # Exceeds capacity
+\end{lstlisting}
+
+\subsubsection{Incompatibility Constraints}
+
+Maintained as a set of forbidden pairs:
+\begin{lstlisting}[language=Python]
+incompatibilities = {(item1_id, item2_id), (item3_id, item4_id), ...}
+
+def check_incompatibility(self, new_item_id: int) -> bool:
+    """Check if new item is incompatible with any placed item"""
+    placed_ids = {box.item_id for box in self.placed}
+    for placed_id in placed_ids:
+        if ((new_item_id, placed_id) in self.incompatibilities or
+            (placed_id, new_item_id) in self.incompatibilities):
+            return False
+    return True
+\end{lstlisting}
+
+\subsubsection{Affinity Constraints}
+
+Positive affinity requires items to stay together:
+\begin{lstlisting}[language=Python]
+affinities = {(item1_id, item2_id), (item1_id, item3_id), ...}
+
+def check_affinity(self, new_item_id: int, remaining_items: List[int]) -> bool:
+    """Ensure affinity groups stay together in same bin"""
+    # Find all items that must be with new_item
+    required_together = set()
+    for (a, b) in self.affinities:
+        if a == new_item_id:
+            required_together.add(b)
+        if b == new_item_id:
+            required_together.add(a)
+
+    # Check if any required items are in other bins
+    for req_id in required_together:
+        if req_id in self.placed_in_other_bins:
+            return False  # Split affinity group
+
+    return True
+\end{lstlisting}
+
+\subsubsection{Relative Positioning}
+
+Heavy items cannot be placed on lighter items:
+\begin{lstlisting}[language=Python]
+relative_pos = {heavy_id: [light_id1, light_id2, ...], ...}
+relative_pos_reverse = {light_id: [heavy_id1, heavy_id2, ...], ...}
+
+def check_relative_positioning(self, box: Box) -> bool:
+    """Ensure heavy items don't rest on lighter items"""
+    item_id = box.item_id
+
+    # Get items that cannot be below this item
+    cannot_be_below = self.relative_pos.get(item_id, [])
+
+    for placed_box in self.placed:
+        # Check if footprints overlap in XY plane
+        if (self._overlaps_1d(box.x, box.x+box.w,
+                              placed_box.x, placed_box.x+placed_box.w) and
+            self._overlaps_1d(box.y, box.y+box.d,
+                              placed_box.y, placed_box.y+placed_box.d)):
+            # Check if placed_box is directly below and is lighter
+            if placed_box.z + placed_box.h == box.z:
+                if placed_box.item_id in cannot_be_below:
+                    return False  # Heavy on light violation
+
+    return True
+\end{lstlisting}
+
+\section{Reinforcement Learning Implementation}
+
+\subsection{State Representation}
+
+The state is encoded as an 8-dimensional NumPy array:
+
+\begin{lstlisting}[language=Python]
+def get_state(self) -> np.ndarray:
+    """Extract global state features"""
+    # Find best bin (most utilized or with best EMS)
+    best_bin = self._select_best_bin()
+
+    # Extract EMS statistics from best bin
+    if best_bin.ems_spaces:
+        max_ems = max(best_bin.ems_spaces, key=lambda e: e.volume())
+        max_ems_w = max_ems.w / self.bin_W
+        max_ems_d = max_ems.d / self.bin_D
+        max_ems_h = max_ems.h / self.bin_H
+    else:
+        max_ems_w = max_ems_d = max_ems_h = 0.0
+
+    state = np.array([
+        self.total_volume_placed / (self.max_bins * self.bin_volume),  # Packed ratio
+        len(self.remaining_items) / self.n_items,                       # Items left
+        max_ems_w,                                                      # Max EMS width
+        max_ems_d,                                                      # Max EMS depth
+        max_ems_h,                                                      # Max EMS height
+        np.mean(best_bin.heightmap),                                    # Avg height
+        best_bin.current_weight / best_bin.max_weight if best_bin.max_weight else 0.0,  # Weight util
+        self.bins_used / self.max_bins                                  # Bins used
+    ], dtype=np.float32)
+
+    return state
+\end{lstlisting}
+
+\subsection{Action Feature Construction}
+
+Each action is represented by 25 features:
+
+\begin{lstlisting}[language=Python]
+def construct_action_features(self, bin_idx, item, ems, rotated_dims):
+    """Build 25-dimensional action feature vector"""
+    W, D, H = self.bins[bin_idx].W, self.bins[bin_idx].D, self.bins[bin_idx].H
+    rw, rd, rh = rotated_dims
+
+    features = [
+        # Original item dimensions (3)
+        item.w / W, item.d / D, item.h / H,
+
+        # Rotated dimensions (3)
+        rw / W, rd / D, rh / H,
+
+        # EMS corner position (3)
+        ems.x / W, ems.y / D, ems.z / H,
+
+        # EMS dimensions (3)
+        ems.w / W, ems.d / D, ems.h / H,
+
+        # Slack space (3)
+        (ems.w - rw) / W, (ems.d - rd) / D, (ems.h - rh) / H,
+
+        # Volume utilization (1)
+        (rw * rd * rh) / (W * D * H),
+
+        # Tightness: how many dimensions perfectly fit (1)
+        float(sum([ems.w == rw, ems.d == rd, ems.h == rh])),
+
+        # Container aspect ratios (2)
+        W / D, D / H,
+
+        # Height at placement (1)
+        ems.z / H,
+
+        # Local average height (3x3 neighborhood) (1)
+        self._get_local_avg_height(bin_idx, ems.x, ems.y) / H,
+
+        # Item weight ratio (1)
+        item.weight / self.max_item_weight,
+
+        # Remaining weight capacity (1)
+        (self.bins[bin_idx].max_weight - self.bins[bin_idx].current_weight) / self.bins[bin_idx].max_weight if self.bins[bin_idx].max_weight else 0.0,
+
+        # Bin index normalized (1)
+        bin_idx / self.max_bins,
+
+        # Bin utilization (1)
+        self.bins[bin_idx].volume_used / (W * D * H)
+    ]
+
+    return np.array(features, dtype=np.float32)
+\end{lstlisting}
+
+\subsection{Reward Computation}
+
+The reward function combines potential-based shaping with terminal rewards:
+
+\begin{lstlisting}[language=Python]
+def compute_reward(self, prev_state, action, next_state, done):
+    """Compute shaped reward using potential function"""
+    # Potential function components
+    def compute_potential(bin):
+        # Bin utilization component
+        bin_util = bin.volume_used / bin.volume
+
+        # EMS quality component
+        if bin.ems_spaces:
+            top_3_ems = sorted(bin.ems_spaces,
+                              key=lambda e: e.volume(),
+                              reverse=True)[:3]
+            avg_top_ems = np.mean([e.volume() for e in top_3_ems])
+            # Cube root for diminishing returns
+            ems_quality = (avg_top_ems ** (1/3)) / (bin.volume ** (1/3))
+        else:
+            ems_quality = 0.0
+
+        return bin_util + 0.3 * ems_quality
+
+    # Compute potential difference
+    best_bin = self._select_best_bin()
+    potential_next = compute_potential(best_bin)
+    potential_prev = self.prev_potential  # Stored from previous step
+
+    # Base shaped reward
+    reward = self.gamma * potential_next - potential_prev
+    self.prev_potential = potential_next
+
+    # Terminal rewards
+    if done:
+        if len(self.remaining_items) == 0:
+            # Successfully placed all items
+            reward += 0.3  # Completion bonus
+
+            # Bins efficiency bonus
+            bins_efficiency = 1.0 - (self.bins_used / self.max_bins)
+            reward += 0.2 * bins_efficiency
+        else:
+            # Failed to place all items
+            unplaced_ratio = len(self.remaining_items) / self.n_items
+            reward -= 0.2 * unplaced_ratio
+
+    return reward
+\end{lstlisting}
+
+\section{Neural Network Architecture}
+
+\subsection{Q-Network Components}
+
+\subsubsection{State Encoder}
+
+The state encoder processes the 8-dimensional global state:
+
+\begin{lstlisting}[language=Python]
+class StateEncoder(nn.Module):
+    def __init__(self, obs_dim=8, hidden=256, layers=2):
+        super().__init__()
+
+        # Build MLP: obs_dim -> hidden -> ... -> hidden
+        layer_list = [nn.Linear(obs_dim, hidden), nn.ReLU()]
+        for _ in range(layers - 1):
+            layer_list.extend([nn.Linear(hidden, hidden), nn.ReLU()])
+
+        self.mlp = nn.Sequential(*layer_list)
+
+    def forward(self, state):
+        # state: (batch_size, obs_dim)
+        return self.mlp(state)  # (batch_size, hidden)
+\end{lstlisting}
+
+\subsubsection{Heightmap CNN}
+
+The CNN processes 7×7 heightmap patches:
+
+\begin{lstlisting}[language=Python]
+class HeightmapCNN(nn.Module):
+    def __init__(self, patch_size=7, channels=[16, 32], embed_dim=64):
+        super().__init__()
+
+        layers = []
+        in_channels = 1  # Single-channel heightmap
+
+        for out_channels in channels:
+            layers.extend([
+                nn.Conv2d(in_channels, out_channels,
+                         kernel_size=3, padding=1),
+                nn.ReLU()
+            ])
+            in_channels = out_channels
+
+        self.conv_layers = nn.Sequential(*layers)
+
+        # Global average pooling + FC
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, embed_dim),
+            nn.ReLU()
+        )
+
+    def forward(self, patches):
+        # patches: (batch_size, max_actions, patch_size, patch_size)
+        batch_size, max_actions, H, W = patches.shape
+
+        # Reshape for batch processing
+        x = patches.view(batch_size * max_actions, 1, H, W)
+
+        # Convolutions
+        x = self.conv_layers(x)  # (B*A, channels[-1], H, W)
+
+        # Global pooling
+        x = self.pool(x).squeeze(-1).squeeze(-1)  # (B*A, channels[-1])
+
+        # FC projection
+        x = self.fc(x)  # (B*A, embed_dim)
+
+        # Reshape back
+        x = x.view(batch_size, max_actions, -1)
+
+        return x  # (batch_size, max_actions, embed_dim)
+\end{lstlisting}
+
+\subsubsection{Action Encoder}
+
+The action encoder processes concatenated action features and heightmap embeddings:
+
+\begin{lstlisting}[language=Python]
+class ActionEncoder(nn.Module):
+    def __init__(self, action_feat_dim=25, heightmap_dim=64,
+                 hidden=256, layers=2):
+        super().__init__()
+
+        input_dim = action_feat_dim + heightmap_dim  # 25 + 64 = 89
+
+        layer_list = [nn.Linear(input_dim, hidden), nn.ReLU()]
+        for _ in range(layers - 1):
+            layer_list.extend([nn.Linear(hidden, hidden), nn.ReLU()])
+
+        self.mlp = nn.Sequential(*layer_list)
+
+    def forward(self, action_features, heightmap_embeds):
+        # action_features: (batch, max_actions, 25)
+        # heightmap_embeds: (batch, max_actions, 64)
+
+        # Concatenate
+        x = torch.cat([action_features, heightmap_embeds], dim=-1)
+
+        return self.mlp(x)  # (batch, max_actions, hidden)
+\end{lstlisting}
+
+\subsubsection{Set Transformer Attention}
+
+The attention mechanism processes action embeddings:
+
+\begin{lstlisting}[language=Python]
+class SetTransformer(nn.Module):
+    """Induced Set Attention Block for permutation-invariant processing"""
+    def __init__(self, dim=256, num_heads=4, num_inducing=32):
+        super().__init__()
+
+        # Inducing points: learnable query vectors
+        self.inducing_points = nn.Parameter(
+            torch.randn(1, num_inducing, dim)
+        )
+
+        # Multi-head attention layers
+        self.attention1 = nn.MultiheadAttention(
+            dim, num_heads, batch_first=True
+        )
+        self.attention2 = nn.MultiheadAttention(
+            dim, num_heads, batch_first=True
+        )
+
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+
+    def forward(self, x, mask=None):
+        # x: (batch, num_actions, dim)
+        batch_size = x.shape[0]
+
+        # Expand inducing points
+        inducing = self.inducing_points.expand(batch_size, -1, -1)
+
+        # First ISAB: input -> inducing points
+        attn_mask1 = self._prepare_mask(mask, inducing.shape[1])
+        h, _ = self.attention1(inducing, x, x,
+                              key_padding_mask=attn_mask1)
+        h = self.norm1(h + inducing)
+
+        # Second ISAB: inducing points -> output
+        out, _ = self.attention2(x, h, h)
+        out = self.norm2(out + x)
+
+        return out
+\end{lstlisting}
+
+\subsubsection{Q-Value Head}
+
+The final head combines state and action embeddings:
+
+\begin{lstlisting}[language=Python]
+class QHead(nn.Module):
+    def __init__(self, state_dim=256, action_dim=256,
+                 head_hidden=256):
+        super().__init__()
+
+        self.head = nn.Sequential(
+            nn.Linear(state_dim + action_dim, head_hidden),
+            nn.ReLU(),
+            nn.Linear(head_hidden, 1)  # Single Q-value
+        )
+
+    def forward(self, state_embed, action_embeds):
+        # state_embed: (batch, state_dim)
+        # action_embeds: (batch, max_actions, action_dim)
+
+        batch_size, max_actions, action_dim = action_embeds.shape
+
+        # Expand state to match actions
+        state_expanded = state_embed.unsqueeze(1).expand(
+            batch_size, max_actions, -1
+        )
+
+        # Concatenate
+        combined = torch.cat([state_expanded, action_embeds], dim=-1)
+
+        # Compute Q-values
+        q_values = self.head(combined).squeeze(-1)
+
+        return q_values  # (batch, max_actions)
+\end{lstlisting}
+
+\subsection{Complete Network Forward Pass}
+
+\begin{lstlisting}[language=Python]
+class QNetworkEnhanced(nn.Module):
+    def __init__(self, config: DQNConfigEnhanced):
+        super().__init__()
+
+        self.state_encoder = StateEncoder(
+            config.obs_dim, config.hidden, config.enc_layers
+        )
+
+        self.heightmap_cnn = HeightmapCNN(
+            config.heightmap_patch_size,
+            config.cnn_channels,
+            embed_dim=64
+        )
+
+        self.action_encoder = ActionEncoder(
+            config.action_feat_dim, 64,
+            config.hidden, config.enc_layers
+        )
+
+        if config.attention_type == "set_transformer":
+            self.attention = SetTransformer(
+                config.hidden,
+                config.attention_heads,
+                config.num_inducing_points
+            )
+        elif config.attention_type == "standard":
+            encoder_layer = nn.TransformerEncoderLayer(
+                config.hidden, config.attention_heads,
+                batch_first=True
+            )
+            self.attention = nn.TransformerEncoder(
+                encoder_layer, num_layers=2
+            )
+        else:
+            self.attention = None
+
+        self.q_head = QHead(config.hidden, config.hidden,
+                           config.head_hidden)
+
+    def forward(self, state, action_features,
+                heightmap_patches, action_mask):
+        # state: (batch, 8)
+        # action_features: (batch, max_actions, 25)
+        # heightmap_patches: (batch, max_actions, 7, 7)
+        # action_mask: (batch, max_actions)
+
+        # Encode state
+        state_embed = self.state_encoder(state)
+
+        # Process heightmaps
+        heightmap_embeds = self.heightmap_cnn(heightmap_patches)
+
+        # Encode actions with heightmaps
+        action_embeds = self.action_encoder(
+            action_features, heightmap_embeds
+        )
+
+        # Apply attention if enabled
+        if self.attention is not None:
+            action_embeds = self.attention(
+                action_embeds, mask=~action_mask.bool()
+            )
+
+        # Compute Q-values
+        q_values = self.q_head(state_embed, action_embeds)
+
+        # Mask invalid actions
+        q_values = q_values.masked_fill(~action_mask.bool(), -1e9)
+
+        return q_values
+\end{lstlisting}
+
+\section{Training Loop Implementation}
+
+\subsection{DQN Training Step}
+
+\begin{lstlisting}[language=Python]
+def train_step(self):
+    """Single DQN training step"""
+    if len(self.replay_buffer) < self.config.warmup_steps:
+        return None
+
+    # Sample batch
+    batch = self.replay_buffer.sample(self.config.batch_size)
+
+    # Unpack batch (all tensors on GPU)
+    states = batch['state'].to(self.device)
+    action_indices = batch['action'].to(self.device)
+    rewards = batch['reward'].to(self.device)
+    next_states = batch['next_state'].to(self.device)
+    dones = batch['done'].to(self.device)
+    action_features = batch['action_features'].to(self.device)
+    next_action_features = batch['next_action_features'].to(self.device)
+    heightmap_patches = batch['heightmap_patches'].to(self.device)
+    next_heightmap_patches = batch['next_heightmap_patches'].to(self.device)
+    action_masks = batch['action_mask'].to(self.device)
+    next_action_masks = batch['next_action_mask'].to(self.device)
+
+    # Compute current Q-values
+    q_values = self.online_net(
+        states, action_features,
+        heightmap_patches, action_masks
+    )
+    q_taken = q_values.gather(1, action_indices.unsqueeze(1)).squeeze(1)
+
+    # Compute target Q-values
+    with torch.no_grad():
+        if self.config.double_dqn:
+            # Double DQN: online net selects, target net evaluates
+            next_q_online = self.online_net(
+                next_states, next_action_features,
+                next_heightmap_patches, next_action_masks
+            )
+            next_actions = next_q_online.argmax(dim=1, keepdim=True)
+
+            next_q_target = self.target_net(
+                next_states, next_action_features,
+                next_heightmap_patches, next_action_masks
+            )
+            next_q_values = next_q_target.gather(1, next_actions).squeeze(1)
+        else:
+            # Standard DQN
+            next_q_values = self.target_net(
+                next_states, next_action_features,
+                next_heightmap_patches, next_action_masks
+            ).max(dim=1)[0]
+
+        # Target: r + gamma * (1 - done) * Q_target(s', a')
+        targets = rewards + self.config.gamma * (1 - dones) * next_q_values
+
+    # Compute loss (Smooth L1)
+    loss = F.smooth_l1_loss(q_taken, targets)
+
+    # Optimize
+    self.optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(
+        self.online_net.parameters(),
+        self.config.grad_clip
+    )
+    self.optimizer.step()
+
+    # Update target network
+    self.train_steps += 1
+    if self.train_steps % self.config.target_update_interval == 0:
+        self.target_net.load_state_dict(self.online_net.state_dict())
+
+    return loss.item()
+\end{lstlisting}
+
+\subsection{Episode Loop}
+
+\begin{lstlisting}[language=Python]
+def run_episode(self, problem, train=True):
+    """Run single episode on problem instance"""
+    self.env.reset(problem)
+    state = self.env.get_state()
+    episode_reward = 0
+
+    while not self.env.is_terminal():
+        # Enumerate valid actions
+        actions = self.env.get_valid_actions()
+
+        if len(actions) == 0:
+            break  # No valid actions, episode ends
+
+        # Extract action features and heightmaps
+        action_features = []
+        heightmap_patches = []
+
+        for action in actions:
+            feat = self.env.extract_action_features(action)
+            patch = self.env.extract_heightmap_patch(action)
+            action_features.append(feat)
+            heightmap_patches.append(patch)
+
+        action_features = np.array(action_features)
+        heightmap_patches = np.array(heightmap_patches)
+
+        # Pad to max_actions
+        action_mask = self._create_mask(len(actions))
+        action_features_padded = self._pad_actions(
+            action_features, self.config.max_actions
+        )
+        heightmap_patches_padded = self._pad_patches(
+            heightmap_patches, self.config.max_actions
+        )
+
+        # Select action (epsilon-greedy)
+        if train and random.random() < self.epsilon:
+            action_idx = random.randrange(len(actions))
+        else:
+            with torch.no_grad():
+                state_tensor = torch.FloatTensor(state).unsqueeze(0)
+                action_feat_tensor = torch.FloatTensor(
+                    action_features_padded
+                ).unsqueeze(0)
+                patch_tensor = torch.FloatTensor(
+                    heightmap_patches_padded
+                ).unsqueeze(0)
+                mask_tensor = torch.BoolTensor(action_mask).unsqueeze(0)
+
+                q_values = self.online_net(
+                    state_tensor, action_feat_tensor,
+                    patch_tensor, mask_tensor
+                )
+                action_idx = q_values.squeeze(0).argmax().item()
+
+        # Execute action
+        selected_action = actions[action_idx]
+        next_state, reward, done = self.env.step(selected_action)
+        episode_reward += reward
+
+        # Store transition
+        if train:
+            self.replay_buffer.store(
+                state, action_idx, reward, next_state, done,
+                action_features_padded,
+                # ... (next state features, masks, patches)
+            )
+
+            # Train
+            self.train_step()
+
+        state = next_state
+
+    # Decay epsilon
+    if train:
+        self.epsilon = max(
+            self.config.eps_end,
+            self.epsilon - (self.config.eps_start - self.config.eps_end) /
+                          self.config.eps_decay_steps
+        )
+
+    return episode_reward, self.env.bins_used
+\end{lstlisting}
+
+\section{Evolutionary Architecture Search}
+
+\subsection{Genome Implementation}
+
+\begin{lstlisting}[language=Python]
+@dataclass
+class NetworkGenome:
+    genome_id: str
+
+    # Multiplicative genes (mutate by *2 or /2)
+    hidden_dim: int = 256
+    enc_layers: int = 2
+    head_hidden: int = 256
+    attention_heads: int = 4
+    num_inducing_points: int = 32
+    patch_size: int = 7
+
+    # Discrete genes (random choice)
+    attention_type: str = "standard"  # or "set_transformer", "none"
+    cnn_channels: List[int] = field(
+        default_factory=lambda: [16, 32]
+    )
+    dropout: float = 0.0
+    activation: str = "relu"  # or "gelu", "silu"
+
+    def mutate(self, rate: float):
+        """Mutate genome with given probability"""
+        # Multiplicative genes
+        if random.random() < rate:
+            self.hidden_dim = self._mutate_multiplicative(
+                self.hidden_dim, 64, 1024
+            )
+
+        if random.random() < rate:
+            self.enc_layers = self._mutate_multiplicative(
+                self.enc_layers, 1, 8
+            )
+
+        # ... (similar for other multiplicative genes)
+
+        # Discrete genes
+        if random.random() < rate:
+            self.attention_type = random.choice(
+                ["standard", "set_transformer", "none"]
+            )
+
+        if random.random() < rate:
+            self.cnn_channels = random.choice([
+                [8, 16], [16, 32], [32, 64], [16, 48]
+            ])
+
+        # ... (similar for dropout, activation)
+
+    def _mutate_multiplicative(self, value, min_val, max_val):
+        """Mutate by *2 or /2, clamped to bounds"""
+        if random.random() < 0.5:
+            new_val = value * 2
+        else:
+            new_val = value // 2
+        return max(min_val, min(max_val, new_val))
+
+    def to_config(self):
+        """Convert genome to DQN configuration"""
+        return DQNConfigEnhanced(
+            hidden=self.hidden_dim,
+            enc_layers=self.enc_layers,
+            head_hidden=self.head_hidden,
+            attention_type=self.attention_type,
+            attention_heads=self.attention_heads,
+            num_inducing_points=self.num_inducing_points,
+            heightmap_patch_size=self.patch_size,
+            cnn_channels=self.cnn_channels,
+            dropout=self.dropout,
+            # ... (fixed hyperparameters)
+            lr=1e-4,
+            gamma=0.992,
+            n_step=15,
+            # ...
+        )
+\end{lstlisting}
+
+\subsection{Fitness Evaluation}
+
+\begin{lstlisting}[language=Python]
+def evaluate_genome(genome: NetworkGenome,
+                   train_problems: List[Problem],
+                   eval_problems: List[Problem],
+                   episodes: int = 20):
+    """Evaluate genome fitness"""
+    # Build DQN from genome
+    config = genome.to_config()
+    agent = DQNAgent(config)
+
+    # Train for episodes
+    for episode in range(episodes):
+        problem = random.choice(train_problems)
+        agent.run_episode(problem, train=True)
+
+    # Evaluate on validation set
+    utilizations = []
+    bins_used_list = []
+
+    for problem in eval_problems:
+        episode_reward, bins_used = agent.run_episode(
+            problem, train=False
+        )
+
+        # Compute utilization
+        total_item_volume = sum(
+            item.w * item.d * item.h for item in problem.items
+        )
+        bin_volume = problem.bin_W * problem.bin_D * problem.bin_H
+        utilization = total_item_volume / (bins_used * bin_volume)
+
+        utilizations.append(utilization)
+        bins_used_list.append(bins_used)
+
+    avg_utilization = np.mean(utilizations)
+    avg_bins = np.mean(bins_used_list)
+
+    # Compute complexity penalty
+    complexity = agent.count_parameters()
+    complexity_penalty = complexity / 10_000_000  # Normalize
+
+    # Bins penalty
+    bins_penalty = avg_bins / problem.max_bins
+
+    # Multi-objective fitness
+    fitness = (
+        0.70 * avg_utilization +
+        0.20 * (1.0 - bins_penalty) +
+        0.10 * (1.0 - complexity_penalty)
+    )
+
+    return fitness, avg_utilization, avg_bins, complexity
+\end{lstlisting}
+
+\subsection{Genetic Algorithm Loop}
+
+\begin{lstlisting}[language=Python]
+def run_evolution(population_size=20, generations=10):
+    """Run genetic algorithm for architecture search"""
+    # Initialize population
+    population = [
+        NetworkGenome(genome_id=f"gen0_{i}")
+        for i in range(population_size)
+    ]
+
+    for generation in range(generations):
+        # Evaluate all genomes
+        fitness_scores = []
+        for genome in population:
+            fitness, util, bins, complexity = evaluate_genome(
+                genome, train_problems, eval_problems
+            )
+            fitness_scores.append((genome, fitness, util, bins))
+
+        # Sort by fitness
+        fitness_scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Elitism: keep top 2
+        elite = [x[0] for x in fitness_scores[:2]]
+
+        # Selection: tournament
+        parents = []
+        for _ in range(population_size - 2):
+            tournament = random.sample(fitness_scores, k=3)
+            winner = max(tournament, key=lambda x: x[1])[0]
+            parents.append(winner)
+
+        # Crossover
+        offspring = []
+        for i in range(0, len(parents), 2):
+            if i + 1 < len(parents):
+                child1, child2 = crossover(parents[i], parents[i+1])
+                offspring.extend([child1, child2])
+
+        # Mutation
+        mutation_rate = 0.2 * (0.25 ** (generation / generations))
+        for child in offspring:
+            child.mutate(mutation_rate)
+
+        # Next generation
+        population = elite + offspring[:population_size - 2]
+
+    # Return best genome
+    best_genome = max(fitness_scores, key=lambda x: x[1])[0]
+    return best_genome
+\end{lstlisting}
+
+\section{Hyperparameter Configuration}
+
+Table~\ref{tab:hyperparameters} summarizes all hyperparameters used in the final system.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llc}
+\toprule
+\textbf{Category} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+\multirow{5}{*}{Network} & Hidden dimension & 256 \\
+                        & Encoder layers & 2 \\
+                        & Head hidden & 256 \\
+                        & Attention heads & 4 \\
+                        & Inducing points & 32 \\
+\midrule
+\multirow{3}{*}{CNN} & Patch size & $7 \times 7$ \\
+                     & Channels & [16, 32] \\
+                     & Embedding dim & 64 \\
+\midrule
+\multirow{6}{*}{Training} & Learning rate & $1 \times 10^{-4}$ \\
+                          & Batch size & 128 \\
+                          & Discount ($\gamma$) & 0.992 \\
+                          & N-step & 15 \\
+                          & Gradient clip & 1.0 \\
+                          & Double DQN & True \\
+\midrule
+\multirow{3}{*}{Exploration} & $\varepsilon$ start & 1.0 \\
+                             & $\varepsilon$ end & 0.15 \\
+                             & Decay steps & 20,000 \\
+\midrule
+\multirow{3}{*}{Replay} & Buffer size & 200,000 \\
+                        & Warmup steps & 1,000 \\
+                        & Target update & Every 500 steps \\
+\midrule
+\multirow{4}{*}{Evolution} & Population size & 20 \\
+                           & Generations & 10 \\
+                           & Elite size & 2 \\
+                           & Episodes/eval & 20 \\
+\bottomrule
+\end{tabular}
+\caption{Complete hyperparameter configuration}
+\label{tab:hyperparameters}
+\end{table}
+
+\section{Computational Considerations}
+
+\subsection{Time Complexity}
+
+\begin{itemize}
+    \item \textbf{Action Enumeration}: $\mathcal{O}(B \cdot I \cdot E \cdot R)$ where $B$ is bins, $I$ is remaining items, $E$ is EMS per bin ($\approx 50$), and $R$ is rotations (6). Typical: $\mathcal{O}(100)$-$\mathcal{O}(1000)$ actions per step.
+
+    \item \textbf{EMS Update}: $\mathcal{O}(E^2)$ for dominance pruning, $\mathcal{O}(E \log E)$ for sorting. With $E \approx 50$, this is fast ($<1$ms).
+
+    \item \textbf{Neural Network Forward Pass}: Dominated by attention mechanism. Set Transformer: $\mathcal{O}(N \cdot M)$ where $N$ is actions ($\sim$128) and $M$ is inducing points (32). Standard Transformer: $\mathcal{O}(N^2)$. GPU acceleration makes both tractable.
+
+    \item \textbf{Episode Runtime}: Typical episode (20 items) takes 2-5 seconds on NVIDIA RTX 3080, including action enumeration, neural network inference, and environment updates.
+\end{itemize}
+
+\subsection{Memory Requirements}
+
+\begin{itemize}
+    \item \textbf{Replay Buffer}: 200,000 transitions $\times$ (state + action features + patches + metadata) $\approx$ 5 GB
+    \item \textbf{Neural Network}: $\sim$10M parameters $\times$ 2 (online + target) $\times$ 4 bytes $\approx$ 80 MB
+    \item \textbf{Batch Processing}: 128 batch $\times$ 128 actions $\times$ 256 hidden $\times$ 4 bytes $\approx$ 16 MB
+    \item \textbf{Total}: Comfortable on consumer GPUs with 8GB+ VRAM
+\end{itemize}
+
+\section{Software Engineering Practices}
+
+\subsection{Code Organization}
+
+Modular design separates concerns:
+\begin{itemize}
+    \item \texttt{nesting/}: Geometric algorithms (EMS, collision, constraints)
+    \item \texttt{dqn\_core/}: RL agent and neural networks
+    \item \texttt{main/}: Training loops, evolution, evaluation
+\end{itemize}
+
+\subsection{Configuration Management}
+
+Dataclasses enable:
+\begin{itemize}
+    \item Type-safe parameter passing
+    \item Easy serialization (to JSON for experiment tracking)
+    \item Clear documentation of all configurable options
+\end{itemize}
+
+\subsection{Reproducibility}
+
+\begin{itemize}
+    \item Random seeds set for NumPy, PyTorch, Python random
+    \item Deterministic GPU operations enabled
+    \item All hyperparameters logged
+    \item Model checkpoints saved periodically
+\end{itemize}
+
+\section{Summary}
+
+This implementation realizes the conceptual framework from Chapter~\ref{ch:proposed_method} through:
+
+\begin{enumerate}
+    \item \textbf{Efficient Geometric Processing}: EMS algorithm with $\mathcal{O}(E^2)$ updates, heightmap tracking with $\mathcal{O}(1)$ cell updates
+
+    \item \textbf{Expressive Neural Architecture}: Multi-stream network combining MLP encoders, CNNs for spatial reasoning, and Set Transformers for action relationships
+
+    \item \textbf{Stable Deep RL}: Double DQN with experience replay, n-step returns, and potential-based reward shaping
+
+    \item \textbf{Automated Architecture Search}: Evolutionary algorithm exploring network configurations
+\end{enumerate}
+
+The system handles complex real-world constraints (weight, incompatibility, affinity, relative positioning) while learning effective packing strategies directly from interaction. The next chapter evaluates this implementation experimentally, measuring packing performance, learning dynamics, and the impact of key design choices.
