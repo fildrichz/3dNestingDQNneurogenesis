@@ -25,7 +25,7 @@ We design the neural network components to be fully configurable through a genom
 
 This design choice lets evolution decide whether attention is beneficial. Similarly, we make network depths, layer widths, CNN configurations, activation functions, and attention parameters all evolvable through genome mutation.
 
-The genome class converts genetic encodings to network configurations via a \texttt{to\_config()} method, separating evolvable architectural choices from fixed training parameters.
+The genome class converts genetic encodings to network configurations via a \texttt{to\_dqn\_config()} method, separating evolvable architectural choices from fixed training parameters.
 
 \section{Feature Engineering: State and Action Representation}
 
@@ -149,7 +149,7 @@ State features and heightmap patches are encoded separately, then action feature
 
 \subsection{Experience Replay and Double DQN}
 
-We use a 200K-transition circular buffer with 1,000-step warmup. Double DQN maintains online and target networks, with hard target updates every 1,000 steps. The online network selects actions while the target network evaluates them.
+We use a 200K-transition circular buffer with 1,000-step warmup. Double DQN maintains online and target networks, with hard target updates every 500 steps. The online network selects actions while the target network evaluates them.
 
 \subsection{Training Hyperparameters}
 
@@ -168,7 +168,7 @@ Key training decisions:
 
 We use $\varepsilon$-greedy exploration with linear decay from 1.0 to 0.15 over 20,000 steps. The 15\% floor maintains exploration given the dramatically varying action spaces.
 
-For variable action counts (10-500+), we pad action features to 512 with boolean masks and set invalid Q-values to $-\infty$, enabling GPU batch processing.
+For variable action counts (10-500+), we pad action features to 128 with boolean masks and set invalid Q-values to $-\infty$, enabling GPU batch processing.
 
 \section{Evolutionary Architecture Search Implementation}
 \label{sec:genome_flexibility}
@@ -181,22 +181,22 @@ We represent each architecture as a genome with two types of genes:
 
 \paragraph{Multiplicative Genes} (integer values that double or halve during mutation):
 \begin{itemize}
-    \item Hidden dimensions: 64, 128, 256, 512, 1024
-    \item Encoder layers: 1, 2, 4, 8
-    \item Head hidden size: 64, 128, 256, 512
-    \item Attention heads: 1, 2, 4, 8
-    \item Inducing points: 8, 16, 32, 64
-    \item Patch size: 3, 5, 7, 11
+    \item Hidden dimensions: base 256, mutated by $\times 2$ or $\div 2$, range [64, 1024]
+    \item Encoder layers: base 2, mutated by $\times 2$ or $\div 2$, range [1, 8]
+    \item Head hidden size: base 256, mutated by $\times 2$ or $\div 2$, range [64, 1024]
+    \item Attention heads: base 4, mutated by $\times 2$ or $\div 2$, range [2, 16]
+    \item Inducing points: base 32, mutated by $\times 2$ or $\div 2$, range [8, 128]
+    \item Patch size: base 7, mutated by $\times 2$ or $\div 2$, range [3, 15]
 \end{itemize}
 
-This multiplicative mutation scheme enables large architectural changes while maintaining reasonable values. Multiplying or dividing by 2 creates discrete jumps in capacity.
+This multiplicative mutation scheme enables large architectural changes while maintaining reasonable values. Each gene starts at its base value and mutation randomly multiplies or divides by 2, clamped to the specified range.
 
 \paragraph{Discrete Genes} (categorical choices that mutate randomly):
 \begin{itemize}
     \item Attention type: \texttt{"standard"}, \texttt{"set\_transformer"}, \texttt{"none"}
     \item CNN channels: \texttt{[8, 16]}, \texttt{[16, 32]}, \texttt{[32, 64]}, \texttt{[16, 48]}
     \item Activation function: \texttt{"relu"}, \texttt{"gelu"}, \texttt{"silu"}
-    \item Dropout rate: 0.0, 0.1, 0.2, 0.3
+    \item Dropout rate: 0.0, 0.05, 0.1, 0.15, 0.2
 \end{itemize}
 
 These categorical genes let evolution explore fundamentally different architectural patterns---e.g., whether attention helps at all.
