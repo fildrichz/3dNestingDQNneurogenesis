@@ -5,29 +5,9 @@ This chapter bridges the conceptual approach presented in Chapter~\ref{ch:propos
 
 \section{Technology Stack and Platform Choices}
 
-\subsection{Python as Implementation Language}
+\subsection{Python and PyTorch}
 
-We implement the entire system in Python 3.11, chosen specifically to support the reinforcement learning and evolutionary architecture search approach:
-
-\begin{itemize}
-    \item \textbf{Deep Learning Integration}: PyTorch, our chosen neural network framework, is primarily Python-based. Using Python throughout eliminates language barriers between geometric computation and neural network training.
-
-    \item \textbf{Rapid Experimentation}: Reinforcement learning requires extensive experimentation---testing different reward functions, network architectures, and training strategies. Python's dynamic nature enables faster iteration than compiled languages.
-
-    \item \textbf{Numerical Computing}: NumPy provides efficient array operations for EMS computation, heightmap updates, and collision detection without requiring low-level implementation.
-\end{itemize}
-
-\subsection{PyTorch for Neural Networks}
-
-Among deep learning frameworks, we selected PyTorch 2.x for several implementation-critical reasons:
-
-\begin{itemize}
-    \item \textbf{Dynamic Computation Graphs}: Our action space varies from dozens to hundreds of candidates at each step. PyTorch's dynamic graphs handle variable-length inputs naturally, while static graph frameworks require complex padding strategies.
-
-    \item \textbf{Debugging Transparency}: Reinforcement learning debugging requires inspecting Q-values, gradients, and attention weights during training. PyTorch's eager execution makes this straightforward.
-
-    \item \textbf{Custom Architecture Support}: Set Transformers with induced attention blocks are not standard layers. PyTorch's modular design allows implementing custom attention mechanisms cleanly.
-\end{itemize}
+We implement the system in Python 3.11 with PyTorch 2.x. Python provides mature deep learning libraries and rapid prototyping for the extensive experimentation required in reinforcement learning. PyTorch's dynamic computation graphs handle our variable-length action spaces naturally and enable straightforward implementation of custom Set Transformer architectures.
 
 \section{Designing for Architectural Flexibility}
 
@@ -43,29 +23,9 @@ We design the neural network components to be fully configurable through a genom
     \item \textbf{No Attention}: Direct processing without cross-action reasoning
 \end{itemize}
 
-This design choice lets evolution decide whether attention is beneficial. The genome specifies \texttt{attention\_type} as a categorical gene that can mutate between these options. If attention hurts performance for our problem, evolution will discover architectures without it.
+This design choice lets evolution decide whether attention is beneficial. Similarly, we make network depths, layer widths, CNN configurations, activation functions, and attention parameters all evolvable through genome mutation.
 
-Similarly, we make evolvable:
-\begin{itemize}
-    \item Network depths (number of encoder layers)
-    \item Layer widths (hidden dimensions)
-    \item CNN configurations (number of channels, kernel sizes)
-    \item Activation functions (ReLU, GELU, SiLU)
-    \item Attention heads and inducing points
-\end{itemize}
-
-\subsection{Configuration Management}
-
-All hyperparameters---both fixed training parameters and evolvable architectural choices---are managed through Python dataclasses. This provides:
-
-\begin{itemize}
-    \item \textbf{Type Safety}: Each parameter has an explicit type, catching errors at development time
-    \item \textbf{Documentation}: Default values document baseline configurations
-    \item \textbf{Serialization}: Configurations can be saved with experiment results for reproducibility
-    \item \textbf{Genome Conversion}: The genome class has a \texttt{to\_config()} method that generates network configurations from genetic encodings
-\end{itemize}
-
-This separation between genome (evolvable choices) and configuration (complete system setup) allows evolution to explore architecture space while keeping training hyperparameters fixed.
+We manage all hyperparameters through Python dataclasses with type safety and serialization support. The genome class converts genetic encodings to network configurations via a \texttt{to\_config()} method, separating evolvable architectural choices from fixed training parameters.
 
 \section{Feature Engineering: State and Action Representation}
 
@@ -131,27 +91,12 @@ All features are normalized to $[0, 1]$ or $[-1, 1]$ ranges to facilitate neural
 
 \subsection{Heightmap Design Choices}
 
-The Proposed Method introduces heightmaps for spatial reasoning. Here we detail how we configured this representation.
-
-\paragraph{Grid Resolution:} We use adaptive resolution based on bin dimensions:
+We use adaptive grid resolution with approximately 20 cells along the smaller bin dimension:
 \begin{equation}
 \text{resolution} = \max\left(1, \frac{\min(W, D)}{20}\right)
 \end{equation}
 
-This creates approximately 20 cells along the smaller bin dimension. For a $(100, 80, 60)$ bin, the resolution is 4 units, yielding a $(25 \times 20)$ grid. This balances spatial detail against computational cost---finer grids provide more precise geometry but increase memory and CNN computation.
-
-\paragraph{Patch Size:} We extract $7 \times 7$ patches centered on each action's placement position. This size provides:
-\begin{itemize}
-    \item Sufficient context to capture local geometry (corners, valleys, walls)
-    \item Small enough for efficient CNN processing across hundreds of actions
-    \item Compatibility with standard CNN architectures (odd dimensions enable clear center definition)
-\end{itemize}
-
-Smaller patches (e.g., $3 \times 3$) lose context; larger patches (e.g., $15 \times 15$) dramatically increase computation with diminishing returns.
-
-\paragraph{Normalization:} Heights are normalized by dividing by bin height $H$, mapping values to $[0, 1]$. This makes the representation scale-invariant across different bin sizes and improves neural network training by keeping inputs in a bounded range.
-
-\paragraph{Boundary Handling:} When extracting patches near bin edges, out-of-bounds cells are set to zero (ground level). This naturally represents the bin boundary as open space.
+We extract $7 \times 7$ patches centered on each placement position, balancing spatial context against computational cost. Heights are normalized by bin height for scale-invariance, and out-of-bounds cells are set to zero.
 
 \section{EMS-Based Geometry and Constraint Handling}
 
@@ -159,73 +104,26 @@ The Proposed Method uses Empty Maximal Spaces for collision-free action generati
 
 \subsection{EMS Management}
 
-We implement the 6-way difference method: when an item is placed, each intersected EMS is split into up to 6 sub-spaces (left, right, front, back, bottom, top). We then prune dominated spaces (smaller EMS completely contained in larger ones) and limit the set to the 50 largest spaces by volume.
-
-This limit prevents EMS proliferation while maintaining high-quality candidates. Since we sort by volume, we keep the most promising placement locations. Empirically, 50 spaces suffice even for complex instances---rarely do we need smaller EMS spaces after the top 50.
+We implement the 6-way difference method: each placed item splits intersected EMS into up to 6 sub-spaces. After pruning dominated spaces, we keep the 50 largest by volume, preventing proliferation while maintaining high-quality candidates.
 
 \subsection{Gravity Simulation}
 
-EMS candidates may position items floating in mid-air. We apply gravity by finding the highest supporting surface: for each placed item with overlapping XY footprint, we track its top surface. The item drops to rest on the maximum such surface (or the ground if no overlap exists).
-
-This ensures physical plausibility without explicit physics simulation. The $\mathcal{O}(n)$ complexity (checking against $n$ placed items) is acceptable for typical problem sizes (20-50 items).
+We apply gravity by finding the highest supporting surface among placed items with overlapping XY footprints. Items drop to rest on the maximum such surface (or ground), ensuring physical plausibility in $\mathcal{O}(n)$ time.
 
 \subsection{Constraint Validation}
 
-The implementation validates four constraint types during action generation:
-
-\begin{itemize}
-    \item \textbf{Weight Capacity}: Track cumulative weight per bin, reject actions exceeding capacity
-    \item \textbf{Incompatibility}: Maintain forbidden item pairs as a set, check before allowing placement
-    \item \textbf{Affinity}: Track which items must stay together, reject placements that split affinity groups across bins
-    \item \textbf{Relative Positioning}: After gravity application, verify that heavier items do not rest on lighter items by checking XY footprint overlaps
-\end{itemize}
-
-These checks filter the action space during enumeration. Only actions satisfying all constraints appear as valid options for the neural network to evaluate.
+We validate weight capacity, incompatibility pairs, affinity groups, and relative positioning (heavier-on-lighter) during action generation. Only constraint-satisfying actions reach the neural network.
 
 \section{Reward Function Design}
 
-The Proposed Method introduces potential-based reward shaping. Here we detail how we operationalized this concept.
-
-\subsection{Potential Function Components}
-
-We design the potential function $\Phi(s)$ to balance two objectives:
-
+We use potential-based reward shaping with:
 \begin{equation}
 \Phi(s) = \text{bin\_utilization} + 0.3 \cdot \text{ems\_quality}
 \end{equation}
 
-\paragraph{Bin Utilization:} We compute volume used divided by total bin volume, directly measuring packing efficiency.
+where EMS quality averages the top 3 largest spaces with cube-root transformation for diminishing returns. The shaped reward is $r_{\text{shaped}} = \gamma \cdot \Phi(s') - \Phi(s)$.
 
-\paragraph{EMS Quality:} Rather than using all EMS spaces, we focus on the top 3 largest spaces. We average their volumes and apply a cube root transformation:
-
-\begin{equation}
-\text{ems\_quality} = \frac{(\text{avg\_top\_3\_volume})^{1/3}}{(\text{bin\_volume})^{1/3}}
-\end{equation}
-
-The cube root provides diminishing returns---doubling space size doesn't double the benefit. This reflects that packing difficulty scales sub-linearly with space size.
-
-The 0.3 weighting balances immediate efficiency (utilization) against future potential (space quality). We tuned this empirically: higher weights overemphasize space preservation at the expense of actually placing items; lower weights ignore fragmentation until it's too late.
-
-\subsection{Shaped Reward Computation}
-
-At each step, we compute:
-\begin{equation}
-r_{\text{shaped}} = \gamma \cdot \Phi(s') - \Phi(s)
-\end{equation}
-
-This provides continuous feedback about packing quality changes. Placing an item that improves utilization while maintaining good spaces yields positive reward. Fragmentation that reduces EMS quality yields negative reward.
-
-\subsection{Terminal Rewards}
-
-At episode end, we add bonuses and penalties:
-
-\begin{itemize}
-    \item \textbf{Completion Bonus} (+0.3): Reward successfully placing all items
-    \item \textbf{Bin Efficiency Bonus} (+0.2 scaled): Reward using fewer bins, computed as $0.2 \cdot (1 - \text{bins\_used} / \text{max\_bins})$
-    \item \textbf{Unplaced Item Penalty} (-0.2 scaled): Penalize failed placements, scaled by fraction of unplaced items
-\end{itemize}
-
-These terminal signals align the shaped rewards with the true objective (minimizing bins).
+Terminal rewards include completion bonus (+0.3), bin efficiency bonus (+0.2 scaled), and unplaced item penalty (-0.2 scaled).
 
 \section{Neural Network Architecture Design}
 
@@ -233,69 +131,25 @@ The Proposed Method establishes a multi-stream architecture combining state enco
 
 \subsection{Component Architecture Choices}
 
-\paragraph{State Encoder:} We use a simple MLP (Multi-Layer Perceptron) to process the 8-dimensional state vector. The baseline configuration uses 2 hidden layers of 256 units each with ReLU activations. This is deliberately lightweight---the state vector is low-dimensional and doesn't require deep processing.
+\paragraph{State Encoder:} 2-layer MLP with 256 hidden units processing the 8-dimensional state vector.
 
-\paragraph{Heightmap CNN:} We design a two-stage CNN:
-\begin{itemize}
-    \item \textbf{Convolutional Layers}: Two convolutional layers with channels $[16, 32]$ and $3 \times 3$ kernels with padding to preserve spatial dimensions. This extracts local spatial patterns.
-    \item \textbf{Global Pooling}: Adaptive average pooling reduces each feature map to a single value, aggregating spatial information into a fixed-size vector regardless of input patch size.
-    \item \textbf{Projection}: A final fully-connected layer projects to a 64-dimensional embedding.
-\end{itemize}
+\paragraph{Heightmap CNN:} Two convolutional layers with channels $[16, 32]$ and $3 \times 3$ kernels, followed by adaptive average pooling and projection to 64 dimensions. We use shallow CNNs for the small $7 \times 7$ patches.
 
-We chose shallow CNNs (only 2 conv layers) because $7 \times 7$ patches are small---deeper networks would over-parameterize. The genome makes channel counts evolvable, allowing evolution to discover if deeper/wider CNNs improve performance.
+\paragraph{Action Encoder:} MLP processing concatenated action features (25-dim) and heightmap embeddings (64-dim), fusing geometric and spatial context.
 
-\paragraph{Action Encoder:} The action encoder receives concatenated action features (25-dim) and heightmap embeddings (64-dim), totaling 89 dimensions. We process this through an MLP matching the state encoder architecture. This fusion combines geometric features with spatial context before attention processing.
+\paragraph{Attention Mechanism:} Three genome-selectable options: Set Transformer with 32 inducing points (reducing complexity to $\mathcal{O}(NM)$), standard transformer with 2 layers and 4 heads, or no attention.
 
-\paragraph{Attention Mechanism:} As discussed in Section~\ref{sec:genome_flexibility}, we support three attention configurations:
-
-\begin{itemize}
-    \item \textbf{Set Transformer}: Uses Induced Set Attention Blocks (ISAB) with 32 learnable inducing points. This reduces complexity from $\mathcal{O}(N^2)$ to $\mathcal{O}(NM)$ where $N$ is actions and $M=32$ is inducing points.
-    \item \textbf{Standard Transformer}: Uses PyTorch's built-in transformer encoder with 2 layers and 4 attention heads.
-    \item \textbf{None}: Skips attention entirely, processing actions independently.
-\end{itemize}
-
-The genome's \texttt{attention\_type} gene selects among these. Evolution determines which provides the best performance-complexity tradeoff.
-
-\paragraph{Q-Value Head:} The final component combines state and action embeddings. We broadcast the state embedding across all actions, concatenate with each action embedding, and pass through a 2-layer MLP that outputs a single Q-value per action. This design allows the network to modulate action values based on global state.
+\paragraph{Q-Value Head:} 2-layer MLP combining broadcasted state embeddings with action embeddings to output Q-values.
 
 \subsection{Information Flow}
 
-The complete forward pass follows this pipeline:
-
-\begin{enumerate}
-    \item State features $\rightarrow$ State Encoder $\rightarrow$ state embedding (256-dim)
-    \item Heightmap patches $\rightarrow$ CNN $\rightarrow$ heightmap embeddings (64-dim per action)
-    \item Action features + heightmap embeddings $\rightarrow$ Action Encoder $\rightarrow$ action embeddings (256-dim per action)
-    \item Action embeddings $\rightarrow$ Attention (optional) $\rightarrow$ contextualized embeddings
-    \item State embedding + action embeddings $\rightarrow$ Q-Head $\rightarrow$ Q-values
-    \item Apply action mask to set invalid actions to $-\infty$
-\end{enumerate}
-
-This design separates concerns: spatial reasoning (CNN), global context (state encoder), geometric analysis (action encoder), action relationships (attention), and value estimation (Q-head).
+State features and heightmap patches are encoded separately, then action features are fused with heightmap embeddings. Optional attention processes action embeddings before the Q-head combines them with state embeddings to produce masked Q-values.
 
 \section{Training Configuration}
 
-The Proposed Method uses Double DQN with experience replay. Here we detail the specific training choices.
+\subsection{Experience Replay and Double DQN}
 
-\subsection{Experience Replay Design}
-
-We use a circular buffer (implemented via Python's \texttt{collections.deque}) with capacity 200,000 transitions. Each stored transition includes:
-
-\begin{itemize}
-    \item State and next state vectors (8-dim each)
-    \item Action index and reward
-    \item Action features and heightmap patches for both current and next states
-    \item Action validity masks indicating which actions are valid
-    \item Episode termination flag
-\end{itemize}
-
-The large buffer capacity (200K) allows storing diverse experiences across many episodes. We set the warmup period to 1,000 steps, ensuring the buffer contains sufficient variety before training begins.
-
-\subsection{Double DQN Implementation}
-
-We implement Double DQN by maintaining two networks: an online network updated every training step, and a target network updated every 1,000 steps via hard copy. We chose hard updates over soft updates ($\tau$-weighted averaging) for stability---gradual target changes weren't necessary given our update frequency.
-
-For target computation, the online network selects the best next action, while the target network evaluates that action's value. This decoupling reduces overestimation.
+We use a 200K-transition circular buffer with 1,000-step warmup. Double DQN maintains online and target networks, with hard target updates every 1,000 steps. The online network selects actions while the target network evaluates them.
 
 \subsection{Training Hyperparameters}
 
@@ -310,28 +164,11 @@ Key training decisions:
     \item \textbf{Loss Function}: Smooth L1 (Huber) loss, more robust to outliers than MSE
 \end{itemize}
 
-\subsection{Exploration Strategy}
+\subsection{Exploration and Variable Action Spaces}
 
-We use $\varepsilon$-greedy exploration with linear decay:
-\begin{itemize}
-    \item Start: $\varepsilon = 1.0$ (fully random)
-    \item End: $\varepsilon = 0.15$ (15\% random actions)
-    \item Decay: Linear over 20,000 steps
-\end{itemize}
+We use $\varepsilon$-greedy exploration with linear decay from 1.0 to 0.15 over 20,000 steps. The 15\% floor maintains exploration given the dramatically varying action spaces.
 
-We maintain 15\% exploration even after decay (rather than decaying to 0.05 or 0.01) because the action space changes dramatically across problem states. Continued exploration helps discover better placements even late in training.
-
-\subsection{Variable Action Space Handling}
-
-A key implementation challenge is the variable number of valid actions (10-500+ depending on state). We handle this through:
-
-\begin{itemize}
-    \item \textbf{Dynamic Action Sets}: Generate valid actions on-the-fly each step
-    \item \textbf{Padding and Masking}: Pad action feature matrices to a fixed size (512 actions), use boolean masks to indicate which are valid
-    \item \textbf{Masked Q-Values}: Set invalid action Q-values to $-\infty$ before action selection
-\end{itemize}
-
-This allows batch processing on GPUs while respecting the varying action spaces across states.
+For variable action counts (10-500+), we pad action features to 512 with boolean masks and set invalid Q-values to $-\infty$, enabling GPU batch processing.
 
 \section{Evolutionary Architecture Search Implementation}
 \label{sec:genome_flexibility}
@@ -364,51 +201,15 @@ This multiplicative mutation scheme enables large architectural changes while ma
 
 These categorical genes let evolution explore fundamentally different architectural patterns---e.g., whether attention helps at all.
 
-\subsection{Fitness Function Design}
+\subsection{Fitness and Evolution}
 
-We evaluate each genome by:
-\begin{enumerate}
-    \item Building a DQN agent with the genome's configuration
-    \item Training for 20 episodes on small training problems
-    \item Evaluating on validation problems
-    \item Computing a multi-objective fitness:
-\end{enumerate}
-
+We evaluate genomes by training DQN agents for 20 episodes and computing:
 \begin{equation}
 \text{fitness} = 0.7 \cdot \text{utilization} + 0.2 \cdot (1 - \text{bins\_penalty}) + 0.1 \cdot (1 - \text{complexity\_penalty})
 \end{equation}
 
-The weighting emphasizes packing quality (70\%) while penalizing excessive bin usage (20\%) and network size (10\%). The complexity penalty prevents evolution from always choosing the largest networks.
-
-\subsection{Evolutionary Process}
-
-We implement a standard genetic algorithm:
-
-\begin{itemize}
-    \item \textbf{Population}: 20 genomes per generation
-    \item \textbf{Elitism}: Top 2 genomes survive unchanged
-    \item \textbf{Selection}: Tournament selection with size 3
-    \item \textbf{Crossover}: Uniform crossover swapping genes between parents
-    \item \textbf{Mutation}: Adaptive rate starting at 0.2, decaying to 0.05 over generations
-    \item \textbf{Generations}: 10 generations (limited by computational budget)
-\end{itemize}
-
-The adaptive mutation rate allows broad exploration early (high mutation) while refining successful architectures later (low mutation).
+The evolutionary process uses population size 20, tournament selection (size 3), uniform crossover, adaptive mutation (0.2 → 0.05), and 10 generations with elitism (top 2 survive).
 
 \section{Summary}
 
-This chapter detailed the implementation choices that translate the conceptual approach from Chapter~\ref{ch:proposed_method} into working software. The key design decisions include:
-
-\paragraph{Technology Selection:} Python for rapid experimentation, PyTorch for dynamic neural networks, NumPy for geometric computation.
-
-\paragraph{Feature Engineering:} 8 global state features capturing packing progress, 25 action features describing placement quality, and $7 \times 7$ heightmap patches for spatial context.
-
-\paragraph{Architectural Flexibility:} Genome-driven configuration allowing evolution to choose between Set Transformer, standard attention, or no attention; variable network depths and widths; different activation functions.
-
-\paragraph{Reward Shaping:} Potential function combining bin utilization with EMS quality (cube-root transformed, top-3 averaged, 0.3 weighted) plus terminal bonuses for completion and bin efficiency.
-
-\paragraph{Training Setup:} 200K-transition replay buffer, Double DQN with hard target updates every 1,000 steps, 15-step returns, $\varepsilon$-greedy exploration (1.0 → 0.15 over 20K steps), batch size 128, learning rate $10^{-4}$.
-
-\paragraph{Evolutionary Search:} Multiplicative genes (hidden dims, layers) and discrete genes (attention type, CNN channels), 20-genome population, tournament selection, adaptive mutation (0.2 → 0.05), multi-objective fitness (70\% utilization, 20\% bins, 10\% complexity).
-
-These choices bridge the gap between what the system does conceptually (proposed method) and how it achieves it concretely (implementation). The next chapter evaluates this implementation experimentally, measuring packing performance and analyzing the impact of these design choices.
+This chapter detailed implementation choices translating the conceptual approach into working software: Python/PyTorch for rapid prototyping, 8-dimensional state and 25-dimensional action features with $7 \times 7$ heightmap patches, genome-driven architecture flexibility, potential-based reward shaping (utilization + 0.3·EMS quality), Double DQN with 200K replay buffer and 15-step returns, and evolutionary search with population 20 over 10 generations optimizing multi-objective fitness (70\% utilization, 20\% bins, 10\% complexity).
