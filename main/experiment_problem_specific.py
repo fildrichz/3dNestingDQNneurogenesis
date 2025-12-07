@@ -183,13 +183,26 @@ def run_problem_specific_experiment(
     for problem_file in problem_files:
         problem_name = problem_file.stem
 
-        # Skip if already completed
-        if problem_name in state['completed_problems']:
+        # Check for evolution checkpoint first
+        problem_dir = results_path / problem_name
+        evolution_dir = problem_dir / "evolution"
+        checkpoint_file = evolution_dir / "checkpoint_latest.json" if evolution_dir.exists() else None
+        has_checkpoint = checkpoint_file and checkpoint_file.exists()
+
+        # Skip if already completed and not resuming from checkpoint
+        if problem_name in state['completed_problems'] and not (resume and has_checkpoint):
             if verbose:
                 print(f"Skipping {problem_name} (already completed)")
             continue
 
-        if verbose:
+        # If resuming from checkpoint, remove from completed to allow reprocessing
+        if resume and has_checkpoint and problem_name in state['completed_problems']:
+            state['completed_problems'].remove(problem_name)
+            if verbose:
+                print(f"\n{'='*80}")
+                print(f"Resuming: {problem_name}")
+                print(f"{'='*80}\n")
+        elif verbose:
             print(f"\n{'='*80}")
             print(f"Processing: {problem_name}")
             print(f"{'='*80}\n")
@@ -201,13 +214,10 @@ def run_problem_specific_experiment(
             problem = load_problem(str(problem_file))
 
             # Create problem-specific result directory
-            problem_dir = results_path / problem_name
             problem_dir.mkdir(parents=True, exist_ok=True)
 
-            # Check for evolution checkpoint
-            evolution_dir = problem_dir / "evolution"
-            checkpoint_file = evolution_dir / "checkpoint_latest.json" if evolution_dir.exists() else None
-            resume_from = str(checkpoint_file) if (resume and checkpoint_file and checkpoint_file.exists()) else None
+            # Determine resume path
+            resume_from = str(checkpoint_file) if (resume and has_checkpoint) else None
 
             # Phase 1: Evolve architecture
             if verbose:
