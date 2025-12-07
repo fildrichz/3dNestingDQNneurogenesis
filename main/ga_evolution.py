@@ -404,7 +404,12 @@ def evolve_architecture(problem,
             }
             with open(gen_file, 'w') as f:
                 json.dump(gen_data, f, indent=2)
-        
+
+            # Also save as latest checkpoint for resume functionality
+            checkpoint_file = save_dir / "checkpoint_latest.json"
+            with open(checkpoint_file, 'w') as f:
+                json.dump(gen_data, f, indent=2)
+
         # Create next generation
         if gen < generations - 1:  # Don't create new generation on last iteration
             # Calculate target population size for next generation
