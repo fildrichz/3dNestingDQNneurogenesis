@@ -73,7 +73,8 @@ def evaluate_genome_fitness(genome: NetworkGenome,
                            env,
                            items: List,
                            episodes: int = 20,
-                           verbose: bool = False) -> Tuple[float, Dict]:
+                           verbose: bool = False,
+                           item_fraction: float = 1.0) -> Tuple[float, Dict]:
     """
     Evaluate fitness of a genome by training its architecture.
 
@@ -85,6 +86,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         items: List of items to pack
         episodes: Number of training episodes
         verbose: Print detailed progress
+        item_fraction: Fraction of items to use (0.0-1.0) for curriculum learning
 
     Returns:
         (fitness_score, metrics_dict)
@@ -92,6 +94,13 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     import torch
     import gc
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
+
+    # Apply curriculum learning: use subset of items if requested
+    if item_fraction < 1.0:
+        num_items = max(1, int(len(items) * item_fraction))
+        items_subset = items[:num_items]
+    else:
+        items_subset = items
 
     # Build network from genome (with reduced buffer for GA phase)
     cfg = genome.to_dqn_config(
@@ -111,7 +120,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         metrics = evaluate_agent_on_problem(
             agent=agent,
             env=env,
-            items=items,
+            items=items_subset,
             episodes=episodes,
             patch_size=genome.genes['patch_size'],
             train_freq=1,
@@ -179,7 +188,9 @@ def evolve_architecture(problem,
                        tournament_size: int = 3,
                        seed: Optional[int] = None,
                        save_dir: Optional[str] = None,
-                       verbose: bool = True) -> Tuple[NetworkGenome, List[NetworkGenome]]:
+                       verbose: bool = True,
+                       curriculum_schedule: Optional[Dict] = None,
+                       resume_from: Optional[str] = None) -> Tuple[NetworkGenome, List[NetworkGenome]]:
     """
     Main GA loop for architecture evolution.
 
@@ -196,6 +207,9 @@ def evolve_architecture(problem,
         exploitation_ratio: Population multiplier for late exploitation phase (default 0.75)
         crossover_method: 'uniform' or 'single_point'
         tournament_size: Size of tournament for selection
+        curriculum_schedule: Optional dict with 'generations', 'item_fractions', 'episodes'
+                            for progressive difficulty training
+        resume_from: Optional path to checkpoint file to resume from
         seed: Random seed for reproducibility (None = random)
         save_dir: Directory to save results (None = don't save)
         verbose: Print progress
@@ -390,7 +404,12 @@ def evolve_architecture(problem,
             }
             with open(gen_file, 'w') as f:
                 json.dump(gen_data, f, indent=2)
-        
+
+            # Also save as latest checkpoint for resume functionality
+            checkpoint_file = save_dir / "checkpoint_latest.json"
+            with open(checkpoint_file, 'w') as f:
+                json.dump(gen_data, f, indent=2)
+
         # Create next generation
         if gen < generations - 1:  # Don't create new generation on last iteration
             # Calculate target population size for next generation
