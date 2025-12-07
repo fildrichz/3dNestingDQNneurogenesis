@@ -347,22 +347,15 @@ def train_with_evolved_genome(problem_path: str,
     print(f"  Bins used: {sum(bins_hist)/len(bins_hist):.1f}")
     print(f"  Utilization: {sum(util_hist)/len(util_hist):.3f}")
 
-    # Save model
+    # Save model (minimal: weights + architecture + performance only)
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         torch.save({
             'model_state_dict': agent.q.state_dict(),
-            'target_state_dict': agent.q_target.state_dict(),
-            'optimizer_state_dict': agent.opt.state_dict(),
-            'env_steps': agent.env_steps,
-            'training_steps': agent.training_steps,
-            'epsilon': agent.epsilon,
             'genome': genome.to_dict(),
-            'config': cfg.__dict__,
             'best_bins': best_bins,
             'best_items': best_items,
-            'best_util': best_util,
-            'problem_file': problem_path
+            'best_util': best_util
         }, save_path, pickle_protocol=4)
         print(f"\nModel saved to: {save_path}")
 
@@ -675,22 +668,15 @@ def continue_training_on_new_dataset(
     print(f"\nTotal training steps: {agent.training_steps}")
     print(f"Total environment steps: {agent.env_steps}")
 
-    # Save updated model
+    # Save updated model (minimal: weights + architecture + performance only)
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         torch.save({
             'model_state_dict': agent.q.state_dict(),
-            'target_state_dict': agent.q_target.state_dict(),
-            'optimizer_state_dict': agent.opt.state_dict(),
-            'env_steps': agent.env_steps,
-            'training_steps': agent.training_steps,
-            'epsilon': agent.epsilon,
             'genome': genome.to_dict(),
-            'config': agent.cfg.__dict__,
             'best_bins': best_bins,
             'best_items': best_items,
-            'best_util': best_util,
-            'problem_file': new_problem_path  # Track which problem this was trained on
+            'best_util': best_util
         }, save_path, pickle_protocol=4)
         print(f"\nUpdated model saved to: {save_path}")
 
