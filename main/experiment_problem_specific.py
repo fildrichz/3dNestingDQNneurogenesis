@@ -97,6 +97,7 @@ def run_problem_specific_experiment(
     episodes_per_eval: int = 20,
     training_episodes: int = 300,
     use_curriculum: bool = True,
+    adaptive_population: bool = True,
     elite_size: int = 2,
     mutation_rate: float = 0.2,
     seed: Optional[int] = None,
@@ -109,11 +110,12 @@ def run_problem_specific_experiment(
     Args:
         dataset_dir: Directory containing problem files
         results_dir: Directory to save results
-        population_size: GA population size
+        population_size: GA base population size
         generations: Number of GA generations
         episodes_per_eval: Episodes for fitness evaluation
         training_episodes: Episodes for final training
         use_curriculum: Enable curriculum learning
+        adaptive_population: Enable adaptive population sizing (1.5x early, 0.75x late)
         elite_size: Number of elite genomes to preserve
         mutation_rate: Initial mutation rate
         seed: Random seed for reproducibility
@@ -144,7 +146,11 @@ def run_problem_specific_experiment(
         print(f"Completed: {len(state['completed_problems'])}")
         print(f"Remaining: {len(problem_files) - len(state['completed_problems'])}")
         print(f"\nGA Configuration:")
-        print(f"  Population size: {population_size}")
+        print(f"  Base population size: {population_size}")
+        if adaptive_population:
+            print(f"  Adaptive population: enabled (1.5x early -> 1.0x mid -> 0.75x late)")
+        else:
+            print(f"  Adaptive population: disabled (fixed size)")
         print(f"  Generations: {generations}")
         print(f"  Episodes per eval: {episodes_per_eval}")
         print(f"  Curriculum learning: {use_curriculum}")
@@ -215,6 +221,7 @@ def run_problem_specific_experiment(
                 elite_size=elite_size,
                 mutation_rate=mutation_rate,
                 adaptive_mutation=True,
+                adaptive_population=adaptive_population,
                 crossover_method='uniform',
                 tournament_size=3,
                 seed=seed,
@@ -259,7 +266,8 @@ def run_problem_specific_experiment(
                 'problem_name': problem_name,
                 'evolution': {
                     'generations': generations,
-                    'population_size': population_size,
+                    'base_population_size': population_size,
+                    'adaptive_population': adaptive_population,
                     'best_fitness': best_genome.fitness,
                     'best_genome': best_genome.to_dict()
                 },
@@ -327,7 +335,8 @@ def run_problem_specific_experiment(
     summary = {
         'experiment_type': 'problem_specific',
         'configuration': {
-            'population_size': population_size,
+            'base_population_size': population_size,
+            'adaptive_population': adaptive_population,
             'generations': generations,
             'episodes_per_eval': episodes_per_eval,
             'training_episodes': training_episodes,
@@ -411,6 +420,11 @@ def main():
         help='Disable curriculum learning'
     )
     parser.add_argument(
+        '--no-adaptive-population',
+        action='store_true',
+        help='Disable adaptive population sizing (use fixed population)'
+    )
+    parser.add_argument(
         '--elite-size',
         type=int,
         default=2,
@@ -449,6 +463,7 @@ def main():
         episodes_per_eval=args.episodes_per_eval,
         training_episodes=args.training_episodes,
         use_curriculum=not args.no_curriculum,
+        adaptive_population=not args.no_adaptive_population,
         elite_size=args.elite_size,
         mutation_rate=args.mutation_rate,
         seed=args.seed,

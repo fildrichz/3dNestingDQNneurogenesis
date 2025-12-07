@@ -139,6 +139,7 @@ def evolve_multi_problem_architecture(
     population_size: int = 20,
     generations: int = 15,
     episodes_per_problem: int = 10,
+    adaptive_population: bool = True,
     elite_size: int = 2,
     mutation_rate: float = 0.2,
     seed: Optional[int] = None,
@@ -152,9 +153,10 @@ def evolve_multi_problem_architecture(
 
     Args:
         problems: List of (problem, problem_file_path) tuples
-        population_size: Number of genomes per generation
+        population_size: Base population size
         generations: Number of generations to evolve
         episodes_per_problem: Episodes per problem for fitness evaluation
+        adaptive_population: Enable adaptive population sizing (1.5x early, 0.75x late)
         elite_size: Number of top genomes to preserve
         mutation_rate: Initial probability of gene mutation
         seed: Random seed for reproducibility
@@ -205,7 +207,11 @@ def evolve_multi_problem_architecture(
         print(f"Training problems: {len(problems)}")
         for prob, path in problems:
             print(f"  - {path.stem}: {prob.bin_dimensions}, {len(prob.items)} item types")
-        print(f"Population size: {population_size}")
+        print(f"Base population size: {population_size}")
+        if adaptive_population:
+            print(f"Adaptive population: enabled (1.5x early -> 1.0x mid -> 0.75x late)")
+        else:
+            print(f"Adaptive population: disabled (fixed size)")
         print(f"Generations: {generations}")
         print(f"Episodes per problem: {episodes_per_problem}")
         if curriculum_schedule:
@@ -214,7 +220,12 @@ def evolve_multi_problem_architecture(
 
     # Initialize population (if not resuming)
     if population is None:
-        population = create_initial_population(population_size)
+        from ga_evolution import get_adaptive_population_size
+        if adaptive_population:
+            initial_size = get_adaptive_population_size(0, generations, population_size, 1.5, 0.75)
+        else:
+            initial_size = population_size
+        population = create_initial_population(initial_size)
 
     # Initialize tracking (if not resuming)
     if history is None:
@@ -331,6 +342,13 @@ def evolve_multi_problem_architecture(
 
         # Create next generation
         if gen < generations - 1:
+            # Determine target population size for next generation
+            from ga_evolution import get_adaptive_population_size
+            if adaptive_population:
+                target_size = get_adaptive_population_size(gen + 1, generations, population_size, 1.5, 0.75)
+            else:
+                target_size = population_size
+
             next_population = []
 
             # Elitism
@@ -342,7 +360,7 @@ def evolve_multi_problem_architecture(
             current_mutation_rate = mutation_rate * (1.0 - 0.75 * progress)
 
             # Fill with offspring
-            while len(next_population) < population_size:
+            while len(next_population) < target_size:
                 parent1 = tournament_selection(population, 3)
                 parent2 = tournament_selection(population, 3)
                 child = NetworkGenome.crossover(parent1, parent2, method='uniform')
@@ -387,6 +405,7 @@ def run_leave_one_out_experiment(
     episodes_per_problem: int = 10,
     training_episodes: int = 300,
     use_curriculum: bool = True,
+    adaptive_population: bool = True,
     elite_size: int = 2,
     mutation_rate: float = 0.2,
     seed: Optional[int] = None,
@@ -400,11 +419,12 @@ def run_leave_one_out_experiment(
         dataset_dir: Directory containing problem files
         target_problem: Problem to hold out (e.g., "3dBPP_12")
         results_dir: Directory to save results
-        population_size: GA population size
+        population_size: GA base population size
         generations: Number of GA generations
         episodes_per_problem: Episodes per problem for fitness evaluation
         training_episodes: Episodes for final training on target
         use_curriculum: Enable curriculum learning
+        adaptive_population: Enable adaptive population sizing (1.5x early, 0.75x late)
         elite_size: Number of elite genomes
         mutation_rate: Initial mutation rate
         seed: Random seed
@@ -439,7 +459,11 @@ def run_leave_one_out_experiment(
         for prob, path in training_problems:
             print(f"  - {path.stem}")
         print(f"\nGA Configuration:")
-        print(f"  Population size: {population_size}")
+        print(f"  Base population size: {population_size}")
+        if adaptive_population:
+            print(f"  Adaptive population: enabled (1.5x early -> 1.0x mid -> 0.75x late)")
+        else:
+            print(f"  Adaptive population: disabled (fixed size)")
         print(f"  Generations: {generations}")
         print(f"  Episodes per problem: {episodes_per_problem}")
         print(f"  Curriculum learning: {use_curriculum}")
@@ -472,6 +496,7 @@ def run_leave_one_out_experiment(
         population_size=population_size,
         generations=generations,
         episodes_per_problem=episodes_per_problem,
+        adaptive_population=adaptive_population,
         elite_size=elite_size,
         mutation_rate=mutation_rate,
         seed=seed,
@@ -601,6 +626,11 @@ def main():
         help='Disable curriculum learning'
     )
     parser.add_argument(
+        '--no-adaptive-population',
+        action='store_true',
+        help='Disable adaptive population sizing (use fixed population)'
+    )
+    parser.add_argument(
         '--elite-size',
         type=int,
         default=2,
@@ -644,6 +674,7 @@ def main():
         episodes_per_problem=args.episodes_per_problem,
         training_episodes=args.training_episodes,
         use_curriculum=not args.no_curriculum,
+        adaptive_population=not args.no_adaptive_population,
         elite_size=args.elite_size,
         mutation_rate=args.mutation_rate,
         seed=args.seed,
