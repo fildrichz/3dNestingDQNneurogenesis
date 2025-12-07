@@ -599,7 +599,7 @@ def run_leave_one_out_experiment(
         torch.cuda.empty_cache()
 
     # Load and record results
-    checkpoint = torch.load(str(model_save_path), map_location='cpu')
+    checkpoint = torch.load(str(model_save_path), map_location='cpu', weights_only=False)
 
     results = {
         'experiment_type': 'leave_one_out',

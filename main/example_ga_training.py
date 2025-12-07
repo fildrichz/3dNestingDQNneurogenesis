@@ -363,7 +363,7 @@ def train_with_evolved_genome(problem_path: str,
             'best_items': best_items,
             'best_util': best_util,
             'problem_file': problem_path
-        }, save_path)
+        }, save_path, pickle_protocol=4)
         print(f"\nModel saved to: {save_path}")
 
     print(f"{'='*80}\n")
@@ -691,7 +691,7 @@ def continue_training_on_new_dataset(
             'best_items': best_items,
             'best_util': best_util,
             'problem_file': new_problem_path  # Track which problem this was trained on
-        }, save_path)
+        }, save_path, pickle_protocol=4)
         print(f"\nUpdated model saved to: {save_path}")
 
     print(f"{'='*80}\n")

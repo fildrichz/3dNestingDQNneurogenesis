@@ -328,7 +328,7 @@ def run_problem_specific_experiment(
                 torch.cuda.empty_cache()
 
             # Load and record final results
-            checkpoint = torch.load(str(model_save_path), map_location='cpu')
+            checkpoint = torch.load(str(model_save_path), map_location='cpu', weights_only=False)
 
             problem_results = {
                 'problem_file': str(problem_file),
