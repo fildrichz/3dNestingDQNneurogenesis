@@ -277,7 +277,7 @@ def run_problem_specific_experiment(
             )
 
             # Run one episode with trained agent to get solution
-            agent.epsilon = 0.0  # Greedy evaluation
+            agent._eps = 0.0  # Greedy evaluation (set internal variable directly)
             obs = env.reset(items=items.copy())
             done = False
             step_count = 0
