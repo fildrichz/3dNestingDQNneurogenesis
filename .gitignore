@@ -36,10 +36,23 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Experiment results
+# Experiment results and outputs
 results/
+test_results/
+output_data/
+output_data_prev/
+experiment_*/
 *.pth
 *.json.bak
+
+# Visualizations (but keep benchmark dataset images)
+*.png
+!main/nesting/inputData/**/Output/*.png
+
+# Profiling outputs
+profile.json
+profile.html
+*.prof
 
 # Temporary files
 *.tmp
