@@ -513,7 +513,7 @@ def run_leave_one_out_experiment(
 
     # Phase 2: Train and evaluate on target problem
     if verbose:
-        print(f"\n[Phase 2/2] Training on target problem: {target_problem}...")
+        print(f"\n[Phase 2/3] Training on target problem: {target_problem}...")
 
     model_save_path = results_path / "trained_model.pth"
 
@@ -523,6 +523,75 @@ def run_leave_one_out_experiment(
         episodes=training_episodes,
         save_path=str(model_save_path)
     )
+
+    # Phase 3: Visualize best packing solution
+    if verbose:
+        print(f"\n[Phase 3/3] Generating visualizations for {target_problem}...")
+
+    # Create visualization directory
+    viz_dir = results_path / "visualizations"
+    viz_dir.mkdir(exist_ok=True)
+
+    # Reload environment to get best solution
+    from packing_with_dqncore2_enhanced import MultiBinPackingEnv, load_problem_as_items
+    items = load_problem_as_items(target_problem_obj)
+    W, D, H = target_problem_obj.bin_dimensions
+
+    env = MultiBinPackingEnv(
+        W, D, H,
+        items=items,
+        max_actions=128,
+        topk_eps=1000,
+        seed=42,
+        gamma=0.992,
+        problem=target_problem_obj
+    )
+
+    # Run one episode with trained agent to get solution
+    agent.epsilon = 0.0  # Greedy evaluation
+    obs = env.reset(items=items.copy())
+    done = False
+    step_count = 0
+
+    while not done and step_count < 1000:
+        from packing_with_dqncore2_enhanced import build_action_features
+        from nesting.heightmap_utils import extract_patches_for_actions
+
+        actions, mask_short = env.action_space()
+        if len(actions) == 0:
+            break
+
+        feats = build_action_features(env, actions)
+        patches = extract_patches_for_actions(env, actions, patch_size=best_genome.genes['patch_size'])
+
+        act_idx = agent.select_action(obs, feats, patches, mask_short)
+        if act_idx is None or act_idx >= len(actions):
+            break
+
+        obs, rew, done, info = env.step(actions[act_idx])
+        step_count += 1
+
+    # Visualize all bins with items
+    for i, bin_obj in enumerate(env.bins):
+        if len(bin_obj.placed) > 0:
+            bin_util = sum(b.w * b.d * b.h for b in bin_obj.placed) / env.bin_volume
+
+            # Save filled version (clean)
+            bin_obj.plot3d_filled(
+                title=f"{target_problem} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f})",
+                save_path=str(viz_dir / f"bin_{i+1}_filled.png"),
+                show=False
+            )
+
+            # Save version with EMS (for analysis)
+            bin_obj.plot3d(
+                title=f"{target_problem} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f}) [with EMS]",
+                save_path=str(viz_dir / f"bin_{i+1}_with_ems.png"),
+                show=False
+            )
+
+    if verbose:
+        print(f"  Visualizations saved to: {viz_dir}")
 
     # Clean up
     del agent

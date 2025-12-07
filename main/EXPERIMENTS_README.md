@@ -27,6 +27,7 @@ python experiment_problem_specific.py \
 - Automatic checkpoint/resume support
 - Curriculum learning (progressive difficulty)
 - Comprehensive results tracking
+- 3D visualization of best packing solutions (PNG files)
 
 **Output Structure:**
 ```
@@ -40,7 +41,11 @@ results/experiment_problem_specific/
 │   │   └── ...
 │   ├── evolved_genome.json        # Best architecture
 │   ├── trained_model.pth          # Trained weights
-│   └── results.json               # Problem results
+│   ├── results.json               # Problem results
+│   └── visualizations/            # Packing visualizations (PNG)
+│       ├── bin_1_filled.png       # Clean 3D visualization
+│       ├── bin_1_with_ems.png     # With Empty Maximal Spaces
+│       └── ...
 ├── 3dBPP_2/
 └── ...
 ```
@@ -78,6 +83,7 @@ done
 - Tests generalization to unseen problem
 - Checkpoint/resume support
 - Curriculum learning
+- 3D visualization of final packing on target problem (PNG files)
 
 **Output Structure:**
 ```
@@ -88,7 +94,11 @@ results/experiment_leave_one_out_3dBPP_12/
 │   └── evolution_history.json
 ├── evolved_genome.json
 ├── trained_model.pth
-└── results.json
+├── results.json
+└── visualizations/                # Packing visualizations (PNG)
+    ├── bin_1_filled.png           # Clean 3D visualization
+    ├── bin_1_with_ems.png         # With Empty Maximal Spaces
+    └── ...
 ```
 
 ## Common Parameters
