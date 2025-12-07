@@ -250,8 +250,63 @@ def run_problem_specific_experiment(
                 problem_path=str(problem_file),
                 genome=best_genome,
                 episodes=training_episodes,
-                save_path=str(model_save_path)
+                save_path=None  # Don't save full checkpoint
             )
+
+            # Save minimal checkpoint (weights + architecture + performance only)
+            # Get performance metrics from agent's training history
+            from packing_with_dqncore2_enhanced import MultiBinPackingEnv, load_problem_as_items
+            temp_items = load_problem_as_items(problem)
+            temp_env = MultiBinPackingEnv(
+                problem.bin_dimensions[0], problem.bin_dimensions[1], problem.bin_dimensions[2],
+                items=temp_items, max_actions=128, topk_eps=1000, seed=42, gamma=0.992, problem=problem
+            )
+
+            # Run quick evaluation to get best metrics
+            best_bins_count = float('inf')
+            best_items_count = 0
+            best_util = 0.0
+
+            for _ in range(5):
+                obs = temp_env.reset(items=temp_items.copy())
+                done = False
+                steps = 0
+                agent._eps = 0.0
+
+                while not done and steps < 1000:
+                    from packing_with_dqncore2_enhanced import build_action_features
+                    from nesting.heightmap_utils import extract_patches_for_actions
+                    actions, mask = temp_env.action_space()
+                    if len(actions) == 0:
+                        break
+                    feats = build_action_features(temp_env, actions)
+                    patches = extract_patches_for_actions(temp_env, actions, patch_size=best_genome.genes['patch_size'])
+                    act_idx = agent.select_action(obs, feats, patches, mask)
+                    if act_idx is None or act_idx >= len(actions):
+                        break
+                    obs, rew, done, info = temp_env.step(actions[act_idx])
+                    steps += 1
+
+                bins_used = len([b for b in temp_env.bins if len(b.placed) > 0])
+                items_packed = sum(len(b.placed) for b in temp_env.bins)
+                total_vol = sum(sum(it.w * it.d * it.h for it in b.placed) for b in temp_env.bins)
+                utilization = total_vol / (temp_env.bin_volume * bins_used) if bins_used > 0 else 0
+
+                if items_packed > best_items_count or (items_packed == best_items_count and bins_used < best_bins_count):
+                    best_bins_count = bins_used
+                    best_items_count = items_packed
+                    best_util = utilization
+
+            del temp_env
+
+            # Save minimal checkpoint
+            torch.save({
+                'model_state_dict': agent.q.state_dict(),
+                'genome': best_genome.to_dict(),
+                'best_bins': best_bins_count,
+                'best_items': best_items_count,
+                'best_util': best_util
+            }, str(model_save_path), pickle_protocol=4)
 
             # Phase 3: Visualize best packing solution
             if verbose:
