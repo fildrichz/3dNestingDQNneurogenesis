@@ -21,15 +21,43 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
 echo "Loading modules..."
-module load python
+module load python || { echo "ERROR: Failed to load python module"; exit 1; }
 
 # Try to load CUDA module (may not be available on all GPU nodes)
 module load cuda 2>/dev/null || echo "CUDA module not found, using system CUDA"
 
 # Install Python dependencies to user directory (cached after first run)
 echo "Installing Python dependencies..."
-python3 -m pip install --user --quiet numpy
-python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118
+python3 -m pip install --user --quiet numpy || { echo "ERROR: Failed to install numpy"; exit 1; }
+python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118 || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+
+# Verify dependencies are working
+echo "Verifying dependencies..."
+python3 << 'EOF' || { echo "ERROR: Dependency check failed"; exit 1; }
+import sys
+try:
+    import numpy as np
+    print(f"✓ NumPy {np.__version__}")
+except ImportError as e:
+    print(f"✗ NumPy import failed: {e}")
+    sys.exit(1)
+
+try:
+    import torch
+    print(f"✓ PyTorch {torch.__version__}")
+    cuda_available = torch.cuda.is_available()
+    print(f"  CUDA available: {cuda_available}")
+    if not cuda_available:
+        print("✗ ERROR: GPU job but CUDA not available!")
+        sys.exit(1)
+    print(f"  CUDA device: {torch.cuda.get_device_name(0)}")
+    print(f"  GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+except ImportError as e:
+    print(f"✗ PyTorch import failed: {e}")
+    sys.exit(1)
+
+print("✓ All dependencies OK")
+EOF
 
 # Set CUDA device (usually only one GPU allocated)
 export CUDA_VISIBLE_DEVICES=0
@@ -53,20 +81,6 @@ echo "Problem: $PROBLEM"
 echo "Generations: $GENERATIONS"
 echo "Population: $POPULATION"
 echo "=========================================="
-
-# Check CUDA availability
-echo "Checking CUDA setup..."
-python3 << 'EOF'
-import torch
-print(f"PyTorch version: {torch.__version__}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"CUDA version: {torch.version.cuda}")
-    print(f"GPU device: {torch.cuda.get_device_name(0)}")
-    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-else:
-    print("WARNING: CUDA not available! Running on CPU.")
-EOF
 
 # Monitor GPU usage in background
 nvidia-smi &

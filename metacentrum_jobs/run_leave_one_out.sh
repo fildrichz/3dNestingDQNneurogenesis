@@ -20,12 +20,34 @@ POPULATION=30
 
 # Set up environment
 echo "Loading modules..."
-module load python
+module load python || { echo "ERROR: Failed to load python module"; exit 1; }
 
 # Install Python dependencies to user directory (cached after first run)
 echo "Installing Python dependencies..."
-python3 -m pip install --user --quiet numpy
-python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118
+python3 -m pip install --user --quiet numpy || { echo "ERROR: Failed to install numpy"; exit 1; }
+python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118 || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+
+# Verify dependencies are working
+echo "Verifying dependencies..."
+python3 << 'EOF' || { echo "ERROR: Dependency check failed"; exit 1; }
+import sys
+try:
+    import numpy as np
+    print(f"✓ NumPy {np.__version__}")
+except ImportError as e:
+    print(f"✗ NumPy import failed: {e}")
+    sys.exit(1)
+
+try:
+    import torch
+    print(f"✓ PyTorch {torch.__version__}")
+    print(f"  CUDA available: {torch.cuda.is_available()}")
+except ImportError as e:
+    print(f"✗ PyTorch import failed: {e}")
+    sys.exit(1)
+
+print("✓ All dependencies OK")
+EOF
 
 # Change to scratch directory for faster I/O
 echo "Setting up scratch directory..."
@@ -46,10 +68,6 @@ echo "Problem: $PROBLEM"
 echo "Generations: $GENERATIONS"
 echo "Population: $POPULATION"
 echo "=========================================="
-
-# Check Python dependencies
-echo "Checking dependencies..."
-python3 -c "import numpy; import torch; print(f'NumPy: {numpy.__version__}'); print(f'PyTorch: {torch.__version__}')"
 
 # Run the experiment
 echo "Starting experiment..."
