@@ -347,7 +347,34 @@ class NetworkGenome:
         genome.fitness = data.get('fitness')
         genome.metrics = data.get('metrics', {})
         return genome
-    
+
+    def get_cache_key(self, curriculum_params: Dict[str, Any] = None) -> str:
+        """
+        Generate a unique cache key for this genome configuration.
+
+        Args:
+            curriculum_params: Optional dict with curriculum settings (item_fraction, episodes)
+                              to differentiate evaluations at different difficulty levels
+
+        Returns:
+            String key that uniquely identifies this genome + curriculum combination
+        """
+        import json
+
+        # Sort genes to ensure consistent ordering
+        genes_sorted = dict(sorted(self.genes.items()))
+
+        # Convert to canonical JSON string (handles lists consistently)
+        genes_str = json.dumps(genes_sorted, sort_keys=True)
+
+        # Add curriculum parameters if provided
+        if curriculum_params:
+            curriculum_sorted = dict(sorted(curriculum_params.items()))
+            curriculum_str = json.dumps(curriculum_sorted, sort_keys=True)
+            return f"{genes_str}|{curriculum_str}"
+
+        return genes_str
+
     def __repr__(self) -> str:
         """String representation of genome."""
         gene_str = ', '.join(f"{k}={v}" for k, v in self.genes.items())

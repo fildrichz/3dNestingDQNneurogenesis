@@ -74,7 +74,8 @@ def evaluate_genome_fitness(genome: NetworkGenome,
                            items: List,
                            episodes: int = 20,
                            verbose: bool = False,
-                           item_fraction: float = 1.0) -> Tuple[float, Dict]:
+                           item_fraction: float = 1.0,
+                           fitness_cache: Dict = None) -> Tuple[float, Dict]:
     """
     Evaluate fitness of a genome by training its architecture.
 
@@ -87,6 +88,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         episodes: Number of training episodes
         verbose: Print detailed progress
         item_fraction: Fraction of items to use (0.0-1.0) for curriculum learning
+        fitness_cache: Optional dict to cache fitness results (for skipping re-evaluation)
 
     Returns:
         (fitness_score, metrics_dict)
@@ -94,6 +96,17 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     import torch
     import gc
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
+
+    # Check cache first if provided
+    if fitness_cache is not None:
+        curriculum_params = {'item_fraction': item_fraction, 'episodes': episodes}
+        cache_key = genome.get_cache_key(curriculum_params)
+
+        if cache_key in fitness_cache:
+            cached_result = fitness_cache[cache_key]
+            if verbose:
+                print(f"  [CACHED] Using stored fitness: {cached_result['fitness']:.4f}")
+            return cached_result['fitness'], cached_result['metrics']
 
     # Apply curriculum learning: use subset of items if requested
     if item_fraction < 1.0:
@@ -170,6 +183,15 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         'parsimony': 1.0 - complexity_penalty,  # Fixed: now matches actual fitness calculation
         'complexity_params': complexity
     }
+
+    # Store in cache if provided
+    if fitness_cache is not None:
+        curriculum_params = {'item_fraction': item_fraction, 'episodes': episodes}
+        cache_key = genome.get_cache_key(curriculum_params)
+        fitness_cache[cache_key] = {
+            'fitness': fitness,
+            'metrics': metrics.copy()
+        }
 
     return fitness, metrics
 
@@ -294,7 +316,28 @@ def evolve_architecture(problem,
         'mutation_rate': [],
         'diversity_score': []
     }
-    
+
+    # Initialize fitness cache for avoiding re-evaluation
+    # Cache key: genome genes + curriculum params -> {fitness, metrics}
+    fitness_cache = {}
+
+    # Load from checkpoint if resuming
+    if resume_from and Path(resume_from).exists():
+        if verbose:
+            print(f"\nLoading checkpoint from: {resume_from}")
+        try:
+            import json
+            with open(resume_from, 'r') as f:
+                checkpoint_data = json.load(f)
+                if 'fitness_cache' in checkpoint_data:
+                    fitness_cache = checkpoint_data['fitness_cache']
+                    if verbose:
+                        print(f"Loaded fitness cache with {len(fitness_cache)} entries")
+        except Exception as e:
+            if verbose:
+                print(f"Warning: Could not load fitness cache from checkpoint: {e}")
+                print("Starting with empty cache.")
+
     # Main GA loop
     for gen in range(generations):
         gen_start_time = time.time()
@@ -326,7 +369,8 @@ def evolve_architecture(problem,
                 env=env,
                 items=items.copy(),
                 episodes=episodes_per_eval,
-                verbose=False
+                verbose=False,
+                fitness_cache=fitness_cache
             )
             
             fitness_scores.append(fitness)
@@ -401,6 +445,7 @@ def evolve_architecture(problem,
                 'population': [g.to_dict() for g in population],
                 'best_fitness': gen_best.fitness,
                 'avg_fitness': avg_fitness,
+                'fitness_cache': fitness_cache,  # Save cache for resume
             }
             with open(gen_file, 'w') as f:
                 json.dump(gen_data, f, indent=2)
