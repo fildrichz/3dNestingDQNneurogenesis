@@ -1,7 +1,7 @@
 #!/bin/bash
-#PBS -N dqn_leave_one_out
-#PBS -l select=1:ncpus=8:mem=32gb:scratch_local=20gb
-#PBS -l walltime=48:00:00
+#PBS -N dqn_leave_one_out_cpu
+#PBS -l select=1:ncpus=2:mem=32gb:scratch_local=20gb
+#PBS -l walltime=4:00:00
 #PBS -q default
 #PBS -m ae
 #PBS -M your.email@cvut.cz
@@ -13,45 +13,42 @@
 # Modify the PROBLEM variable below to change which problem to test
 # ==============================================================================
 
-# Configuration
+# Configuration (FOR TESTING ONLY - use GPU script for real experiments)
 PROBLEM="3dBPP_12"
-GENERATIONS=100
-POPULATION=30
+GENERATIONS=10
+POPULATION=5
 
 # Set up environment
 echo "Loading modules..."
 module load python || { echo "ERROR: Failed to load python module"; exit 1; }
 
-# Install Python dependencies to user directory (cached after first run)
-echo "Installing Python dependencies..."
-python3 -m pip install --user --quiet numpy || { echo "ERROR: Failed to install numpy"; exit 1; }
-python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118 || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+# Change to scratch directory
+echo "Setting up scratch directory..."
+cd $SCRATCHDIR || { echo "ERROR: Failed to access scratch"; exit 1; }
 
-# Verify dependencies are working
+# Create virtual environment in scratch
+echo "Creating virtual environment..."
+python3 -m venv venv || { echo "ERROR: Failed to create venv"; exit 1; }
+source venv/bin/activate || { echo "ERROR: Failed to activate venv"; exit 1; }
+
+# Set pip cache
+export PIP_CACHE_DIR=/storage/praha1/home/$PBS_O_LOGNAME/.pip-cache
+
+# Install dependencies
+echo "Installing dependencies..."
+pip install --upgrade pip --quiet || { echo "ERROR: Failed to upgrade pip"; exit 1; }
+pip install numpy --quiet || { echo "ERROR: Failed to install numpy"; exit 1; }
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --quiet || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+
+# Verify dependencies
 echo "Verifying dependencies..."
 python3 << 'EOF' || { echo "ERROR: Dependency check failed"; exit 1; }
-import sys
-try:
-    import numpy as np
-    print(f"✓ NumPy {np.__version__}")
-except ImportError as e:
-    print(f"✗ NumPy import failed: {e}")
-    sys.exit(1)
-
-try:
-    import torch
-    print(f"✓ PyTorch {torch.__version__}")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-except ImportError as e:
-    print(f"✗ PyTorch import failed: {e}")
-    sys.exit(1)
-
-print("✓ All dependencies OK")
+import numpy as np
+import torch
+print(f"✓ NumPy {np.__version__}")
+print(f"✓ PyTorch {torch.__version__}")
+print(f"  CUDA available: {torch.cuda.is_available()}")
 EOF
-
-# Change to scratch directory for faster I/O
-echo "Setting up scratch directory..."
-cd $SCRATCHDIR || exit 1
 
 # Copy project to scratch
 echo "Copying project files to scratch..."

@@ -1,9 +1,9 @@
 #!/bin/bash
-#PBS -N dqn_array_experiments
+#PBS -N dqn_gpu_array
 #PBS -J 0-4
-#PBS -l select=1:ncpus=8:mem=32gb:scratch_local=20gb
-#PBS -l walltime=48:00:00
-#PBS -q default
+#PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
+#PBS -l walltime=168:00:00
+#PBS -q gpu
 #PBS -m ae
 #PBS -M your.email@cvut.cz
 
@@ -30,36 +30,43 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 echo "Loading modules..."
 module load python || { echo "ERROR: Failed to load python module"; exit 1; }
 
-# Install Python dependencies to user directory (cached after first run)
-echo "Installing Python dependencies..."
-python3 -m pip install --user --quiet numpy || { echo "ERROR: Failed to install numpy"; exit 1; }
-python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118 || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+# Change to scratch directory
+echo "Setting up scratch directory..."
+cd $SCRATCHDIR || { echo "ERROR: Failed to access scratch"; exit 1; }
 
-# Verify dependencies are working
+# Create virtual environment in scratch
+echo "Creating virtual environment..."
+python3 -m venv venv || { echo "ERROR: Failed to create venv"; exit 1; }
+source venv/bin/activate || { echo "ERROR: Failed to activate venv"; exit 1; }
+
+# Set pip cache
+export PIP_CACHE_DIR=/storage/praha1/home/$PBS_O_LOGNAME/.pip-cache
+
+# Install dependencies
+echo "Installing dependencies..."
+pip install --upgrade pip --quiet || { echo "ERROR: Failed to upgrade pip"; exit 1; }
+pip install numpy --quiet || { echo "ERROR: Failed to install numpy"; exit 1; }
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --quiet || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+
+# Verify dependencies
 echo "Verifying dependencies..."
 python3 << 'EOF' || { echo "ERROR: Dependency check failed"; exit 1; }
 import sys
-try:
-    import numpy as np
-    print(f"✓ NumPy {np.__version__}")
-except ImportError as e:
-    print(f"✗ NumPy import failed: {e}")
+import numpy as np
+import torch
+
+print(f"✓ NumPy {np.__version__}")
+print(f"✓ PyTorch {torch.__version__}")
+
+if not torch.cuda.is_available():
+    print("✗ ERROR: GPU job but CUDA not available!")
     sys.exit(1)
 
-try:
-    import torch
-    print(f"✓ PyTorch {torch.__version__}")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-except ImportError as e:
-    print(f"✗ PyTorch import failed: {e}")
-    sys.exit(1)
-
-print("✓ All dependencies OK")
+print(f"✓ CUDA available")
+print(f"  Device: {torch.cuda.get_device_name(0)}")
 EOF
 
-# Change to scratch directory
-echo "Setting up scratch directory..."
-cd $SCRATCHDIR || exit 1
+export CUDA_VISIBLE_DEVICES=0
 
 # Copy project to scratch
 echo "Copying project files to scratch..."
@@ -80,18 +87,20 @@ echo "Experiment Type: $EXPERIMENT_TYPE"
 echo "=========================================="
 
 # Select and run experiment
-echo "Starting experiment..."
+echo "Starting GPU-accelerated experiment..."
 if [ "$EXPERIMENT_TYPE" = "leave_one_out" ]; then
     python3 experiment_leave_one_out.py \
         --problem "$PROBLEM" \
         --generations "$GENERATIONS" \
         --population "$POPULATION" \
+        --device cuda \
         --verbose
 else
     python3 experiment_problem_specific.py \
         --problem "$PROBLEM" \
         --generations "$GENERATIONS" \
         --population "$POPULATION" \
+        --device cuda \
         --verbose
 fi
 
@@ -99,7 +108,7 @@ EXIT_CODE=$?
 
 # Copy results back to home directory with problem-specific naming
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files
