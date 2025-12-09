@@ -515,8 +515,8 @@ def main():
     parser.add_argument(
         '--dataset-dir',
         type=str,
-        required=True,
-        help='Directory containing problem .txt files'
+        default='nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Input',
+        help='Directory containing problem .txt files (default: nesting/inputData/...)'
     )
     parser.add_argument(
         '--results-dir',
