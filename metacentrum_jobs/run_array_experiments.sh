@@ -28,10 +28,12 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
 echo "Loading modules..."
-module load python/3.11.4-gcc-10.2.1-mjh74tn
+module load python
 
-# Optional: Activate virtual environment if created
-# source /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis/venv/bin/activate
+# Install Python dependencies to user directory (cached after first run)
+echo "Installing Python dependencies..."
+python3 -m pip install --user --quiet numpy
+python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # Change to scratch directory
 echo "Setting up scratch directory..."
@@ -39,8 +41,8 @@ cd $SCRATCHDIR || exit 1
 
 # Copy project to scratch
 echo "Copying project files to scratch..."
-cp -r /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis .
-cd 3dNestingDQNneurogenesis/main
+cp -r /storage/praha1/home/$PBS_O_LOGNAME/dp-filip-spidla-spidlfil .
+cd dp-filip-spidla-spidlfil/main
 
 # Display environment info
 echo "=========================================="
@@ -79,7 +81,7 @@ EXIT_CODE=$?
 
 # Copy results back to home directory with problem-specific naming
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/brno2/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}/${PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files

@@ -21,12 +21,15 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
 echo "Loading modules..."
-module load python/3.11.4-gcc-10.2.1-mjh74tn
-module load cuda/11.8.0
+module load python
 
-# Optional: Activate virtual environment if created
-# Make sure PyTorch in venv is built with CUDA support!
-# source /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis/venv/bin/activate
+# Try to load CUDA module (may not be available on all GPU nodes)
+module load cuda 2>/dev/null || echo "CUDA module not found, using system CUDA"
+
+# Install Python dependencies to user directory (cached after first run)
+echo "Installing Python dependencies..."
+python3 -m pip install --user --quiet numpy
+python3 -m pip install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # Set CUDA device (usually only one GPU allocated)
 export CUDA_VISIBLE_DEVICES=0
@@ -37,8 +40,8 @@ cd $SCRATCHDIR || exit 1
 
 # Copy project to scratch
 echo "Copying project files to scratch..."
-cp -r /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis .
-cd 3dNestingDQNneurogenesis/main
+cp -r /storage/praha1/home/$PBS_O_LOGNAME/dp-filip-spidla-spidlfil .
+cd dp-filip-spidla-spidlfil/main
 
 # Display environment info
 echo "=========================================="
@@ -94,7 +97,7 @@ kill $NVIDIA_SMI_PID 2>/dev/null || true
 
 # Copy results back to home directory
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/brno2/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files
