@@ -136,13 +136,13 @@ def evaluate_genome_multi_problem(
 
 def evolve_multi_problem_architecture(
     problems: List[Tuple[BinPackingProblem, Path]],
-    population_size: int = 20,
-    generations: int = 15,
-    episodes_per_problem: int = 10,
+    population_size: int = 100,
+    generations: int = 100,
+    episodes_per_problem: int = 200,
     adaptive_population: bool = True,
-    elite_size: int = 2,
+    elite_size: int = 10,
     mutation_rate: float = 0.2,
-    seed: Optional[int] = None,
+    seed: Optional[int] = 42,
     save_dir: Optional[str] = None,
     verbose: bool = True,
     curriculum_schedule: Optional[Dict] = None,
@@ -705,13 +705,13 @@ def main():
     parser.add_argument(
         '--dataset-dir',
         type=str,
-        required=True,
-        help='Directory containing problem .txt files'
+        default='nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Input',
+        help='Directory containing problem .txt files (default: nesting/inputData/...)'
     )
     parser.add_argument(
         '--target-problem',
         type=str,
-        required=True,
+        default='3dBPP_12.txt',
         help='Problem to hold out for testing (e.g., "3dBPP_12")'
     )
     parser.add_argument(
@@ -723,25 +723,25 @@ def main():
     parser.add_argument(
         '--population-size',
         type=int,
-        default=20,
+        default=100,
         help='GA population size'
     )
     parser.add_argument(
         '--generations',
         type=int,
-        default=15,
+        default=100,
         help='Number of GA generations'
     )
     parser.add_argument(
         '--episodes-per-problem',
         type=int,
-        default=10,
+        default=200,
         help='Episodes per problem for fitness evaluation'
     )
     parser.add_argument(
         '--training-episodes',
         type=int,
-        default=300,
+        default=2000,
         help='Episodes for final training on target'
     )
     parser.add_argument(
@@ -757,7 +757,7 @@ def main():
     parser.add_argument(
         '--elite-size',
         type=int,
-        default=2,
+        default=10,
         help='Number of elite genomes'
     )
     parser.add_argument(
@@ -769,7 +769,7 @@ def main():
     parser.add_argument(
         '--seed',
         type=int,
-        default=None,
+        default=42,
         help='Random seed'
     )
     parser.add_argument(

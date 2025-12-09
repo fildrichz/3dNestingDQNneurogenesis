@@ -92,17 +92,17 @@ def save_experiment_state(results_dir: Path, state: Dict):
 def run_problem_specific_experiment(
     dataset_dir: str,
     results_dir: str,
-    population_size: int = 20,
-    generations: int = 15,
-    episodes_per_eval: int = 20,
-    training_episodes: int = 300,
+    population_size: int = 100,
+    generations: int = 100,
+    episodes_per_eval: int = 200,
+    training_episodes: int = 2000,
     use_curriculum: bool = True,
     adaptive_population: bool = True,
-    elite_size: int = 2,
+    elite_size: int = 10,
     mutation_rate: float = 0.2,
-    seed: Optional[int] = None,
+    seed: Optional[int] = 42,
     verbose: bool = True,
-    resume: bool = True
+    resume: bool = False
 ):
     """
     Run problem-specific architecture evolution experiment.
@@ -515,8 +515,8 @@ def main():
     parser.add_argument(
         '--dataset-dir',
         type=str,
-        required=True,
-        help='Directory containing problem .txt files'
+        default='nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Input',
+        help='Directory containing problem .txt files (default: nesting/inputData/...)'
     )
     parser.add_argument(
         '--results-dir',
@@ -527,25 +527,25 @@ def main():
     parser.add_argument(
         '--population-size',
         type=int,
-        default=20,
+        default=100,
         help='GA population size'
     )
     parser.add_argument(
         '--generations',
         type=int,
-        default=15,
+        default=100,
         help='Number of GA generations'
     )
     parser.add_argument(
         '--episodes-per-eval',
         type=int,
-        default=20,
+        default=200,
         help='Episodes for fitness evaluation'
     )
     parser.add_argument(
         '--training-episodes',
         type=int,
-        default=300,
+        default=2000,
         help='Episodes for final training'
     )
     parser.add_argument(
@@ -561,7 +561,7 @@ def main():
     parser.add_argument(
         '--elite-size',
         type=int,
-        default=2,
+        default=10,
         help='Number of elite genomes to preserve'
     )
     parser.add_argument(
@@ -573,7 +573,7 @@ def main():
     parser.add_argument(
         '--seed',
         type=int,
-        default=None,
+        default=42,
         help='Random seed for reproducibility'
     )
     parser.add_argument(

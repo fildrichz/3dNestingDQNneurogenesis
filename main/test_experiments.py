@@ -21,14 +21,14 @@ TEST_RESULTS_DIR = "test_results"
 
 # Small parameters for quick testing
 TEST_CONFIG = {
-    'population_size': 3,
-    'generations': 2,
-    'episodes_per_eval': 5,
-    'training_episodes': 10,
-    'elite_size': 1,
+    'population_size': 100,
+    'generations': 100,
+    'episodes_per_eval': 200,
+    'training_episodes': 1000,
+    'elite_size': 10,
     'mutation_rate': 0.2,
     'seed': 42,
-    'verbose': True,
+    'verbose': False,
     'resume': False
 }
 
