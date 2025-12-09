@@ -1,91 +1,115 @@
 # MetaCentrum Job Scripts
 
-This directory contains ready-to-use PBS job scripts for running experiments on MetaCentrum.
+Ready-to-use GPU job scripts for running experiments on MetaCentrum.
 
 ## Available Scripts
 
-### 1. `run_leave_one_out.sh`
-Runs a single leave-one-out experiment on one problem.
+### 1. `run_gpu_experiment.sh` - Single GPU Experiment
+Runs a single experiment with GPU acceleration.
 
-**Usage:**
+**Configuration:**
 ```bash
-# Edit the script to set PROBLEM, GENERATIONS, POPULATION
-nano run_leave_one_out.sh
-
-# Submit
-qsub run_leave_one_out.sh
+PROBLEM="3dBPP_12"           # Which problem to run
+GENERATIONS=200              # Number of evolution generations
+POPULATION=50                # Population size
+EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 ```
 
-**Configuration variables:**
-- `PROBLEM`: Which problem to test (e.g., "3dBPP_12")
-- `GENERATIONS`: Number of generations for evolution
-- `POPULATION`: Population size
-
-### 2. `run_problem_specific.sh`
-Runs a single problem-specific experiment.
-
-**Usage:**
-```bash
-# Edit configuration in script
-nano run_problem_specific.sh
-
-# Submit
-qsub run_problem_specific.sh
-```
-
-### 3. `run_array_experiments.sh`
-Runs multiple experiments in parallel using PBS array jobs.
-
-**Usage:**
-```bash
-# Edit PROBLEMS array in script to select which problems to run
-nano run_array_experiments.sh
-
-# Submit all at once
-qsub run_array_experiments.sh
-```
-
-This will submit one job per problem and run them in parallel (resource permitting).
-
-### 4. `run_gpu_experiment.sh`
-Runs GPU-accelerated experiments (requires CUDA-enabled PyTorch).
+**Resources:**
+- 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
+- 168 hours (7 days) walltime
+- Queue: `gpu`
 
 **Usage:**
 ```bash
 # Edit configuration
 nano run_gpu_experiment.sh
 
-# Submit to GPU queue
+# Submit
 qsub run_gpu_experiment.sh
 ```
 
-**Note:** GPU jobs may wait longer in queue but run much faster.
+---
 
-## Before First Use
+### 2. `run_array_experiments.sh` - GPU Array Job (5 parallel experiments)
+Runs multiple experiments in parallel, each on its own GPU.
 
-### 1. Update Email Address
-In each script, change:
+**Configuration:**
 ```bash
+PROBLEMS=("3dBPP_12" "3dBPP_15" "3dBPP_18" "3dBPP_20" "3dBPP_25")
+GENERATIONS=100
+POPULATION=30
+EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
+```
+
+**Resources:**
+- Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
+- 168 hours walltime
+- Queue: `gpu`
+- Submits 5 jobs (indices 0-4)
+
+**Usage:**
+```bash
+# Edit configuration
+nano run_array_experiments.sh
+
+# Submit all 5 jobs
+qsub run_array_experiments.sh
+```
+
+---
+
+## What These Scripts Do
+
+### Setup Phase (automatic)
+1. Load Python module
+2. Create fresh virtual environment in scratch
+3. Install numpy and PyTorch 2.x with CUDA 11.8
+4. Verify CUDA is available (exits if not)
+
+### Execution Phase
+5. Copy your project to scratch (fast local SSD)
+6. Run your experiment with GPU acceleration
+7. Copy results back to home directory
+
+### Results Location
+```
+~/results/
+├── leave_one_out_gpu/
+│   └── 3dBPP_12/
+│       ├── results files...
+│       └── *.log
+└── problem_specific_gpu/
+    └── 3dBPP_12/
+        └── ...
+```
+
+---
+
+## First Time Setup
+
+### 1. Update Your Email
+```bash
+cd ~/dp-filip-spidla-spidlfil/metacentrum_jobs
+nano run_gpu_experiment.sh
+
+# Change this line:
 #PBS -M your.email@cvut.cz
 ```
-to your actual email address.
 
-### 2. Check Python Module Version
-On MetaCentrum, check available Python modules:
+### 2. Run Your First Experiment
 ```bash
-module avail python
+# Submit the job
+qsub run_gpu_experiment.sh
+
+# Check status
+qstat -u $USER
+
+# Monitor output
+tail -f dqn_gpu_experiment.o*
 ```
 
-Update the module load line if needed:
-```bash
-module load python/X.Y.Z-gcc-W.V.U-hash
-```
-
-### 3. Virtual Environment (Optional)
-If you created a virtual environment, uncomment the activation line in each script:
-```bash
-source /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis/venv/bin/activate
-```
+---
 
 ## Monitoring Jobs
 
@@ -94,82 +118,108 @@ source /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis/venv/bin/acti
 qstat -u $USER
 ```
 
-### View output in real-time
+Status codes:
+- `Q` - Queued (waiting for GPU)
+- `R` - Running
+- `C` - Completed
+
+### View output
 ```bash
-# Find the output file (named like: dqn_leave_one_out.oJOBID)
-tail -f dqn_leave_one_out.o12345678
+# Real-time monitoring
+tail -f dqn_gpu_experiment.o*
+
+# Check errors
+cat dqn_gpu_experiment.e*
+
+# Job history
+qstat -x -u $USER | tail -10
 ```
 
-### Check for errors
+### Cancel a job
 ```bash
-cat dqn_leave_one_out.e12345678
+qdel JOBID
 ```
 
-## Results Location
+---
 
-Results are copied to your home directory:
-```
-~/results/
-├── leave_one_out/
-│   ├── 3dBPP_12/
-│   ├── 3dBPP_15/
-│   └── ...
-├── problem_specific/
-│   └── ...
-└── leave_one_out_gpu/
-    └── ...
+## Resource Usage
+
+After your first job completes, check actual usage:
+```bash
+qstat -f JOBID | grep resources_used
 ```
 
-## Resource Guidelines
+This shows:
+- `cpupercent` - CPU usage
+- `mem` - RAM used
+- `walltime` - Time taken
 
-### CPU Jobs
-- **Short tests** (< 1 hour):
-  - `ncpus=2`, `mem=8gb`, `walltime=1:00:00`
+Adjust resources in the script if needed.
 
-- **Medium runs** (few hours):
-  - `ncpus=4`, `mem=16gb`, `walltime=12:00:00`
-
-- **Long experiments** (days):
-  - `ncpus=8`, `mem=32gb`, `walltime=48:00:00`
-
-### GPU Jobs
-- Always use `gpu` queue
-- Specify `ngpus=1` (rarely need more)
-- More memory: `mem=64gb` (GPUs work with large batches)
-- Longer walltime: GPU queue may allow up to 168 hours
+---
 
 ## Common Issues
 
-### Job fails immediately
-- Check error log: `cat JOBNAME.eJOBID`
-- Common causes:
-  - Module not found → Update module name
-  - Import error → Missing dependencies
-  - Path error → Check file paths
+### Job exits immediately
+```bash
+# Check error log
+cat dqn_gpu_experiment.e*
 
-### Job runs out of time
-- Increase `walltime` in PBS directive
-- Or reduce `GENERATIONS` to fit time limit
+# Common causes:
+# - CUDA not available: Script will detect and exit
+# - Module load failed: Check error message
+# - Dependency install failed: Usually network issue, retry
+```
 
-### Job runs out of memory
-- Increase `mem` parameter
-- Or reduce `POPULATION` size
+### Out of memory
+Increase RAM:
+```bash
+#PBS -l select=1:ncpus=4:mem=192gb:ngpus=1:scratch_local=40gb
+```
+
+### Out of time
+Increase walltime (max 168 hours):
+```bash
+#PBS -l walltime=168:00:00
+```
 
 ### Results not copied back
-- Check: `export CLEAN_SCRATCH=false` prevents deletion
-- Results may still be in scratch if job didn't complete
-- Contact support to retrieve: meta@cesnet.cz
+```bash
+# Check if scratch cleanup was prevented
+grep "CLEAN_SCRATCH" dqn_gpu_experiment.o*
+
+# If yes, contact support to retrieve from scratch
+```
+
+---
 
 ## Tips
 
-1. **Start small**: Test with small GENERATIONS and POPULATION first
-2. **Monitor resources**: After first job, check actual usage with `qstat -f JOBID`
-3. **Array jobs**: Efficient for running same experiment on multiple problems
-4. **GPU**: Only use if your code explicitly supports CUDA
-5. **Checkpoints**: Modify Python scripts to save progress every N generations
+1. **Start with single experiment** - Test with `run_gpu_experiment.sh` first
+2. **Monitor GPU usage** - Check `nvidia-smi` output in job logs
+3. **Use array jobs for efficiency** - Run multiple problems in parallel
+4. **Check queue wait times** - GPU queue may have longer waits
+5. **Save checkpoints** - Long runs should checkpoint progress
 
-## Need Help?
+---
 
-- MetaCentrum docs: https://wiki.metacentrum.cz/
-- Support email: meta@cesnet.cz
-- Main guide: See `../METACENTRUM_GUIDE.md`
+## Script Structure
+
+Both scripts follow the same pattern:
+```bash
+1. Load Python → 2. Create venv → 3. Install deps → 4. Verify CUDA
+        ↓
+5. Copy project → 6. Run experiment → 7. Copy results back
+```
+
+All steps have error checking and exit immediately on failure.
+
+---
+
+## Getting Help
+
+- **MetaCentrum docs**: https://wiki.metacentrum.cz/
+- **Support email**: meta@cesnet.cz
+- **Main guide**: See `../METACENTRUM_GUIDE.md`
+
+Good luck with your experiments! 🚀
