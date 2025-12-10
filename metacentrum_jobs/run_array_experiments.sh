@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N dqn_gpu_array
-#PBS -J 0-4
+#PBS -J 1-12
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
 #PBS -l walltime=48:00:00
 #PBS -q gpu
@@ -11,20 +11,20 @@
 # MetaCentrum Array Job Script: Run Multiple Experiments in Parallel
 # ==============================================================================
 # This array job runs experiments on multiple problems simultaneously
-# Each array element processes one problem
-# Modify PROBLEMS array below to change which problems to test
+# Each array element processes one problem (3dBPP_1 through 3dBPP_12)
 # ==============================================================================
 
-# Define array of problems to test
-PROBLEMS=("3dBPP_12" "3dBPP_15" "3dBPP_18" "3dBPP_20" "3dBPP_25")
-
-# Get the problem for this array index
-PROBLEM=${PROBLEMS[$PBS_ARRAY_INDEX]}
+# Map array index directly to problem name
+TARGET_PROBLEM="3dBPP_${PBS_ARRAY_INDEX}"
 
 # Configuration
+POPULATION_SIZE=100
 GENERATIONS=100
-POPULATION=100
-EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
+EPISODES_PER_PROBLEM=200
+TRAINING_EPISODES=2000
+ELITE_SIZE=10
+MUTATION_RATE=0.2
+SEED=42
 
 # Set up environment
 echo "Loading modules..."
@@ -81,35 +81,30 @@ echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Working directory: $(pwd)"
 echo "Python version: $(python3 --version)"
-echo "Problem: $PROBLEM"
+echo "Target problem: $TARGET_PROBLEM"
 echo "Generations: $GENERATIONS"
-echo "Population: $POPULATION"
-echo "Experiment Type: $EXPERIMENT_TYPE"
+echo "Population size: $POPULATION_SIZE"
+echo "Episodes per problem: $EPISODES_PER_PROBLEM"
+echo "Training episodes: $TRAINING_EPISODES"
 echo "=========================================="
 
-# Select and run experiment
-echo "Starting GPU-accelerated experiment..."
-if [ "$EXPERIMENT_TYPE" = "leave_one_out" ]; then
-    python3 experiment_leave_one_out.py \
-        --problem "$PROBLEM" \
-        --generations "$GENERATIONS" \
-        --population "$POPULATION" \
-        --device cuda \
-        --verbose
-else
-    python3 experiment_problem_specific.py \
-        --problem "$PROBLEM" \
-        --generations "$GENERATIONS" \
-        --population "$POPULATION" \
-        --device cuda \
-        --verbose
-fi
+# Run leave-one-out experiment
+echo "Starting leave-one-out experiment..."
+python3 experiment_leave_one_out.py \
+    --target-problem "$TARGET_PROBLEM" \
+    --population-size "$POPULATION_SIZE" \
+    --generations "$GENERATIONS" \
+    --episodes-per-problem "$EPISODES_PER_PROBLEM" \
+    --training-episodes "$TRAINING_EPISODES" \
+    --elite-size "$ELITE_SIZE" \
+    --mutation-rate "$MUTATION_RATE" \
+    --seed "$SEED"
 
 EXIT_CODE=$?
 
 # Copy results back to home directory with problem-specific naming
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/leave_one_out/${TARGET_PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files

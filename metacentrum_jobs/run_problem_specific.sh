@@ -1,25 +1,27 @@
 #!/bin/bash
 #PBS -N dqn_problem_specific_all
-#PBS -J 1-12
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
-#PBS -l walltime=24:00:00
+#PBS -l walltime=48:00:00
 #PBS -q gpu
 #PBS -m ae
 #PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
-# MetaCentrum Array Job: Problem-Specific for ALL datasets (1-12)
+# MetaCentrum Job: Problem-Specific for ALL datasets (1-12)
 # ==============================================================================
-# Runs problem_specific experiment on each dataset in parallel
-# Each array element processes one dataset (3dBPP_1 through 3dBPP_12)
+# Runs problem_specific experiment on ALL 12 datasets SEQUENTIALLY
+# The Python script processes each dataset one by one with checkpoint/resume
+# If job times out, resubmit and it will automatically resume from checkpoint
 # ==============================================================================
-
-# Map array index to problem name
-PROBLEM="3dBPP_${PBS_ARRAY_INDEX}"
 
 # Configuration (matching Python defaults)
+POPULATION_SIZE=100
 GENERATIONS=100
-POPULATION=100
+EPISODES_PER_EVAL=200
+TRAINING_EPISODES=2000
+ELITE_SIZE=10
+MUTATION_RATE=0.2
+SEED=42
 
 # Set up environment
 echo "Loading modules..."
@@ -71,31 +73,33 @@ cd dp-filip-spidla-spidlfil/main
 
 # Display environment info
 echo "=========================================="
-echo "Array Job Index: $PBS_ARRAY_INDEX"
 echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Working directory: $(pwd)"
 echo "Python version: $(python3 --version)"
-echo "Problem: $PROBLEM"
+echo "Experiment: problem_specific (ALL 12 datasets)"
 echo "Generations: $GENERATIONS"
-echo "Population: $POPULATION"
-echo "Experiment: problem_specific"
+echo "Population size: $POPULATION_SIZE"
+echo "Episodes per eval: $EPISODES_PER_EVAL"
+echo "Training episodes: $TRAINING_EPISODES"
 echo "=========================================="
 
-# Run problem_specific experiment
-echo "Starting problem-specific experiment..."
+# Run problem_specific experiment (processes ALL 12 datasets sequentially)
+echo "Starting problem-specific experiment on all datasets..."
 python3 experiment_problem_specific.py \
-    --problem "$PROBLEM" \
+    --population-size "$POPULATION_SIZE" \
     --generations "$GENERATIONS" \
-    --population "$POPULATION" \
-    --device cuda \
-    --verbose
+    --episodes-per-eval "$EPISODES_PER_EVAL" \
+    --training-episodes "$TRAINING_EPISODES" \
+    --elite-size "$ELITE_SIZE" \
+    --mutation-rate "$MUTATION_RATE" \
+    --seed "$SEED"
 
 EXIT_CODE=$?
 
 # Copy results back to home directory
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/problem_specific_gpu/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/problem_specific"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files
