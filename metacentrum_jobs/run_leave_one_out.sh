@@ -4,7 +4,7 @@
 #PBS -l walltime=4:00:00
 #PBS -q default
 #PBS -m ae
-#PBS -M your.email@cvut.cz
+#PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
 # MetaCentrum Job Script: Leave-One-Out Experiment

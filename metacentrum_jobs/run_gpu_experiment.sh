@@ -4,7 +4,7 @@
 #PBS -l walltime=168:00:00
 #PBS -q gpu
 #PBS -m ae
-#PBS -M your.email@cvut.cz
+#PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
 # MetaCentrum GPU Job Script
