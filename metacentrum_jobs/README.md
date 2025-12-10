@@ -36,7 +36,7 @@ Runs multiple experiments in parallel, each on its own GPU.
 
 **Configuration:**
 ```bash
-PROBLEMS=("3dBPP_1" "3dBPP_2" ... "3dBPP_12")  # All 12 datasets
+# Automatically runs on 3dBPP_1 through 3dBPP_12
 GENERATIONS=100              # Matches Python default
 POPULATION=100               # Matches Python default
 EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
@@ -46,7 +46,7 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 - Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
 - 48 hours walltime
 - Queue: `gpu`
-- Submits 12 jobs (indices 0-11)
+- Submits 12 jobs (indices 1-12)
 
 **Usage:**
 ```bash
