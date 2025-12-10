@@ -10,14 +10,14 @@ Runs a single experiment with GPU acceleration.
 **Configuration:**
 ```bash
 PROBLEM="3dBPP_12"           # Which problem to run
-GENERATIONS=200              # Number of evolution generations
-POPULATION=50                # Population size
+GENERATIONS=100              # Evolution generations (matches Python default)
+POPULATION=100               # Population size (matches Python default)
 EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 ```
 
 **Resources:**
 - 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
-- 168 hours (7 days) walltime
+- 24 hours walltime
 - Queue: `gpu`
 
 **Usage:**
@@ -37,14 +37,14 @@ Runs multiple experiments in parallel, each on its own GPU.
 **Configuration:**
 ```bash
 PROBLEMS=("3dBPP_12" "3dBPP_15" "3dBPP_18" "3dBPP_20" "3dBPP_25")
-GENERATIONS=100
-POPULATION=30
+GENERATIONS=100              # Matches Python default
+POPULATION=100               # Matches Python default
 EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 ```
 
 **Resources:**
 - Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
-- 168 hours walltime
+- 24 hours walltime
 - Queue: `gpu`
 - Submits 5 jobs (indices 0-4)
 
@@ -55,6 +55,36 @@ nano run_array_experiments.sh
 
 # Submit all 5 jobs
 qsub run_array_experiments.sh
+```
+
+---
+
+### 3. `run_problem_specific_all.sh` - All Datasets (12 parallel jobs)
+Runs problem_specific experiment on ALL 12 datasets simultaneously.
+
+**Configuration:**
+```bash
+# Automatically runs on 3dBPP_1 through 3dBPP_12
+GENERATIONS=100
+POPULATION=100
+```
+
+**Resources:**
+- Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
+- 24 hours walltime
+- Queue: `gpu`
+- Submits 12 jobs (indices 1-12)
+
+**Usage:**
+```bash
+# Just submit - no configuration needed!
+qsub run_problem_specific_all.sh
+
+# Results saved to:
+# ~/results/problem_specific_gpu/3dBPP_1/
+# ~/results/problem_specific_gpu/3dBPP_2/
+# ...
+# ~/results/problem_specific_gpu/3dBPP_12/
 ```
 
 ---
