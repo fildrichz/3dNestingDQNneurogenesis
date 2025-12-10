@@ -1,7 +1,7 @@
 #!/bin/bash
 #PBS -N dqn_gpu_experiment
-#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1:scratch_local=30gb:gpu_cap=cuda80
-#PBS -l walltime=72:00:00
+#PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
+#PBS -l walltime=168:00:00
 #PBS -q gpu
 #PBS -m ae
 #PBS -M your.email@cvut.cz
@@ -21,24 +21,52 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
 echo "Loading modules..."
-module load python/3.11.4-gcc-10.2.1-mjh74tn
-module load cuda/11.8.0
-
-# Optional: Activate virtual environment if created
-# Make sure PyTorch in venv is built with CUDA support!
-# source /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis/venv/bin/activate
-
-# Set CUDA device (usually only one GPU allocated)
-export CUDA_VISIBLE_DEVICES=0
+module load python || { echo "ERROR: Failed to load python module"; exit 1; }
 
 # Change to scratch directory
 echo "Setting up scratch directory..."
-cd $SCRATCHDIR || exit 1
+cd $SCRATCHDIR || { echo "ERROR: Failed to access scratch"; exit 1; }
+
+# Create virtual environment in scratch
+echo "Creating virtual environment..."
+python3 -m venv venv || { echo "ERROR: Failed to create venv"; exit 1; }
+source venv/bin/activate || { echo "ERROR: Failed to activate venv"; exit 1; }
+
+# Set pip cache to home directory (speeds up subsequent installs)
+export PIP_CACHE_DIR=/storage/praha1/home/$PBS_O_LOGNAME/.pip-cache
+
+# Install dependencies
+echo "Installing dependencies..."
+pip install --upgrade pip --quiet || { echo "ERROR: Failed to upgrade pip"; exit 1; }
+pip install numpy --quiet || { echo "ERROR: Failed to install numpy"; exit 1; }
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --quiet || { echo "ERROR: Failed to install PyTorch"; exit 1; }
+
+# Verify dependencies
+echo "Verifying dependencies..."
+python3 << 'EOF' || { echo "ERROR: Dependency check failed"; exit 1; }
+import sys
+import numpy as np
+import torch
+
+print(f"✓ NumPy {np.__version__}")
+print(f"✓ PyTorch {torch.__version__}")
+
+if not torch.cuda.is_available():
+    print("✗ ERROR: GPU job but CUDA not available!")
+    sys.exit(1)
+
+print(f"✓ CUDA available")
+print(f"  Device: {torch.cuda.get_device_name(0)}")
+print(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+print(f"  CUDA version: {torch.version.cuda}")
+EOF
+
+export CUDA_VISIBLE_DEVICES=0
 
 # Copy project to scratch
 echo "Copying project files to scratch..."
-cp -r /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis .
-cd 3dNestingDQNneurogenesis/main
+cp -r /storage/praha1/home/$PBS_O_LOGNAME/dp-filip-spidla-spidlfil .
+cd dp-filip-spidla-spidlfil/main
 
 # Display environment info
 echo "=========================================="
@@ -50,20 +78,6 @@ echo "Problem: $PROBLEM"
 echo "Generations: $GENERATIONS"
 echo "Population: $POPULATION"
 echo "=========================================="
-
-# Check CUDA availability
-echo "Checking CUDA setup..."
-python3 << 'EOF'
-import torch
-print(f"PyTorch version: {torch.__version__}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"CUDA version: {torch.version.cuda}")
-    print(f"GPU device: {torch.cuda.get_device_name(0)}")
-    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-else:
-    print("WARNING: CUDA not available! Running on CPU.")
-EOF
 
 # Monitor GPU usage in background
 nvidia-smi &
@@ -94,7 +108,7 @@ kill $NVIDIA_SMI_PID 2>/dev/null || true
 
 # Copy results back to home directory
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/brno2/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files
