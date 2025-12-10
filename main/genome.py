@@ -79,7 +79,7 @@ class NetworkGenome:
     def __init__(self, genes: Dict[str, Any] = None, genome_id: int = None):
         """
         Initialize genome with genes.
-        
+
         Args:
             genes: Dictionary of gene values. If None, randomly initialize.
             genome_id: Optional identifier for tracking
@@ -88,10 +88,53 @@ class NetworkGenome:
             self.genes = self.random_genes()
         else:
             self.genes = genes
-        
+
+        # Validate and fix architectural constraints
+        self._validate_constraints()
+
         self.genome_id = genome_id
         self.fitness = None
         self.metrics = {}
+
+    def _validate_constraints(self):
+        """
+        Validate and fix architectural constraints.
+
+        Key constraint: hidden_dim must be divisible by attention_heads
+        for multi-head attention to work properly.
+        """
+        # Ensure hidden_dim is divisible by attention_heads
+        hidden_dim = self.genes['hidden_dim']
+        attention_heads = self.genes['attention_heads']
+
+        # If hidden_dim < attention_heads, increase hidden_dim
+        if hidden_dim < attention_heads:
+            # Find the smallest power of 2 that is >= attention_heads
+            new_hidden = attention_heads
+            while new_hidden < self.GENE_SPACES['hidden_dim']['min']:
+                new_hidden *= 2
+            # Clamp to max
+            new_hidden = min(new_hidden, self.GENE_SPACES['hidden_dim']['max'])
+            self.genes['hidden_dim'] = new_hidden
+            hidden_dim = new_hidden
+
+        # Ensure divisibility
+        if hidden_dim % attention_heads != 0:
+            # Reduce attention_heads to the largest divisor of hidden_dim
+            # that is also a valid value (power of 2 within bounds)
+            valid_heads = []
+            for heads in [2, 4, 8, 16]:
+                if (heads >= self.GENE_SPACES['attention_heads']['min'] and
+                    heads <= self.GENE_SPACES['attention_heads']['max'] and
+                    hidden_dim % heads == 0):
+                    valid_heads.append(heads)
+
+            if valid_heads:
+                # Choose the largest valid number of heads
+                self.genes['attention_heads'] = max(valid_heads)
+            else:
+                # Fallback: set to minimum value
+                self.genes['attention_heads'] = self.GENE_SPACES['attention_heads']['min']
     
     @classmethod
     def random_genes(cls) -> Dict[str, Any]:
