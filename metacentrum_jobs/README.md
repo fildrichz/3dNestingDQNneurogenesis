@@ -31,12 +31,12 @@ qsub run_gpu_experiment.sh
 
 ---
 
-### 2. `run_array_experiments.sh` - GPU Array Job (5 parallel experiments)
+### 2. `run_array_experiments.sh` - GPU Array Job (ALL 12 datasets)
 Runs multiple experiments in parallel, each on its own GPU.
 
 **Configuration:**
 ```bash
-PROBLEMS=("3dBPP_12" "3dBPP_15" "3dBPP_18" "3dBPP_20" "3dBPP_25")
+PROBLEMS=("3dBPP_1" "3dBPP_2" ... "3dBPP_12")  # All 12 datasets
 GENERATIONS=100              # Matches Python default
 POPULATION=100               # Matches Python default
 EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
@@ -46,7 +46,7 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 - Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
 - 48 hours walltime
 - Queue: `gpu`
-- Submits 5 jobs (indices 0-4)
+- Submits 12 jobs (indices 0-11)
 
 **Usage:**
 ```bash

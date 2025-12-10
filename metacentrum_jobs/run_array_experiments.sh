@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N dqn_gpu_array
-#PBS -J 0-4
+#PBS -J 0-11
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
 #PBS -l walltime=48:00:00
 #PBS -q gpu
@@ -15,8 +15,8 @@
 # Modify PROBLEMS array below to change which problems to test
 # ==============================================================================
 
-# Define array of problems to test
-PROBLEMS=("3dBPP_12" "3dBPP_15" "3dBPP_18" "3dBPP_20" "3dBPP_25")
+# Define array of problems to test (actual datasets are 1-12)
+PROBLEMS=("3dBPP_1" "3dBPP_2" "3dBPP_3" "3dBPP_4" "3dBPP_5" "3dBPP_6" "3dBPP_7" "3dBPP_8" "3dBPP_9" "3dBPP_10" "3dBPP_11" "3dBPP_12")
 
 # Get the problem for this array index
 PROBLEM=${PROBLEMS[$PBS_ARRAY_INDEX]}
