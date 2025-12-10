@@ -1,21 +1,25 @@
 #!/bin/bash
-#PBS -N dqn_problem_specific_cpu
-#PBS -l select=1:ncpus=2:mem=32gb:scratch_local=20gb
-#PBS -l walltime=4:00:00
-#PBS -q default
+#PBS -N dqn_problem_specific_all
+#PBS -J 1-12
+#PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
+#PBS -l walltime=24:00:00
+#PBS -q gpu
 #PBS -m ae
 #PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
-# MetaCentrum Job Script: Problem-Specific Experiment
+# MetaCentrum Array Job: Problem-Specific for ALL datasets (1-12)
 # ==============================================================================
-# This script runs the problem-specific architecture evolution experiment
+# Runs problem_specific experiment on each dataset in parallel
+# Each array element processes one dataset (3dBPP_1 through 3dBPP_12)
 # ==============================================================================
 
-# Configuration (FOR TESTING ONLY - use GPU script for real experiments)
-PROBLEM="3dBPP_12"
-GENERATIONS=10
-POPULATION=5
+# Map array index to problem name
+PROBLEM="3dBPP_${PBS_ARRAY_INDEX}"
+
+# Configuration (matching Python defaults)
+GENERATIONS=100
+POPULATION=100
 
 # Set up environment
 echo "Loading modules..."
@@ -30,8 +34,9 @@ echo "Creating virtual environment..."
 python3 -m venv venv || { echo "ERROR: Failed to create venv"; exit 1; }
 source venv/bin/activate || { echo "ERROR: Failed to activate venv"; exit 1; }
 
-# Set pip cache
-export PIP_CACHE_DIR=/storage/praha1/home/$PBS_O_LOGNAME/.pip-cache
+# Set pip cache to scratch (avoids home directory quota issues)
+export PIP_CACHE_DIR=$SCRATCHDIR/.pip-cache
+mkdir -p $PIP_CACHE_DIR
 
 # Install dependencies
 echo "Installing dependencies..."
@@ -42,12 +47,22 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 # Verify dependencies
 echo "Verifying dependencies..."
 python3 << 'EOF' || { echo "ERROR: Dependency check failed"; exit 1; }
+import sys
 import numpy as np
 import torch
+
 print(f"✓ NumPy {np.__version__}")
 print(f"✓ PyTorch {torch.__version__}")
-print(f"  CUDA available: {torch.cuda.is_available()}")
+
+if not torch.cuda.is_available():
+    print("✗ ERROR: GPU job but CUDA not available!")
+    sys.exit(1)
+
+print(f"✓ CUDA available")
+print(f"  Device: {torch.cuda.get_device_name(0)}")
 EOF
+
+export CUDA_VISIBLE_DEVICES=0
 
 # Copy project to scratch
 echo "Copying project files to scratch..."
@@ -56,6 +71,7 @@ cd dp-filip-spidla-spidlfil/main
 
 # Display environment info
 echo "=========================================="
+echo "Array Job Index: $PBS_ARRAY_INDEX"
 echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Working directory: $(pwd)"
@@ -63,21 +79,23 @@ echo "Python version: $(python3 --version)"
 echo "Problem: $PROBLEM"
 echo "Generations: $GENERATIONS"
 echo "Population: $POPULATION"
+echo "Experiment: problem_specific"
 echo "=========================================="
 
-# Run the experiment
-echo "Starting experiment..."
+# Run problem_specific experiment
+echo "Starting problem-specific experiment..."
 python3 experiment_problem_specific.py \
     --problem "$PROBLEM" \
     --generations "$GENERATIONS" \
     --population "$POPULATION" \
+    --device cuda \
     --verbose
 
 EXIT_CODE=$?
 
 # Copy results back to home directory
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/problem_specific"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/problem_specific_gpu/${PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files

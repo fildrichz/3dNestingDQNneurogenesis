@@ -2,7 +2,7 @@
 #PBS -N dqn_gpu_array
 #PBS -J 0-4
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
-#PBS -l walltime=168:00:00
+#PBS -l walltime=48:00:00
 #PBS -q gpu
 #PBS -m ae
 #PBS -M spidlfil@fit.cvut.cz
@@ -23,7 +23,7 @@ PROBLEM=${PROBLEMS[$PBS_ARRAY_INDEX]}
 
 # Configuration
 GENERATIONS=100
-POPULATION=30
+POPULATION=100
 EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
@@ -39,8 +39,9 @@ echo "Creating virtual environment..."
 python3 -m venv venv || { echo "ERROR: Failed to create venv"; exit 1; }
 source venv/bin/activate || { echo "ERROR: Failed to activate venv"; exit 1; }
 
-# Set pip cache
-export PIP_CACHE_DIR=/storage/praha1/home/$PBS_O_LOGNAME/.pip-cache
+# Set pip cache to scratch (avoids home directory quota issues)
+export PIP_CACHE_DIR=$SCRATCHDIR/.pip-cache
+mkdir -p $PIP_CACHE_DIR
 
 # Install dependencies
 echo "Installing dependencies..."
