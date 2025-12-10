@@ -2,10 +2,10 @@
 #PBS -N dqn_problem_specific_all
 #PBS -J 1-12
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
-#PBS -l walltime=24:00:00
+#PBS -l walltime=48:00:00
 #PBS -q gpu
 #PBS -m ae
-#PBS -M your.email@cvut.cz
+#PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
 # MetaCentrum Array Job: Problem-Specific for ALL datasets (1-12)

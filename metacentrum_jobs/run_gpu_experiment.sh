@@ -1,10 +1,10 @@
 #!/bin/bash
 #PBS -N dqn_gpu_experiment
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
-#PBS -l walltime=168:00:00
+#PBS -l walltime=48:00:00
 #PBS -q gpu
 #PBS -m ae
-#PBS -M your.email@cvut.cz
+#PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
 # MetaCentrum GPU Job Script

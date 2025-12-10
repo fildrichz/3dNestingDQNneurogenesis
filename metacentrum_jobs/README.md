@@ -17,7 +17,7 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 **Resources:**
 - 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
-- 24 hours walltime
+- 48 hours walltime
 - Queue: `gpu`
 
 **Usage:**
@@ -44,7 +44,7 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 **Resources:**
 - Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
-- 24 hours walltime
+- 48 hours walltime
 - Queue: `gpu`
 - Submits 5 jobs (indices 0-4)
 
@@ -71,7 +71,7 @@ POPULATION=100
 
 **Resources:**
 - Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
-- 24 hours walltime
+- 48 hours walltime
 - Queue: `gpu`
 - Submits 12 jobs (indices 1-12)
 

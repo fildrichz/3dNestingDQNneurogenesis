@@ -2,10 +2,10 @@
 #PBS -N dqn_gpu_array
 #PBS -J 0-4
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
-#PBS -l walltime=168:00:00
+#PBS -l walltime=48:00:00
 #PBS -q gpu
 #PBS -m ae
-#PBS -M your.email@cvut.cz
+#PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
 # MetaCentrum Array Job Script: Run Multiple Experiments in Parallel
