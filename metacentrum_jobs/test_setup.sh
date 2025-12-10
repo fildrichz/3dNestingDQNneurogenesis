@@ -16,15 +16,15 @@ echo "Loading modules..."
 module load python/3.11.4-gcc-10.2.1-mjh74tn
 
 # Optional: Activate virtual environment if created
-# source /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis/venv/bin/activate
+# source /storage/praha1/home/$PBS_O_LOGNAME/dp-filip-spidla-spidlfil/venv/bin/activate
 
 # Change to scratch directory
 cd $SCRATCHDIR || exit 1
 
 # Copy project to scratch
 echo "Copying project files..."
-cp -r /storage/brno2/home/$PBS_O_LOGNAME/3dNestingDQNneurogenesis .
-cd 3dNestingDQNneurogenesis
+cp -r /storage/praha1/home/$PBS_O_LOGNAME/dp-filip-spidla-spidlfil .
+cd dp-filip-spidla-spidlfil
 
 echo "=========================================="
 echo "MetaCentrum Setup Test"
