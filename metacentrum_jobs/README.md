@@ -4,15 +4,19 @@ Ready-to-use GPU job scripts for running experiments on MetaCentrum.
 
 ## Available Scripts
 
-### 1. `run_gpu_experiment.sh` - Single GPU Experiment
-Runs a single experiment with GPU acceleration.
+### 1. `run_gpu_experiment.sh` - Single Leave-One-Out Experiment
+Runs a single leave-one-out experiment with GPU acceleration.
 
 **Configuration:**
 ```bash
-PROBLEM="3dBPP_12"           # Which problem to run
-GENERATIONS=100              # Evolution generations (matches Python default)
-POPULATION=100               # Population size (matches Python default)
-EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
+TARGET_PROBLEM="3dBPP_12"    # Problem to hold out for testing
+POPULATION_SIZE=100          # GA population size
+GENERATIONS=100              # GA generations
+EPISODES_PER_PROBLEM=200     # Episodes per problem for fitness eval
+TRAINING_EPISODES=2000       # Episodes for final training on target
+ELITE_SIZE=10                # Number of elite genomes
+MUTATION_RATE=0.2            # Initial mutation rate
+SEED=42                      # Random seed
 ```
 
 **Resources:**
@@ -31,15 +35,19 @@ qsub run_gpu_experiment.sh
 
 ---
 
-### 2. `run_array_experiments.sh` - GPU Array Job (ALL 12 datasets)
-Runs multiple experiments in parallel, each on its own GPU.
+### 2. `run_array_experiments.sh` - Leave-One-Out Array Job (ALL 12 datasets)
+Runs leave-one-out experiments in parallel on all 12 datasets, each on its own GPU.
 
 **Configuration:**
 ```bash
 # Automatically runs on 3dBPP_1 through 3dBPP_12
-GENERATIONS=100              # Matches Python default
-POPULATION=100               # Matches Python default
-EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
+POPULATION_SIZE=100          # GA population size
+GENERATIONS=100              # GA generations
+EPISODES_PER_PROBLEM=200     # Episodes per problem for fitness eval
+TRAINING_EPISODES=2000       # Episodes for final training on target
+ELITE_SIZE=10                # Number of elite genomes
+MUTATION_RATE=0.2            # Initial mutation rate
+SEED=42                      # Random seed
 ```
 
 **Resources:**
@@ -59,32 +67,46 @@ qsub run_array_experiments.sh
 
 ---
 
-### 3. `run_problem_specific_all.sh` - All Datasets (12 parallel jobs)
-Runs problem_specific experiment on ALL 12 datasets simultaneously.
+### 3. `run_problem_specific_all.sh` - Problem-Specific for All Datasets (Sequential)
+Runs problem_specific experiment on ALL 12 datasets SEQUENTIALLY in a single job.
+
+**How it works:**
+- ONE job processes all 12 datasets one by one
+- Has built-in checkpoint/resume - tracks completed datasets
+- If job times out at 48h, just resubmit → auto-resumes from where it stopped
+- Each dataset gets its own evolved architecture and trained model
 
 **Configuration:**
 ```bash
-# Automatically runs on 3dBPP_1 through 3dBPP_12
-GENERATIONS=100
-POPULATION=100
+POPULATION_SIZE=100          # GA population size
+GENERATIONS=100              # GA generations
+EPISODES_PER_EVAL=200        # Episodes for fitness evaluation
+TRAINING_EPISODES=2000       # Episodes for final training
+ELITE_SIZE=10                # Number of elite genomes
+MUTATION_RATE=0.2            # Initial mutation rate
+SEED=42                      # Random seed
 ```
 
 **Resources:**
-- Each job: 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
-- 48 hours walltime
+- 4 CPUs, 128GB RAM, 40GB scratch, 1 GPU
+- 48 hours walltime (resubmit if needed - auto-resumes)
 - Queue: `gpu`
-- Submits 12 jobs (indices 1-12)
+- Submits 1 job (not an array)
 
 **Usage:**
 ```bash
 # Just submit - no configuration needed!
 qsub run_problem_specific_all.sh
 
+# If it times out, resubmit the same command:
+qsub run_problem_specific_all.sh  # Will auto-resume
+
 # Results saved to:
-# ~/results/problem_specific_gpu/3dBPP_1/
-# ~/results/problem_specific_gpu/3dBPP_2/
+# ~/results/problem_specific/3dBPP_1/
+# ~/results/problem_specific/3dBPP_2/
 # ...
-# ~/results/problem_specific_gpu/3dBPP_12/
+# ~/results/problem_specific/3dBPP_12/
+# ~/results/problem_specific/experiment_state.json  # Checkpoint file
 ```
 
 ---
@@ -105,29 +127,35 @@ qsub run_problem_specific_all.sh
 ### Results Location
 ```
 ~/results/
-├── leave_one_out_gpu/
+├── leave_one_out/
+│   ├── 3dBPP_1/
+│   ├── 3dBPP_2/
+│   ├── ...
 │   └── 3dBPP_12/
-│       ├── results files...
-│       └── *.log
-└── problem_specific_gpu/
+│       ├── evolved_genome.json
+│       ├── trained_model.pth
+│       ├── results.json
+│       ├── visualizations/
+│       └── evolution/
+└── problem_specific/
+    ├── experiment_state.json      # Checkpoint for resume
+    ├── experiment_summary.json    # Overall results
+    ├── 3dBPP_1/
+    ├── 3dBPP_2/
+    ├── ...
     └── 3dBPP_12/
-        └── ...
+        ├── evolved_genome.json
+        ├── trained_model.pth
+        ├── results.json
+        ├── visualizations/
+        └── evolution/
 ```
 
 ---
 
 ## First Time Setup
 
-### 1. Update Your Email
-```bash
-cd ~/dp-filip-spidla-spidlfil/metacentrum_jobs
-nano run_gpu_experiment.sh
-
-# Change this line:
-#PBS -M your.email@cvut.cz
-```
-
-### 2. Run Your First Experiment
+### 1. Run Your First Experiment
 ```bash
 # Submit the job
 qsub run_gpu_experiment.sh
@@ -208,10 +236,15 @@ Increase RAM:
 ```
 
 ### Out of time
-Increase walltime (max 168 hours):
-```bash
-#PBS -l walltime=168:00:00
-```
+**GPU queue max: 48 hours**
+
+For `run_problem_specific_all.sh`:
+- Just resubmit the same job
+- It will automatically resume from checkpoint
+
+For leave-one-out experiments:
+- Reduce TRAINING_EPISODES or GENERATIONS
+- Or split into smaller jobs
 
 ### Results not copied back
 ```bash

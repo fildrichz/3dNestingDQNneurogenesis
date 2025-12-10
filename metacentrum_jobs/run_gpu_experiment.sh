@@ -14,10 +14,14 @@
 # ==============================================================================
 
 # Configuration
-PROBLEM="3dBPP_12"
+TARGET_PROBLEM="3dBPP_12"
+POPULATION_SIZE=100
 GENERATIONS=100
-POPULATION=100
-EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
+EPISODES_PER_PROBLEM=200
+TRAINING_EPISODES=2000
+ELITE_SIZE=10
+MUTATION_RATE=0.2
+SEED=42
 
 # Set up environment
 echo "Loading modules..."
@@ -75,9 +79,11 @@ echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Working directory: $(pwd)"
 echo "Python version: $(python3 --version)"
-echo "Problem: $PROBLEM"
+echo "Target problem: $TARGET_PROBLEM"
 echo "Generations: $GENERATIONS"
-echo "Population: $POPULATION"
+echo "Population size: $POPULATION_SIZE"
+echo "Episodes per problem: $EPISODES_PER_PROBLEM"
+echo "Training episodes: $TRAINING_EPISODES"
 echo "=========================================="
 
 # Monitor GPU usage in background
@@ -85,22 +91,16 @@ nvidia-smi &
 NVIDIA_SMI_PID=$!
 
 # Run the experiment with GPU
-echo "Starting GPU-accelerated experiment..."
-if [ "$EXPERIMENT_TYPE" = "leave_one_out" ]; then
-    python3 experiment_leave_one_out.py \
-        --problem "$PROBLEM" \
-        --generations "$GENERATIONS" \
-        --population "$POPULATION" \
-        --device cuda \
-        --verbose
-else
-    python3 experiment_problem_specific.py \
-        --problem "$PROBLEM" \
-        --generations "$GENERATIONS" \
-        --population "$POPULATION" \
-        --device cuda \
-        --verbose
-fi
+echo "Starting leave-one-out experiment..."
+python3 experiment_leave_one_out.py \
+    --target-problem "$TARGET_PROBLEM" \
+    --population-size "$POPULATION_SIZE" \
+    --generations "$GENERATIONS" \
+    --episodes-per-problem "$EPISODES_PER_PROBLEM" \
+    --training-episodes "$TRAINING_EPISODES" \
+    --elite-size "$ELITE_SIZE" \
+    --mutation-rate "$MUTATION_RATE" \
+    --seed "$SEED"
 
 EXIT_CODE=$?
 
@@ -109,7 +109,7 @@ kill $NVIDIA_SMI_PID 2>/dev/null || true
 
 # Copy results back to home directory
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/leave_one_out/${TARGET_PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files
