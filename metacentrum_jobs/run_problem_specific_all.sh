@@ -1,30 +1,25 @@
 #!/bin/bash
-#PBS -N dqn_gpu_array
-#PBS -J 0-4
+#PBS -N dqn_problem_specific_all
+#PBS -J 1-12
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
-#PBS -l walltime=168:00:00
+#PBS -l walltime=24:00:00
 #PBS -q gpu
 #PBS -m ae
 #PBS -M your.email@cvut.cz
 
 # ==============================================================================
-# MetaCentrum Array Job Script: Run Multiple Experiments in Parallel
+# MetaCentrum Array Job: Problem-Specific for ALL datasets (1-12)
 # ==============================================================================
-# This array job runs experiments on multiple problems simultaneously
-# Each array element processes one problem
-# Modify PROBLEMS array below to change which problems to test
+# Runs problem_specific experiment on each dataset in parallel
+# Each array element processes one dataset (3dBPP_1 through 3dBPP_12)
 # ==============================================================================
 
-# Define array of problems to test
-PROBLEMS=("3dBPP_12" "3dBPP_15" "3dBPP_18" "3dBPP_20" "3dBPP_25")
+# Map array index to problem name
+PROBLEM="3dBPP_${PBS_ARRAY_INDEX}"
 
-# Get the problem for this array index
-PROBLEM=${PROBLEMS[$PBS_ARRAY_INDEX]}
-
-# Configuration
+# Configuration (matching Python defaults)
 GENERATIONS=100
 POPULATION=100
-EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
 echo "Loading modules..."
@@ -83,32 +78,23 @@ echo "Python version: $(python3 --version)"
 echo "Problem: $PROBLEM"
 echo "Generations: $GENERATIONS"
 echo "Population: $POPULATION"
-echo "Experiment Type: $EXPERIMENT_TYPE"
+echo "Experiment: problem_specific"
 echo "=========================================="
 
-# Select and run experiment
-echo "Starting GPU-accelerated experiment..."
-if [ "$EXPERIMENT_TYPE" = "leave_one_out" ]; then
-    python3 experiment_leave_one_out.py \
-        --problem "$PROBLEM" \
-        --generations "$GENERATIONS" \
-        --population "$POPULATION" \
-        --device cuda \
-        --verbose
-else
-    python3 experiment_problem_specific.py \
-        --problem "$PROBLEM" \
-        --generations "$GENERATIONS" \
-        --population "$POPULATION" \
-        --device cuda \
-        --verbose
-fi
+# Run problem_specific experiment
+echo "Starting problem-specific experiment..."
+python3 experiment_problem_specific.py \
+    --problem "$PROBLEM" \
+    --generations "$GENERATIONS" \
+    --population "$POPULATION" \
+    --device cuda \
+    --verbose
 
 EXIT_CODE=$?
 
-# Copy results back to home directory with problem-specific naming
+# Copy results back to home directory
 echo "Copying results back to home..."
-RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/${EXPERIMENT_TYPE}_gpu/${PROBLEM}"
+RESULTS_DIR="/storage/praha1/home/$PBS_O_LOGNAME/results/problem_specific_gpu/${PROBLEM}"
 mkdir -p "$RESULTS_DIR"
 
 # Copy all result files
@@ -120,7 +106,7 @@ else
     export CLEAN_SCRATCH=false
 fi
 
-# Also copy logs with unique names
+# Also copy logs
 cp *.log "$RESULTS_DIR/" 2>/dev/null || true
 
 echo "=========================================="

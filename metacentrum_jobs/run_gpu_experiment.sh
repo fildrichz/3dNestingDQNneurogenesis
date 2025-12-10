@@ -15,8 +15,8 @@
 
 # Configuration
 PROBLEM="3dBPP_12"
-GENERATIONS=200
-POPULATION=50
+GENERATIONS=100
+POPULATION=100
 EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 
 # Set up environment
