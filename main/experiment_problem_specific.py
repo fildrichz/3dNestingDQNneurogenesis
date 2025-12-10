@@ -102,7 +102,8 @@ def run_problem_specific_experiment(
     mutation_rate: float = 0.2,
     seed: Optional[int] = 42,
     verbose: bool = True,
-    resume: bool = False
+    resume: bool = False,
+    problem_filter: Optional[str] = None
 ):
     """
     Run problem-specific architecture evolution experiment.
@@ -121,6 +122,7 @@ def run_problem_specific_experiment(
         seed: Random seed for reproducibility
         verbose: Print detailed progress
         resume: Resume from checkpoint if available
+        problem_filter: Filter problems by name (e.g., '3dBPP_1' for problem 1)
     """
     results_path = Path(results_dir)
     results_path.mkdir(parents=True, exist_ok=True)
@@ -135,6 +137,10 @@ def run_problem_specific_experiment(
 
     # Get all problem files
     problem_files = get_problem_files(dataset_dir)
+
+    # Filter problems if specified
+    if problem_filter:
+        problem_files = [f for f in problem_files if problem_filter in f.stem]
 
     if verbose:
         print("="*80)
@@ -586,6 +592,12 @@ def main():
         action='store_true',
         help='Minimal output'
     )
+    parser.add_argument(
+        '--problem-filter',
+        type=str,
+        default=None,
+        help='Filter problems by name (e.g., "3dBPP_1" for problem 1 only)'
+    )
 
     args = parser.parse_args()
 
@@ -602,7 +614,8 @@ def main():
         mutation_rate=args.mutation_rate,
         seed=args.seed,
         verbose=not args.quiet,
-        resume=not args.no_resume
+        resume=not args.no_resume,
+        problem_filter=args.problem_filter
     )
 
 

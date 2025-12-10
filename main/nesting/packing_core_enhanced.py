@@ -1,5 +1,7 @@
 # packing_core_complete.py — Complete implementation with ALL constraints + gravity + EMS
 from typing import List, Tuple, Dict, Optional, Set
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless servers
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import numpy as np

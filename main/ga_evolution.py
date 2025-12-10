@@ -521,11 +521,13 @@ def load_best_genome(save_dir: str) -> NetworkGenome:
 def plot_evolution_history(save_dir: str, output_file: Optional[str] = None):
     """
     Plot evolution history (requires matplotlib).
-    
+
     Args:
         save_dir: Directory with evolution_history.json
         output_file: Save plot to file (None = display)
     """
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend for headless servers
     import matplotlib.pyplot as plt
     
     history_file = Path(save_dir) / "evolution_history.json"

@@ -1,5 +1,5 @@
 #!/bin/bash
-#PBS -N dqn_problem_specific_all
+#PBS -N dqn_problem_specific_p1
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
 #PBS -l walltime=48:00:00
 #PBS -q gpu
@@ -7,8 +7,8 @@
 #PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
-# MetaCentrum Job: Problem-Specific for ALL datasets (1-12)
-# Runs problem_specific experiment on ALL 12 datasets sequentially.
+# MetaCentrum Job: Problem-Specific for Problem 1
+# Runs problem_specific experiment on dataset 3dBPP_1 only.
 # ==============================================================================
 
 # Configuration (matching Python defaults)
@@ -77,7 +77,7 @@ cd dp-filip-spidla-spidlfil/main || { echo "ERROR: Project main directory missin
 echo "Working directory: $(pwd)"
 
 echo "=========================================="
-echo "Experiment: problem_specific (ALL 12 datasets)"
+echo "Experiment: problem_specific (Problem 1 only)"
 echo "Generations: $GENERATIONS"
 echo "Population size: $POPULATION_SIZE"
 echo "Episodes per eval: $EPISODES_PER_EVAL"
@@ -88,7 +88,7 @@ echo "=========================================="
 # 3) Run experiment
 # ------------------------------------------------------------------------------
 
-echo "Starting problem-specific experiment on all datasets..."
+echo "Starting problem-specific experiment on problem 1..."
 python experiment_problem_specific.py \
     --population-size "$POPULATION_SIZE" \
     --generations "$GENERATIONS" \
@@ -96,7 +96,8 @@ python experiment_problem_specific.py \
     --training-episodes "$TRAINING_EPISODES" \
     --elite-size "$ELITE_SIZE" \
     --mutation-rate "$MUTATION_RATE" \
-    --seed "$SEED"
+    --seed "$SEED" \
+    --problem-filter "3dBPP_1"
 
 EXIT_CODE=$?
 
