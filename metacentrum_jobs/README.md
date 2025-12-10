@@ -53,7 +53,7 @@ EXPERIMENT_TYPE="leave_one_out"  # or "problem_specific"
 # Edit configuration
 nano run_array_experiments.sh
 
-# Submit all 5 jobs
+# Submit all 12 jobs
 qsub run_array_experiments.sh
 ```
 

@@ -155,8 +155,8 @@ echo "Results will be in: ~/results/"
 echo "=========================================="
 
 # No results to copy for this test, but let's test that too
-mkdir -p /storage/brno2/home/$PBS_O_LOGNAME/metacentrum_test_results
+mkdir -p /storage/praha1/home/$PBS_O_LOGNAME/metacentrum_test_results
 echo "Test completed successfully at $(date)" > test_output.txt
-cp test_output.txt /storage/brno2/home/$PBS_O_LOGNAME/metacentrum_test_results/
+cp test_output.txt /storage/praha1/home/$PBS_O_LOGNAME/metacentrum_test_results/
 
 exit 0
