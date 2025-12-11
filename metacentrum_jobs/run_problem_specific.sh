@@ -1,5 +1,5 @@
 #!/bin/bash
-#PBS -N dqn_problem_specific_all
+#PBS -N dqn_problem_specific_7
 #PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
 #PBS -l walltime=48:00:00
 #PBS -q gpu
@@ -12,11 +12,11 @@
 # ==============================================================================
 
 # Configuration (matching Python defaults)
-POPULATION_SIZE=100
+POPULATION_SIZE=60
 GENERATIONS=100
 EPISODES_PER_EVAL=200
 TRAINING_EPISODES=2000
-ELITE_SIZE=10
+ELITE_SIZE=6
 MUTATION_RATE=0.2
 SEED=42
 
