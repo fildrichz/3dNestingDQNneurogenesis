@@ -25,34 +25,38 @@ echo "Node: $(hostname)"
 echo "=========================================="
 
 # ------------------------------------------------------------------------------
-# 1) Load mambaforge and activate persistent environment
+# 1) Load mambaforge and point to the environment's Python
 # ------------------------------------------------------------------------------
 
 echo "Loading mambaforge module..."
 module purge
 module add mambaforge || { echo "ERROR: Failed to load mambaforge module"; exit 1; }
 
-# Directly source the environment's activate script (no conda/mamba shell hook)
-echo "Activating /storage/praha1/home/$PBS_O_LOGNAME/dp_env ..."
-source /storage/praha1/home/$PBS_O_LOGNAME/dp_env/bin/activate || {
-    echo "ERROR: Failed to activate /storage/praha1/home/$PBS_O_LOGNAME/dp_env"
-    exit 1
-}
+# Use Python from your dp_env directly (no 'activate' script needed)
+PYTHON="/storage/praha1/home/$PBS_O_LOGNAME/dp_env/bin/python"
 
-echo "Python executable: $(which python)"
-echo "Python version: $(python --version)"
+if [ ! -x "$PYTHON" ]; then
+    echo "ERROR: Python executable not found at $PYTHON"
+    exit 1
+fi
+
+echo "Python executable: $PYTHON"
+echo "Python version:"
+$PYTHON --version
 
 # Quick dependency check
-echo "Verifying Python dependencies (torch, numpy)..."
-python << 'EOF'
+echo "Verifying Python dependencies (torch, numpy, matplotlib)..."
+$PYTHON << 'EOF'
 import numpy as np
 import torch
+import matplotlib
 
 print(f"NumPy: {np.__version__}")
 print(f"PyTorch: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"CUDA device: {torch.cuda.get_device_name(0)}")
+print(f"Matplotlib: {matplotlib.__version__}")
 EOF
 
 # ------------------------------------------------------------------------------
@@ -83,7 +87,7 @@ echo "=========================================="
 # ------------------------------------------------------------------------------
 
 echo "Starting problem-specific experiment..."
-python -u experiment_problem_specific.py \
+$PYTHON -u experiment_problem_specific.py \
     --population-size "$POPULATION_SIZE" \
     --generations "$GENERATIONS" \
     --episodes-per-eval "$EPISODES_PER_EVAL" \
