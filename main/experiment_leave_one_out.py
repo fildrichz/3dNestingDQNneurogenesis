@@ -29,6 +29,9 @@ from datetime import datetime
 import numpy as np
 import torch
 
+import matplotlib
+matplotlib.use("Agg")
+
 from nesting.dataset_loader import load_problem, BinPackingProblem
 from ga_evolution import evaluate_genome_fitness
 from example_ga_training import train_with_evolved_genome

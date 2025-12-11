@@ -25,6 +25,9 @@ from datetime import datetime
 import numpy as np
 import torch
 
+import matplotlib
+matplotlib.use("Agg")
+
 from nesting.dataset_loader import load_problem, BinPackingProblem
 from ga_evolution import evolve_architecture
 from example_ga_training import train_with_evolved_genome
@@ -42,7 +45,7 @@ def get_problem_files(dataset_dir: str) -> List[Path]:
         List of Path objects for problem files
     """
     dataset_path = Path(dataset_dir)
-    problem_files = sorted(dataset_path.glob("3dBPP_*.txt"))
+    problem_files = sorted(dataset_path.glob("3dBPP_test_7*.txt"))
 
     # Exclude solution files
     problem_files = [f for f in problem_files if not f.name.endswith("_sol.txt")]
@@ -527,25 +530,25 @@ def main():
     parser.add_argument(
         '--population-size',
         type=int,
-        default=100,
+        default=2,
         help='GA population size'
     )
     parser.add_argument(
         '--generations',
         type=int,
-        default=100,
+        default=2,
         help='Number of GA generations'
     )
     parser.add_argument(
         '--episodes-per-eval',
         type=int,
-        default=200,
+        default=20,
         help='Episodes for fitness evaluation'
     )
     parser.add_argument(
         '--training-episodes',
         type=int,
-        default=2000,
+        default=30,
         help='Episodes for final training'
     )
     parser.add_argument(
@@ -561,7 +564,7 @@ def main():
     parser.add_argument(
         '--elite-size',
         type=int,
-        default=10,
+        default=1,
         help='Number of elite genomes to preserve'
     )
     parser.add_argument(

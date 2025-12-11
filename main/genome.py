@@ -39,7 +39,7 @@ class NetworkGenome:
         # Core architecture - multiplicative scaling (unbounded search)
         'hidden_dim': {'type': 'multiplicative', 'base': 32, 'min': 8, 'max': 512},
         'enc_layers': {'type': 'multiplicative', 'base': 2, 'min': 1, 'max': 8},
-        'head_hidden': {'type': 'multiplicative', 'base': 32, 'min': 8, 'max': 256},
+        'head_hidden': {'type': 'multiplicative', 'base': 32, 'min': 16, 'max': 256},
 
         # Attention mechanism
         'attention_type': ['standard', 'set_transformer', 'none'],  # Discrete
