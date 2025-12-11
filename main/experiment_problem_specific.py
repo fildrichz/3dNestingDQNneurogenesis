@@ -45,7 +45,7 @@ def get_problem_files(dataset_dir: str) -> List[Path]:
         List of Path objects for problem files
     """
     dataset_path = Path(dataset_dir)
-    problem_files = sorted(dataset_path.glob("3dBPP_test_7*.txt"))
+    problem_files = sorted(dataset_path.glob("3dBPP_7*.txt"))
 
     # Exclude solution files
     problem_files = [f for f in problem_files if not f.name.endswith("_sol.txt")]

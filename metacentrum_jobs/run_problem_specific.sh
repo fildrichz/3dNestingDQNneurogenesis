@@ -7,11 +7,10 @@
 #PBS -M spidlfil@fit.cvut.cz
 
 # ==============================================================================
-# MetaCentrum Job: Problem-Specific for ALL datasets (1-12)
-# Runs problem_specific experiment on ALL 12 datasets sequentially.
+# MetaCentrum Job: Problem-Specific for test 7
 # ==============================================================================
 
-# Configuration (matching Python defaults)
+# Configuration
 POPULATION_SIZE=60
 GENERATIONS=100
 EPISODES_PER_EVAL=200
@@ -33,9 +32,9 @@ echo "Loading mambaforge module..."
 module purge
 module add mambaforge || { echo "ERROR: Failed to load mambaforge module"; exit 1; }
 
-# Initialize mamba shell integration and activate your /storage env
-eval "$(mamba shell hook --shell bash)"
-mamba activate /storage/praha1/home/$PBS_O_LOGNAME/dp_env || {
+# Directly source the environment's activate script (no conda/mamba shell hook)
+echo "Activating /storage/praha1/home/$PBS_O_LOGNAME/dp_env ..."
+source /storage/praha1/home/$PBS_O_LOGNAME/dp_env/bin/activate || {
     echo "ERROR: Failed to activate /storage/praha1/home/$PBS_O_LOGNAME/dp_env"
     exit 1
 }
@@ -46,7 +45,6 @@ echo "Python version: $(python --version)"
 # Quick dependency check
 echo "Verifying Python dependencies (torch, numpy)..."
 python << 'EOF'
-import sys
 import numpy as np
 import torch
 
@@ -56,10 +54,6 @@ print(f"CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"CUDA device: {torch.cuda.get_device_name(0)}")
 EOF
-
-# IMPORTANT:
-# Do NOT override CUDA_VISIBLE_DEVICES; PBS / scheduler already sets GPU visibility.
-# export CUDA_VISIBLE_DEVICES=0  # <- leave this commented out
 
 # ------------------------------------------------------------------------------
 # 2) Work in scratch and copy project
@@ -77,7 +71,7 @@ cd dp-filip-spidla-spidlfil/main || { echo "ERROR: Project main directory missin
 echo "Working directory: $(pwd)"
 
 echo "=========================================="
-echo "Experiment: problem_specific (ALL 12 datasets)"
+echo "Experiment: problem_specific (test 7)"
 echo "Generations: $GENERATIONS"
 echo "Population size: $POPULATION_SIZE"
 echo "Episodes per eval: $EPISODES_PER_EVAL"
@@ -88,8 +82,8 @@ echo "=========================================="
 # 3) Run experiment
 # ------------------------------------------------------------------------------
 
-echo "Starting problem-specific experiment on all datasets..."
-python experiment_problem_specific.py \
+echo "Starting problem-specific experiment..."
+python -u experiment_problem_specific.py \
     --population-size "$POPULATION_SIZE" \
     --generations "$GENERATIONS" \
     --episodes-per-eval "$EPISODES_PER_EVAL" \
