@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N dqn_problem_specific_7
-#PBS -l select=1:ncpus=4:mem=128gb:ngpus=1:scratch_local=40gb
+#PBS -l select=1:ncpus=8:mem=128gb:ngpus=1:scratch_local=40gb
 #PBS -l walltime=48:00:00
 #PBS -q gpu
 #PBS -m ae
@@ -11,11 +11,11 @@
 # ==============================================================================
 
 # Configuration
-POPULATION_SIZE=60
-GENERATIONS=100
-EPISODES_PER_EVAL=200
+POPULATION_SIZE=30
+GENERATIONS=50
+EPISODES_PER_EVAL=100
 TRAINING_EPISODES=2000
-ELITE_SIZE=6
+ELITE_SIZE=3
 MUTATION_RATE=0.2
 SEED=42
 

@@ -126,24 +126,35 @@ class NetworkGenome:
 
     def to_dqn_config(self, obs_dim: int, action_feat_dim: int,
                      max_actions: int, device: str = "cpu") -> DQNConfigEnhanced:
-        """
-        Decode genome into DQN configuration.
-
-        This converts the genotype (gene representation) to phenotype
-        (actual network configuration).
-
-        Args:
-            obs_dim: Observation dimension
-            action_feat_dim: Action feature dimension
-            max_actions: Maximum number of actions
-            device: Device to run on
-
-        Returns:
-            DQNConfigEnhanced instance
-        """
         # Determine if attention should be used
         attention_type = self.genes['attention_type']
         use_attention = attention_type != 'none'
+
+        hidden = int(self.genes['hidden_dim'])
+        requested_heads = int(self.genes['attention_heads'])
+
+        # --- FIX: enforce heads divides hidden (only relevant when attention is used) ---
+        if use_attention:
+            # Allowed heads from the gene space (works for your multiplicative powers-of-2 space)
+            space = self.GENE_SPACES['attention_heads']
+            allowed_heads = []
+            if isinstance(space, dict) and space.get('type') == 'multiplicative':
+                h = int(space['min'])
+                while h <= int(space['max']):
+                    allowed_heads.append(h)
+                    h *= 2
+            else:
+                allowed_heads = [int(x) for x in space]
+
+            # Choose the largest allowed head count that is <= requested_heads and divides hidden
+            valid = [h for h in allowed_heads if h <= requested_heads and h <= hidden and (hidden % h == 0)]
+            if not valid:
+                # Fallback: choose any allowed divisor of hidden
+                valid = [h for h in allowed_heads if h <= hidden and (hidden % h == 0)]
+            safe_heads = max(valid) if valid else 1
+        else:
+            safe_heads = 1
+        # --- END FIX ---
 
         return DQNConfigEnhanced(
             obs_dim=obs_dim,
@@ -151,27 +162,25 @@ class NetworkGenome:
             max_actions=max_actions,
             device=device,
 
-            # EVOLVED ARCHITECTURE PARAMETERS (Section 3.2)
-            hidden=self.genes['hidden_dim'],
+            hidden=hidden,
             enc_layers=self.genes['enc_layers'],
             head_hidden=self.genes['head_hidden'],
             use_attention=use_attention,
             attention_type=attention_type if use_attention else 'standard',
-            attention_heads=self.genes['attention_heads'],
+            attention_heads=safe_heads,
             num_inducing_points=self.genes['num_inducing_points'],
             heightmap_patch_size=self.genes['patch_size'],
             cnn_channels=self.genes['cnn_channels'],
             dropout=self.genes['dropout'],
             activation=self.genes['activation'],
 
-            # EVOLVED TRAINING HYPERPARAMETERS (NEW: Neuvo NAS+ 2025)
             lr=self.genes['lr'],
             batch_size=self.genes['batch_size'],
             gamma=self.genes['gamma'],
 
-            # FIXED PARAMETERS (not evolved)
             **self.FIXED_PARAMS
         )
+
     
 
     def mutate(self, mutation_rate: float = 0.2) -> 'NetworkGenome':
