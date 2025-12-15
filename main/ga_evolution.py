@@ -94,7 +94,6 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     import torch
     import gc
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
-    from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
 
     # Apply curriculum learning: use subset of items if requested
     if item_fraction < 1.0:
@@ -104,24 +103,17 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         items_subset = items
 
     # Build network from genome (with reduced buffer for GA phase)
+    # Epsilon decay is calculated automatically based on total_episodes
     cfg = genome.to_dqn_config(
         obs_dim=8,  # Fixed for this environment
         action_feat_dim=25,  # Fixed
         max_actions=env.max_actions,
-        device="cuda" if torch.cuda.is_available() else "cpu"
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        total_episodes=episodes  # Automatic episode-based epsilon decay
     )
 
     # Reduce buffer size during GA to save memory (override fixed params)
     cfg.buffer_size = 15_000  # Reduced from default 200k (was 50k)
-
-    # DYNAMIC EPSILON DECAY: Episode-based (robust to variable episode lengths!)
-    # Decay to eps_end over first 80% of EPISODES, plateau for last 20%
-    eps_decay_episodes, total_episodes = calculate_dynamic_epsilon_decay(
-        total_episodes=episodes,
-        plateau_at_ratio=0.8  # Reach minimum at 80% of episodes
-    )
-    cfg.eps_decay_episodes = eps_decay_episodes
-    cfg.total_episodes = total_episodes
 
     agent = DQNAgentEnhanced(cfg)
 

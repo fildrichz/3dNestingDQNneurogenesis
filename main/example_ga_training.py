@@ -84,9 +84,9 @@ def compare_architectures(problem_path: str,
         'gamma': 0.992,
     })
     
-    baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device)
+    baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device, total_episodes=episodes)
     baseline_agent = DQNAgentEnhanced(baseline_cfg)
-    
+
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
     baseline_metrics = evaluate_agent_on_problem(
         agent=baseline_agent,
@@ -107,7 +107,7 @@ def compare_architectures(problem_path: str,
     print("Testing EVOLVED architecture...")
     print(evolved_genome)
     
-    evolved_cfg = evolved_genome.to_dqn_config(8, 25, 128, device)
+    evolved_cfg = evolved_genome.to_dqn_config(8, 25, 128, device, total_episodes=episodes)
     evolved_agent = DQNAgentEnhanced(evolved_cfg)
     
     evolved_metrics = evaluate_agent_on_problem(
@@ -202,23 +202,14 @@ def train_with_evolved_genome(problem_path: str,
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Build config from evolved genome
+    # Build config from evolved genome (with automatic epsilon decay)
     cfg = genome.to_dqn_config(
         obs_dim=OBS_DIM,
         action_feat_dim=ACTION_FEAT_DIM,
         max_actions=128,
-        device=device
+        device=device,
+        total_episodes=episodes  # Automatic episode-based epsilon decay
     )
-
-    # DYNAMIC EPSILON DECAY: Episode-based (robust to variable episode lengths!)
-    from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
-
-    eps_decay_episodes, total_episodes = calculate_dynamic_epsilon_decay(
-        total_episodes=episodes,
-        plateau_at_ratio=0.8  # Reach minimum at 80% of episodes
-    )
-    cfg.eps_decay_episodes = eps_decay_episodes
-    cfg.total_episodes = total_episodes
 
     # Create agent
     agent = DQNAgentEnhanced(cfg)
