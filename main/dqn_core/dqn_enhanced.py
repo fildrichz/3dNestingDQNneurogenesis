@@ -12,6 +12,44 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import deque
 
+
+def calculate_dynamic_epsilon_decay(total_episodes: int,
+                                     plateau_at_ratio: float = 0.8,
+                                     verbose: bool = False) -> tuple[int, int]:
+    """
+    Calculate epsilon decay parameters based on episode count (NOT steps).
+
+    Strategy:
+    - Epsilon decays from eps_start to eps_end over the first 80% of episodes
+    - Remains at eps_end for the final 20% of episodes (plateau for pure exploitation)
+
+    Args:
+        total_episodes: Total number of training episodes
+        plateau_at_ratio: Fraction of episodes where epsilon should reach minimum (default: 0.8)
+        verbose: Print epsilon decay schedule (default: False)
+
+    Returns:
+        tuple: (eps_decay_episodes, total_episodes)
+               - eps_decay_episodes: Number of episodes to decay epsilon
+               - total_episodes: Total episodes (for config)
+
+    Example:
+        - 100 total episodes
+        - Decay over first 80 episodes (80%)
+        - Plateau for last 20 episodes (20%)
+
+    This is EPISODE-based, so it's robust to variable episode lengths!
+    """
+    eps_decay_episodes = int(total_episodes * plateau_at_ratio)
+    plateau_episodes = total_episodes - eps_decay_episodes
+
+    if verbose:
+        print(f"Epsilon decay: {total_episodes} episodes total, "
+              f"decay over first {eps_decay_episodes} episodes (80%), "
+              f"plateau at 1% for final {plateau_episodes} episodes (20%)")
+
+    return max(1, eps_decay_episodes), total_episodes
+
 def to_torch(x, device):
     if isinstance(x, np.ndarray):
         return torch.from_numpy(x).to(device)
@@ -377,7 +415,8 @@ class DQNConfigEnhanced:
     grad_clip: float = 1.0
     eps_start: float = 1.0
     eps_end: float = 0.05
-    eps_decay_steps: int = 20_000
+    eps_decay_episodes: int = None  # CHANGED: Episode-based decay instead of step-based
+    total_episodes: int = None  # Total number of episodes for training
     buffer_size: int = 200_000
     n_step: int = 1
     target_update_interval: int = 1_000
@@ -401,6 +440,15 @@ class DQNConfigEnhanced:
         """Set default values for mutable defaults"""
         if self.cnn_channels is None:
             self.cnn_channels = [16, 32]
+
+        # Set default eps_decay_episodes if None
+        if self.eps_decay_episodes is None and self.total_episodes is not None:
+            # Default: decay over 80% of episodes
+            self.eps_decay_episodes = int(self.total_episodes * 0.8)
+        elif self.eps_decay_episodes is None:
+            # Fallback if total_episodes not set (will be set by training function)
+            self.eps_decay_episodes = 100
+            self.total_episodes = 100
 
         # Validate attention_heads divisibility
         if self.use_attention and self.hidden % self.attention_heads != 0:
@@ -442,24 +490,31 @@ class DQNAgentEnhanced:
             dropout=cfg.dropout,
             activation=cfg.activation
         ).to(self.device)
-        
+
         self.q_target.load_state_dict(self.q.state_dict())
         self.q_target.eval()
-        
+
         self.opt = torch.optim.Adam(self.q.parameters(), lr=cfg.lr)
-        
+
         self.buffer = ReplayBuffer(
-            cfg.buffer_size, cfg.obs_dim, cfg.max_actions, 
+            cfg.buffer_size, cfg.obs_dim, cfg.max_actions,
             cfg.action_feat_dim, patch_size=cfg.heightmap_patch_size,
             n_step=cfg.n_step, gamma=cfg.gamma
         )
-        
+
         self.env_steps = 0
         self.training_steps = 0
+        self.episodes_completed = 0  # NEW: Track episode count for episode-based epsilon
         self._eps = cfg.eps_start
 
+    def on_episode_end(self):
+        """Call this at the end of each episode to update episode-based epsilon decay."""
+        self.episodes_completed += 1
+
     def epsilon(self) -> float:
-        frac = min(1.0, self.env_steps / max(1, self.cfg.eps_decay_steps))
+        """Calculate epsilon based on episode count (not step count)."""
+        # Episode-based decay (robust to variable episode lengths)
+        frac = min(1.0, self.episodes_completed / max(1, self.cfg.eps_decay_episodes))
         self._eps = self.cfg.eps_start + (self.cfg.eps_end - self.cfg.eps_start) * frac
         return self._eps
 

@@ -64,14 +64,16 @@ class NetworkGenome:
     
     # Fixed parameters (not evolved)
     # NOTE: lr, batch_size, gamma are now evolved as genes (Neuvo NAS+ 2025)
+    # NOTE: eps_decay_episodes and total_episodes are calculated automatically in to_dqn_config()
     FIXED_PARAMS = {
-        'n_step': 15,  # Match main training (was 3) - better credit assignment for sparse rewards
+        'n_step': 3,  # Reduced from 15: Better for short training episodes during GA
         'eps_start': 1.0,
-        'eps_end': 0.15,
-        'eps_decay_steps': 20_000,
-        'target_update_interval': 500,
+        'eps_end': 0.01,  # Reduced from 0.15 to 0.01 (1% minimum exploration)
+        # eps_decay_episodes and total_episodes are NOT in FIXED_PARAMS
+        # They are set dynamically by calculate_dynamic_epsilon_decay() in training functions
+        'target_update_interval': 200,  # Reduced from 500 for faster target updates
         'double_dqn': True,
-        'warmup_steps': 1000,
+        'warmup_steps': 300,  # Reduced from 1000: Start training earlier
         'buffer_size': 200_000,
         'grad_clip': 1.0,
     }
@@ -125,7 +127,20 @@ class NetworkGenome:
         return genes
 
     def to_dqn_config(self, obs_dim: int, action_feat_dim: int,
-                     max_actions: int, device: str = "cpu") -> DQNConfigEnhanced:
+                     max_actions: int, device: str = "cpu",
+                     total_episodes: int = None) -> DQNConfigEnhanced:
+        # Calculate epsilon decay if total_episodes provided
+        if total_episodes is not None:
+            from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
+            eps_decay_episodes, total_eps = calculate_dynamic_epsilon_decay(
+                total_episodes=total_episodes,
+                plateau_at_ratio=0.8,
+                verbose=False
+            )
+        else:
+            eps_decay_episodes = None
+            total_eps = None
+
         # Determine if attention should be used
         attention_type = self.genes['attention_type']
         use_attention = attention_type != 'none'
@@ -177,6 +192,9 @@ class NetworkGenome:
             lr=self.genes['lr'],
             batch_size=self.genes['batch_size'],
             gamma=self.genes['gamma'],
+
+            eps_decay_episodes=eps_decay_episodes,
+            total_episodes=total_eps,
 
             **self.FIXED_PARAMS
         )

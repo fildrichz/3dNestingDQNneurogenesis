@@ -103,15 +103,17 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         items_subset = items
 
     # Build network from genome (with reduced buffer for GA phase)
+    # Epsilon decay is calculated automatically based on total_episodes
     cfg = genome.to_dqn_config(
         obs_dim=8,  # Fixed for this environment
         action_feat_dim=25,  # Fixed
         max_actions=env.max_actions,
-        device="cuda" if torch.cuda.is_available() else "cpu"
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        total_episodes=episodes  # Automatic episode-based epsilon decay
     )
 
     # Reduce buffer size during GA to save memory (override fixed params)
-    cfg.buffer_size = 50_000  # Reduced from default 200k
+    cfg.buffer_size = 15_000  # Reduced from default 200k (was 50k)
 
     agent = DQNAgentEnhanced(cfg)
 
@@ -123,7 +125,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
             items=items_subset,
             episodes=episodes,
             patch_size=genome.genes['patch_size'],
-            train_freq=1,
+            train_freq=5,
             num_train_steps=1,
             verbose=verbose
         )
@@ -252,7 +254,7 @@ def evolve_architecture(problem,
         print(f"Problem: {W}×{D}×{H} container, {len(items)} items")
         print(f"Base population size: {population_size}")
         if adaptive_population:
-            print(f"Adaptive population: ENABLED (exploration={exploration_ratio}×, exploitation={exploitation_ratio}×)")
+            print(f"Adaptive population: ENABLED (exploration={exploration_ratio}×, middle=(1x), exploitation={exploitation_ratio}×)")
         else:
             print(f"Adaptive population: DISABLED (fixed size)")
         print(f"Generations: {generations}")
@@ -332,7 +334,7 @@ def evolve_architecture(problem,
             fitness_scores.append(fitness)
             
             if verbose:
-                print(f"  → Fitness: {fitness:.4f} | "
+                print(f"  -> Fitness: {fitness:.4f} | "
                       f"Util: {metrics['avg_utilization']:.3f} | "
                       f"Bins: {metrics['avg_bins_used']:.1f} | "
                       f"Complexity: {genome.get_network_complexity():.3f}M params")
@@ -381,7 +383,7 @@ def evolve_architecture(problem,
         gen_time = time.time() - gen_start_time
         
         if verbose:
-            print(f"\n{'─'*80}")
+            print(f"\n{'-'*80}")
             print(f"Generation {gen + 1} Summary:")
             print(f"  Population size: {len(population)}")
             print(f"  Best fitness: {gen_best.fitness:.4f}")
@@ -391,7 +393,7 @@ def evolve_architecture(problem,
             print(f"  Avg complexity: {avg_complexity:.3f}M params")
             print(f"  Diversity: {diversity_score:.2%}")
             print(f"  Time: {gen_time:.1f}s")
-            print(f"{'─'*80}")
+            print(f"{'-'*80}")
         
         # Save generation results
         if save_dir:
@@ -444,7 +446,7 @@ def evolve_architecture(problem,
                 if relative_diversity < 0.05:  # Low diversity threshold (5% CoV)
                     current_mutation_rate = min(mutation_rate * 1.5, 0.5)
                     if verbose:
-                        print(f"  ⚠ Low diversity detected (CoV={relative_diversity:.4f}), "
+                        print(f"  WARNING Low diversity detected (CoV={relative_diversity:.4f}), "
                               f"boosting mutation to {current_mutation_rate:.3f}")
 
             # Fill rest of population with offspring
@@ -468,7 +470,7 @@ def evolve_architecture(problem,
                 if adaptive_mutation:
                     print(f"  Mutation rate: {current_mutation_rate:.3f}")
                 if adaptive_population and target_size != len(population):
-                    print(f"  Population size: {len(population)} → {target_size}")
+                    print(f"  Population size: {len(population)} -> {target_size}")
 
             # Update mutation rate in history
             history['mutation_rate'][-1] = current_mutation_rate
