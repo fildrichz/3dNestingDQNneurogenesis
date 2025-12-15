@@ -340,7 +340,7 @@ def train_with_evolved_genome(problem_path: str,
             f"Util: {avg_util:.3f} | "
             f"Return: {avg_return:+.2f} | "
             f"Loss: {avg_loss:.4f} | "
-            f"ε: {agent._eps:.3f}")
+            f"eps: {agent._eps:.3f}")
 
 
     # Final results
@@ -669,7 +669,7 @@ def continue_training_on_new_dataset(
                   f"Util: {avg_util:.3f} | "
                   f"Return: {avg_return:+.2f} | "
                   f"Loss: {avg_loss:.4f} | "
-                  f"ε: {agent.epsilon:.3f}")
+                  f"eps: {agent.epsilon:.3f}")
 
     # Final results
     print(f"\n{'='*80}")
@@ -711,7 +711,7 @@ def continue_training_on_new_dataset(
 
 
 def main():
-    """Main workflow: Evolve architecture → Train final model → Compare"""
+    """Main workflow: Evolve architecture -> Train final model -> Compare"""
     
     # Configuration
     problem_file = "3dBPP_4.txt"
@@ -743,7 +743,7 @@ def main():
     # Step 1: Load problem
     print("\n[1/4] Loading problem...")
     problem = load_problem(problem_path)
-    print(f"✓ Loaded: {problem.bin_dimensions[0]}×{problem.bin_dimensions[1]}×{problem.bin_dimensions[2]} container")
+    print(f"OK Loaded: {problem.bin_dimensions[0]}×{problem.bin_dimensions[1]}×{problem.bin_dimensions[2]} container")
     
     # Step 2: Evolve architecture
     print("\n[2/4] Evolving architecture with GA...")
@@ -756,9 +756,9 @@ def main():
             save_dir=ga_config['save_dir'],
             output_file='output_data/ga_evolution/evolution_plot.png'
         )
-        print("✓ Evolution plot saved")
+        print("OK Evolution plot saved")
     except Exception as e:
-        print(f"⚠ Could not create plot: {e}")
+        print(f"WARNING Could not create plot: {e}")
     
     # Step 4: Compare with baseline
     print("\n[4/4] Comparing evolved vs baseline architecture...")

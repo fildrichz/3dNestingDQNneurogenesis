@@ -15,7 +15,7 @@ from collections import deque
 
 def calculate_dynamic_epsilon_decay(total_episodes: int,
                                      plateau_at_ratio: float = 0.8,
-                                     verbose: bool = True) -> tuple[int, int]:
+                                     verbose: bool = False) -> tuple[int, int]:
     """
     Calculate epsilon decay parameters based on episode count (NOT steps).
 
@@ -26,7 +26,7 @@ def calculate_dynamic_epsilon_decay(total_episodes: int,
     Args:
         total_episodes: Total number of training episodes
         plateau_at_ratio: Fraction of episodes where epsilon should reach minimum (default: 0.8)
-        verbose: Print epsilon decay schedule (default: True)
+        verbose: Print epsilon decay schedule (default: False)
 
     Returns:
         tuple: (eps_decay_episodes, total_episodes)
@@ -37,9 +37,6 @@ def calculate_dynamic_epsilon_decay(total_episodes: int,
         - 100 total episodes
         - Decay over first 80 episodes (80%)
         - Plateau for last 20 episodes (20%)
-        → ε = 1.0 at episode 0
-        → ε = 0.01 at episode 80
-        → ε = 0.01 at episodes 80-100
 
     This is EPISODE-based, so it's robust to variable episode lengths!
     """
@@ -47,13 +44,9 @@ def calculate_dynamic_epsilon_decay(total_episodes: int,
     plateau_episodes = total_episodes - eps_decay_episodes
 
     if verbose:
-        print(f"\n📊 Dynamic Epsilon Decay Schedule (EPISODE-BASED):")
-        print(f"  Total episodes: {total_episodes}")
-        print(f"  Decay phase: Episode 0 → {eps_decay_episodes} (reach ε_min at {plateau_at_ratio*100:.0f}%)")
-        print(f"  Plateau phase: Episode {eps_decay_episodes} → {total_episodes} (final {(1-plateau_at_ratio)*100:.0f}% at ε_min)")
-        print(f"  → ε decays from 100% to 1% over {eps_decay_episodes} episodes")
-        print(f"  → ε stays at 1% for final {plateau_episodes} episodes")
-        print(f"  ✅ ROBUST to variable episode lengths (not dependent on steps!)\n")
+        print(f"Epsilon decay: {total_episodes} episodes total, "
+              f"decay over first {eps_decay_episodes} episodes (80%), "
+              f"plateau at 1% for final {plateau_episodes} episodes (20%)")
 
     return max(1, eps_decay_episodes), total_episodes
 
@@ -453,10 +446,9 @@ class DQNConfigEnhanced:
             # Default: decay over 80% of episodes
             self.eps_decay_episodes = int(self.total_episodes * 0.8)
         elif self.eps_decay_episodes is None:
-            # Fallback if total_episodes not set
+            # Fallback if total_episodes not set (will be set by training function)
             self.eps_decay_episodes = 100
-            print("⚠️  WARNING: eps_decay_episodes and total_episodes not set, using default 100 episodes. "
-                  "Set total_episodes in config for proper episode-based decay.")
+            self.total_episodes = 100
 
         # Validate attention_heads divisibility
         if self.use_attention and self.hidden % self.attention_heads != 0:

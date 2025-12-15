@@ -665,7 +665,7 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
                 agent.on_episode_end()
 
                 if verbose:
-                    print(f"  Episode {ep+1}/{episodes}: Util={util:.3f}, Bins={bins}, Items={items_placed}/{len(items)}, ε={agent.epsilon():.3f}")
+                    print(f"  Episode {ep+1}/{episodes}: Util={util:.3f}, Bins={bins}, Items={items_placed}/{len(items)}, eps={agent.epsilon():.3f}")
 
                 break
     
@@ -882,7 +882,7 @@ def train_multibin_pack_dqn(
                           f"Items: {items_placed:2d}/{len(items)} ({items_placed/len(items)*100:.0f}%) | "
                           f"Util: {util:.3f} (MA:{ma_util:.3f}) | "
                           f"Best: {best_bins}bins/{best_items}items | "
-                          f"µ:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
+                          f"mu:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
                     
                     # Per-bin breakdown every 50 episodes
                     if (ep + 1) % 50 == 0 and "per_bin_utils" in info:

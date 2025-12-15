@@ -803,7 +803,7 @@ def train_multibin_pack_dqn(
                           f"Items: {items_placed:2d}/{len(items)} ({items_placed/len(items)*100:.0f}%) | "
                           f"Util: {util:.3f} (MA:{ma_util:.3f}) | "
                           f"Best: {best_bins}bins/{best_items}items | "
-                          f"µ:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
+                          f"mu:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
                     
                     # Per-bin breakdown every 50 episodes
                     if (ep + 1) % 50 == 0 and "per_bin_utils" in info:

@@ -342,7 +342,7 @@ def evolve_architecture(problem,
             fitness_scores.append(fitness)
             
             if verbose:
-                print(f"  → Fitness: {fitness:.4f} | "
+                print(f"  -> Fitness: {fitness:.4f} | "
                       f"Util: {metrics['avg_utilization']:.3f} | "
                       f"Bins: {metrics['avg_bins_used']:.1f} | "
                       f"Complexity: {genome.get_network_complexity():.3f}M params")
@@ -391,7 +391,7 @@ def evolve_architecture(problem,
         gen_time = time.time() - gen_start_time
         
         if verbose:
-            print(f"\n{'─'*80}")
+            print(f"\n{'-'*80}")
             print(f"Generation {gen + 1} Summary:")
             print(f"  Population size: {len(population)}")
             print(f"  Best fitness: {gen_best.fitness:.4f}")
@@ -401,7 +401,7 @@ def evolve_architecture(problem,
             print(f"  Avg complexity: {avg_complexity:.3f}M params")
             print(f"  Diversity: {diversity_score:.2%}")
             print(f"  Time: {gen_time:.1f}s")
-            print(f"{'─'*80}")
+            print(f"{'-'*80}")
         
         # Save generation results
         if save_dir:
@@ -454,7 +454,7 @@ def evolve_architecture(problem,
                 if relative_diversity < 0.05:  # Low diversity threshold (5% CoV)
                     current_mutation_rate = min(mutation_rate * 1.5, 0.5)
                     if verbose:
-                        print(f"  ⚠ Low diversity detected (CoV={relative_diversity:.4f}), "
+                        print(f"  WARNING Low diversity detected (CoV={relative_diversity:.4f}), "
                               f"boosting mutation to {current_mutation_rate:.3f}")
 
             # Fill rest of population with offspring
@@ -478,7 +478,7 @@ def evolve_architecture(problem,
                 if adaptive_mutation:
                     print(f"  Mutation rate: {current_mutation_rate:.3f}")
                 if adaptive_population and target_size != len(population):
-                    print(f"  Population size: {len(population)} → {target_size}")
+                    print(f"  Population size: {len(population)} -> {target_size}")
 
             # Update mutation rate in history
             history['mutation_rate'][-1] = current_mutation_rate
