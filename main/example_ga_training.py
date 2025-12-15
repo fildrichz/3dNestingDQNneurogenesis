@@ -210,15 +210,15 @@ def train_with_evolved_genome(problem_path: str,
         device=device
     )
 
-    # DYNAMIC EPSILON DECAY: Calculate based on actual training length
-    # Import the function from dqn_enhanced
+    # DYNAMIC EPSILON DECAY: Episode-based (robust to variable episode lengths!)
     from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
 
-    cfg.eps_decay_steps = calculate_dynamic_epsilon_decay(
-        episodes=episodes,
-        avg_steps_per_episode=100,  # Typical episode length for bin packing
-        plateau_at_ratio=0.8  # Reach minimum at 80% of training
+    eps_decay_episodes, total_episodes = calculate_dynamic_epsilon_decay(
+        total_episodes=episodes,
+        plateau_at_ratio=0.8  # Reach minimum at 80% of episodes
     )
+    cfg.eps_decay_episodes = eps_decay_episodes
+    cfg.total_episodes = total_episodes
 
     # Create agent
     agent = DQNAgentEnhanced(cfg)
@@ -309,6 +309,8 @@ def train_with_evolved_genome(problem_path: str,
             steps += 1
 
             if done:
+                # Update episode count for episode-based epsilon decay
+                agent.on_episode_end()
                 break
 
         # Episode statistics
@@ -636,6 +638,8 @@ def continue_training_on_new_dataset(
             steps += 1
 
             if done:
+                # Update episode count for episode-based epsilon decay
+                agent.on_episode_end()
                 break
 
         # Episode statistics

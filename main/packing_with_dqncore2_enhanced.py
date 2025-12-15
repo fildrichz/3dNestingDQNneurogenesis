@@ -655,15 +655,18 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
                 util = info.get('utilization', 0.0)
                 bins = info.get('bins_used', 0)
                 items_placed = info.get('items_placed', 0)
-                
+
                 utils.append(util)
                 bins_used_list.append(bins)
                 items_placed_list.append(items_placed)
                 returns.append(ep_ret)
-                
+
+                # Update episode count for episode-based epsilon decay
+                agent.on_episode_end()
+
                 if verbose:
-                    print(f"  Episode {ep+1}/{episodes}: Util={util:.3f}, Bins={bins}, Items={items_placed}/{len(items)}")
-                
+                    print(f"  Episode {ep+1}/{episodes}: Util={util:.3f}, Bins={bins}, Items={items_placed}/{len(items)}, ε={agent.epsilon():.3f}")
+
                 break
     
     training_time = time.time() - start_time
@@ -734,12 +737,11 @@ def train_multibin_pack_dqn(
     print(f"Observation dim: {OBS_DIM}")
     print(f"Action feature dim: {ACTION_FEAT_DIM}")
 
-    # DYNAMIC EPSILON DECAY: Calculate based on actual training length
+    # DYNAMIC EPSILON DECAY: Episode-based (robust to variable episode lengths!)
     from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
 
-    eps_decay_steps = calculate_dynamic_epsilon_decay(
-        episodes=episodes,
-        avg_steps_per_episode=100,
+    eps_decay_episodes, total_episodes = calculate_dynamic_epsilon_decay(
+        total_episodes=episodes,
         plateau_at_ratio=0.8
     )
 
@@ -755,7 +757,8 @@ def train_multibin_pack_dqn(
         buffer_size=400_000,
         eps_start=1.0,
         eps_end=0.01,  # Reduced from 0.05 to 0.01 (1% exploration)
-        eps_decay_steps=eps_decay_steps,  # DYNAMIC: based on training length
+        eps_decay_episodes=eps_decay_episodes,  # EPISODE-BASED: robust to variable lengths
+        total_episodes=total_episodes,
         target_update_interval=200,  # Reduced from 500
         n_step=3,  # REDUCED from 15: Better for learning during training
         double_dqn=True,
@@ -884,11 +887,13 @@ def train_multibin_pack_dqn(
                     # Per-bin breakdown every 50 episodes
                     if (ep + 1) % 50 == 0 and "per_bin_utils" in info:
                         print(f" Bins breakdown:")
-                        for i, (u, w, n) in enumerate(zip(info["per_bin_utils"], 
-                                                          info["per_bin_weights"], 
+                        for i, (u, w, n) in enumerate(zip(info["per_bin_utils"],
+                                                          info["per_bin_weights"],
                                                           info["per_bin_items"])):
                             print(f"     Bin {i+1}: {n:2d}items | Vol:{u:.3f} | Wgt:{w:4d}/{env.max_weight}")
-                
+
+                # Update episode count for episode-based epsilon decay
+                agent.on_episode_end()
                 break
     
     print(f"\n{'='*80}")

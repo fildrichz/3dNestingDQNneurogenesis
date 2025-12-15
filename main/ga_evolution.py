@@ -114,13 +114,14 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     # Reduce buffer size during GA to save memory (override fixed params)
     cfg.buffer_size = 15_000  # Reduced from default 200k (was 50k)
 
-    # DYNAMIC EPSILON DECAY: Calculate based on actual training length
-    # Decay to eps_end over first 80% of training, plateau at eps_end for last 20%
-    cfg.eps_decay_steps = calculate_dynamic_epsilon_decay(
-        episodes=episodes,
-        avg_steps_per_episode=100,  # Typical episode length for bin packing
-        plateau_at_ratio=0.8  # Reach minimum at 80% of training
+    # DYNAMIC EPSILON DECAY: Episode-based (robust to variable episode lengths!)
+    # Decay to eps_end over first 80% of EPISODES, plateau for last 20%
+    eps_decay_episodes, total_episodes = calculate_dynamic_epsilon_decay(
+        total_episodes=episodes,
+        plateau_at_ratio=0.8  # Reach minimum at 80% of episodes
     )
+    cfg.eps_decay_episodes = eps_decay_episodes
+    cfg.total_episodes = total_episodes
 
     agent = DQNAgentEnhanced(cfg)
 
