@@ -48,7 +48,10 @@ def evaluate_genome_multi_problem(
     verbose: bool = False
 ) -> Tuple[float, Dict]:
     """
-    Evaluate genome fitness across multiple problems.
+    Evaluate genome fitness across multiple problems using a SINGLE SHARED MODEL.
+
+    This trains one model on all problems (round-robin episodes) to create a
+    general-purpose architecture, then evaluates its performance across all problems.
 
     Args:
         genome: NetworkGenome to evaluate
@@ -60,16 +63,30 @@ def evaluate_genome_multi_problem(
     Returns:
         (average_fitness, metrics_dict)
     """
-    fitness_scores = []
-    all_metrics = []
+    import torch
+    import gc
+    from packing_with_dqncore2_enhanced import (
+        evaluate_agent_on_problem, build_action_features,
+        pad_feats_mask, pad_patches, ACTION_FEAT_DIM, DQNAgentEnhanced
+    )
+    from nesting.heightmap_utils import extract_patches_for_actions
 
+    # Prepare environments and items for all problems
+    problem_data = []
     for problem, problem_path in problems:
         items = load_problem_as_items(problem)
         W, D, H = problem.bin_dimensions
 
+        # Apply curriculum learning
+        if item_fraction < 1.0:
+            num_items = max(1, int(len(items) * item_fraction))
+            items_subset = items[:num_items]
+        else:
+            items_subset = items
+
         env = MultiBinPackingEnv(
             W, D, H,
-            items=items,
+            items=items_subset,
             max_actions=128,
             topk_eps=1000,
             seed=42,
@@ -77,26 +94,178 @@ def evaluate_genome_multi_problem(
             problem=problem
         )
 
-        fitness, metrics = evaluate_genome_fitness(
-            genome=genome,
-            env=env,
-            items=items,
-            episodes=episodes_per_problem,
-            verbose=False,
-            item_fraction=item_fraction
-        )
-
-        fitness_scores.append(fitness)
-        all_metrics.append({
-            'problem': problem_path.stem,
-            'fitness': fitness,
-            'utilization': metrics['avg_utilization'],
-            'bins': metrics.get('avg_bins_used', 0)
+        problem_data.append({
+            'env': env,
+            'items': items_subset,
+            'path': problem_path,
+            'problem': problem
         })
 
+    # Create ONE shared agent that will learn from all problems
+    total_episodes = episodes_per_problem * len(problems)
+    cfg = genome.to_dqn_config(
+        obs_dim=8,
+        action_feat_dim=25,
+        max_actions=128,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        total_episodes=total_episodes  # Epsilon decay over all episodes
+    )
+    cfg.buffer_size = 15_000  # Reduced for GA phase
+
+    agent = DQNAgentEnhanced(cfg)
+    patch_size = genome.genes['patch_size']
+
+    try:
+        # Phase 1: Train the shared model on all problems (round-robin)
         if verbose:
-            print(f"  {problem_path.stem}: fitness={fitness:.4f}, "
-                  f"util={metrics['avg_utilization']:.3f}")
+            print(f"  Training shared model on {len(problems)} problems...")
+
+        for episode in range(episodes_per_problem):
+            # Round-robin: train one episode on each problem
+            for prob_idx, pdata in enumerate(problem_data):
+                env = pdata['env']
+                items = pdata['items']
+
+                obs = env.reset(items=items.copy())
+                ep_ret = 0.0
+                steps = 0
+
+                while True:
+                    actions, mask_short = env.action_space()
+                    feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                    patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+                    act_idx = agent.select_action(
+                        obs,
+                        feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                        patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
+                        mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+                    )
+                    act = None if (act_idx is None or actions == [] or (act_idx >= len(actions))) else actions[act_idx]
+
+                    currF, currM = pad_feats_mask(
+                        feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
+                        mask_short if mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                        env.max_actions
+                    )
+                    currP = pad_patches(
+                        patches if patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                        env.max_actions,
+                        patch_size
+                    )
+
+                    nobs, rew, done, info = env.step(act)
+
+                    n_actions, n_mask_short = env.action_space()
+                    n_feats = build_action_features(env, n_actions) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                    n_patches = extract_patches_for_actions(env, n_actions, patch_size=patch_size) if len(n_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+                    nextF, nextM = pad_feats_mask(
+                        n_feats,
+                        n_mask_short if n_mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
+                        env.max_actions
+                    )
+                    nextP = pad_patches(
+                        n_patches if n_patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                        env.max_actions,
+                        patch_size
+                    )
+
+                    agent.store(obs, act_idx, rew, nobs, done,
+                               curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                               next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
+
+                    # Train every 5 steps
+                    if steps % 5 == 0:
+                        agent.train_step()
+
+                    obs = nobs
+                    ep_ret += rew
+                    steps += 1
+
+                    if done:
+                        break
+
+        # Phase 2: Evaluate the trained shared model on all problems
+        if verbose:
+            print(f"  Evaluating shared model on all problems...")
+
+        all_metrics = []
+        fitness_scores = []
+
+        # Set epsilon to 0 for greedy evaluation
+        original_eps = agent._eps
+        agent._eps = 0.0
+
+        for pdata in problem_data:
+            env = pdata['env']
+            items = pdata['items']
+            problem_path = pdata['path']
+
+            # Run evaluation episodes (greedy)
+            eval_episodes = 5
+            utils = []
+            bins_used_list = []
+            items_placed_list = []
+
+            for _ in range(eval_episodes):
+                obs = env.reset(items=items.copy())
+                steps = 0
+
+                while steps < 1000:
+                    actions, mask_short = env.action_space()
+                    if len(actions) == 0:
+                        break
+
+                    feats = build_action_features(env, actions)
+                    patches = extract_patches_for_actions(env, actions, patch_size=patch_size)
+
+                    act_idx = agent.select_action(obs, feats, patches, mask_short)
+                    if act_idx is None or act_idx >= len(actions):
+                        break
+
+                    obs, rew, done, info = env.step(actions[act_idx])
+                    steps += 1
+
+                    if done:
+                        utils.append(info.get('utilization', 0.0))
+                        bins_used_list.append(info.get('bins_used', 0))
+                        items_placed_list.append(info.get('items_placed', 0))
+                        break
+
+            avg_util = np.mean(utils) if utils else 0.0
+            avg_bins = np.mean(bins_used_list) if bins_used_list else 1.0
+
+            # Calculate fitness for this problem
+            complexity = genome.get_network_complexity()
+            max_bins = 5.0
+            bins_penalty = min(avg_bins / max_bins, 1.0)
+            complexity_penalty = 0.01 * complexity
+
+            fitness = avg_util - 0.1 * bins_penalty - complexity_penalty
+            fitness_scores.append(fitness)
+
+            all_metrics.append({
+                'problem': problem_path.stem,
+                'fitness': fitness,
+                'utilization': avg_util,
+                'bins': avg_bins
+            })
+
+            if verbose:
+                print(f"    {problem_path.stem}: fitness={fitness:.4f}, util={avg_util:.3f}, bins={avg_bins:.1f}")
+
+        # Restore epsilon
+        agent._eps = original_eps
+
+    finally:
+        # Clean up
+        del agent
+        for pdata in problem_data:
+            del pdata['env']
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
     # Aggregate fitness (mean across problems)
     avg_fitness = np.mean(fitness_scores)
