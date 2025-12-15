@@ -210,8 +210,15 @@ def train_with_evolved_genome(problem_path: str,
         device=device
     )
 
-    # Override epsilon decay for longer training
-    cfg.eps_decay_steps = episodes * 30
+    # DYNAMIC EPSILON DECAY: Calculate based on actual training length
+    # Import the function from dqn_enhanced
+    from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
+
+    cfg.eps_decay_steps = calculate_dynamic_epsilon_decay(
+        episodes=episodes,
+        avg_steps_per_episode=100,  # Typical episode length for bin packing
+        plateau_at_ratio=0.8  # Reach minimum at 80% of training
+    )
 
     # Create agent
     agent = DQNAgentEnhanced(cfg)

@@ -12,6 +12,48 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import deque
 
+
+def calculate_dynamic_epsilon_decay(episodes: int,
+                                     avg_steps_per_episode: int = 100,
+                                     plateau_at_ratio: float = 0.8,
+                                     verbose: bool = True) -> int:
+    """
+    Calculate epsilon decay steps based on training length.
+
+    Strategy:
+    - Epsilon decays from eps_start to eps_end over the first 80% of training
+    - Remains at eps_end for the final 20% (plateau for pure exploitation)
+
+    Args:
+        episodes: Total number of training episodes
+        avg_steps_per_episode: Expected average steps per episode (default: 100)
+        plateau_at_ratio: Fraction of training where epsilon should reach minimum (default: 0.8)
+        verbose: Print epsilon decay schedule (default: True)
+
+    Returns:
+        eps_decay_steps: Number of environment steps to decay epsilon
+
+    Example:
+        - 100 episodes × 100 steps = 10,000 total steps
+        - Decay over first 80% = 8,000 steps
+        - Plateau for last 20% = 2,000 steps at eps_end
+    """
+    total_steps = episodes * avg_steps_per_episode
+    decay_steps = int(total_steps * plateau_at_ratio)
+    plateau_steps = total_steps - decay_steps
+
+    if verbose:
+        print(f"\n📊 Dynamic Epsilon Decay Schedule:")
+        print(f"  Episodes: {episodes}")
+        print(f"  Expected steps/episode: {avg_steps_per_episode}")
+        print(f"  Total expected steps: {total_steps:,}")
+        print(f"  Decay phase: 0 → {decay_steps:,} steps (reach ε_min at {plateau_at_ratio*100:.0f}%)")
+        print(f"  Plateau phase: {decay_steps:,} → {total_steps:,} steps (final {(1-plateau_at_ratio)*100:.0f}% at ε_min)")
+        print(f"  → ε decays from 100% to 1% over {decay_steps:,} steps")
+        print(f"  → ε stays at 1% for final {plateau_steps:,} steps\n")
+
+    return max(1, decay_steps)  # Ensure at least 1 to avoid division by zero
+
 def to_torch(x, device):
     if isinstance(x, np.ndarray):
         return torch.from_numpy(x).to(device)
@@ -377,7 +419,7 @@ class DQNConfigEnhanced:
     grad_clip: float = 1.0
     eps_start: float = 1.0
     eps_end: float = 0.05
-    eps_decay_steps: int = 20_000
+    eps_decay_steps: int = None  # Can be None, will use default if not set
     buffer_size: int = 200_000
     n_step: int = 1
     target_update_interval: int = 1_000
@@ -401,6 +443,13 @@ class DQNConfigEnhanced:
         """Set default values for mutable defaults"""
         if self.cnn_channels is None:
             self.cnn_channels = [16, 32]
+
+        # Set default eps_decay_steps if None
+        if self.eps_decay_steps is None:
+            # Default: decay over ~10k steps (reasonable for most scenarios)
+            self.eps_decay_steps = 10_000
+            print("⚠️  WARNING: eps_decay_steps not set, using default 10,000. "
+                  "Consider using calculate_dynamic_epsilon_decay() for better results.")
 
         # Validate attention_heads divisibility
         if self.use_attention and self.hidden % self.attention_heads != 0:

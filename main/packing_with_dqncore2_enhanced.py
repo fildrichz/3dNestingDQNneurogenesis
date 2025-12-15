@@ -733,7 +733,16 @@ def train_multibin_pack_dqn(
     
     print(f"Observation dim: {OBS_DIM}")
     print(f"Action feature dim: {ACTION_FEAT_DIM}")
-    
+
+    # DYNAMIC EPSILON DECAY: Calculate based on actual training length
+    from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
+
+    eps_decay_steps = calculate_dynamic_epsilon_decay(
+        episodes=episodes,
+        avg_steps_per_episode=100,
+        plateau_at_ratio=0.8
+    )
+
     # DQN config - ENHANCED with heightmap CNN + Transformer attention
     cfg = DQNConfigEnhanced(
         obs_dim=OBS_DIM,
@@ -745,12 +754,12 @@ def train_multibin_pack_dqn(
         batch_size=128,
         buffer_size=400_000,
         eps_start=1.0,
-        eps_end=0.05,
-        eps_decay_steps=episodes * 30,
-        target_update_interval=500,
-        n_step=15,  # INCREASED from 3: Better credit assignment for final rewards
+        eps_end=0.01,  # Reduced from 0.05 to 0.01 (1% exploration)
+        eps_decay_steps=eps_decay_steps,  # DYNAMIC: based on training length
+        target_update_interval=200,  # Reduced from 500
+        n_step=3,  # REDUCED from 15: Better for learning during training
         double_dqn=True,
-        warmup_steps=1500,
+        warmup_steps=300,  # Reduced from 1500
         heightmap_patch_size=7,  # NEW: Size of heightmap patches
         use_attention=True,      # NEW: Enable Transformer attention
     )

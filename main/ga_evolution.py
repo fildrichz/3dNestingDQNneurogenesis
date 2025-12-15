@@ -94,6 +94,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     import torch
     import gc
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
+    from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
 
     # Apply curriculum learning: use subset of items if requested
     if item_fraction < 1.0:
@@ -111,7 +112,15 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     )
 
     # Reduce buffer size during GA to save memory (override fixed params)
-    cfg.buffer_size = 50_000  # Reduced from default 200k
+    cfg.buffer_size = 15_000  # Reduced from default 200k (was 50k)
+
+    # DYNAMIC EPSILON DECAY: Calculate based on actual training length
+    # Decay to eps_end over first 80% of training, plateau at eps_end for last 20%
+    cfg.eps_decay_steps = calculate_dynamic_epsilon_decay(
+        episodes=episodes,
+        avg_steps_per_episode=100,  # Typical episode length for bin packing
+        plateau_at_ratio=0.8  # Reach minimum at 80% of training
+    )
 
     agent = DQNAgentEnhanced(cfg)
 

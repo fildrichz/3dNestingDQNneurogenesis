@@ -64,14 +64,15 @@ class NetworkGenome:
     
     # Fixed parameters (not evolved)
     # NOTE: lr, batch_size, gamma are now evolved as genes (Neuvo NAS+ 2025)
+    # NOTE: eps_decay_steps is now calculated dynamically based on training length
     FIXED_PARAMS = {
-        'n_step': 15,  # Match main training (was 3) - better credit assignment for sparse rewards
+        'n_step': 3,  # Reduced from 15: Better for short training episodes during GA
         'eps_start': 1.0,
-        'eps_end': 0.15,
-        'eps_decay_steps': 20_000,
-        'target_update_interval': 500,
+        'eps_end': 0.01,  # Reduced from 0.15 to 0.01 (1% minimum exploration)
+        'eps_decay_steps': None,  # Will be set dynamically based on training episodes
+        'target_update_interval': 200,  # Reduced from 500 for faster target updates
         'double_dqn': True,
-        'warmup_steps': 1000,
+        'warmup_steps': 300,  # Reduced from 1000: Start training earlier
         'buffer_size': 200_000,
         'grad_clip': 1.0,
     }
