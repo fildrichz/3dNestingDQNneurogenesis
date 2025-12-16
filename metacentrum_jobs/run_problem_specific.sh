@@ -87,6 +87,9 @@ echo "=========================================="
 # ------------------------------------------------------------------------------
 
 echo "Starting problem-specific experiment..."
+# Use 6 workers (leaving 2 CPUs for system/PyTorch overhead)
+N_WORKERS=6
+
 $PYTHON -u experiment_problem_specific.py \
     --population-size "$POPULATION_SIZE" \
     --generations "$GENERATIONS" \
@@ -94,7 +97,8 @@ $PYTHON -u experiment_problem_specific.py \
     --training-episodes "$TRAINING_EPISODES" \
     --elite-size "$ELITE_SIZE" \
     --mutation-rate "$MUTATION_RATE" \
-    --seed "$SEED"
+    --seed "$SEED" \
+    --n-workers "$N_WORKERS"
 
 EXIT_CODE=$?
 

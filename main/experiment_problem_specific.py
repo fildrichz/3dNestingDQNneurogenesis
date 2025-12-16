@@ -105,7 +105,8 @@ def run_problem_specific_experiment(
     mutation_rate: float = 0.2,
     seed: Optional[int] = 42,
     verbose: bool = True,
-    resume: bool = False
+    resume: bool = False,
+    n_workers: int = 1
 ):
     """
     Run problem-specific architecture evolution experiment.
@@ -241,7 +242,8 @@ def run_problem_specific_experiment(
                 save_dir=str(evolution_dir),
                 verbose=verbose,
                 curriculum_schedule=curriculum_schedule,
-                resume_from=resume_from
+                resume_from=resume_from,
+                n_workers=n_workers
             )
 
             # Save evolved genome
@@ -589,6 +591,12 @@ def main():
         action='store_true',
         help='Minimal output'
     )
+    parser.add_argument(
+        '--n-workers',
+        type=int,
+        default=1,
+        help='Number of parallel workers for genome evaluation (default: 1)'
+    )
 
     args = parser.parse_args()
 
@@ -605,7 +613,8 @@ def main():
         mutation_rate=args.mutation_rate,
         seed=args.seed,
         verbose=not args.quiet,
-        resume=not args.no_resume
+        resume=not args.no_resume,
+        n_workers=args.n_workers
     )
 
 

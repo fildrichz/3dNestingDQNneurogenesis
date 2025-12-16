@@ -24,6 +24,8 @@ from typing import List, Dict, Tuple, Optional
 import json
 import time
 from pathlib import Path
+from multiprocessing import Pool
+import os
 
 from genome import NetworkGenome, create_initial_population, tournament_selection
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
@@ -176,6 +178,17 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     return fitness, metrics
 
 
+def _evaluate_genome_wrapper(args):
+    """
+    Wrapper function for multiprocessing Pool.map().
+
+    Takes a tuple of arguments and unpacks them to call evaluate_genome_fitness.
+    This is necessary because Pool.map() can only pass a single argument.
+    """
+    genome, env, items, episodes, verbose, item_fraction = args
+    return evaluate_genome_fitness(genome, env, items, episodes, verbose, item_fraction)
+
+
 def evolve_architecture(problem,
                        population_size: int = 20,
                        generations: int = 10,
@@ -192,7 +205,8 @@ def evolve_architecture(problem,
                        save_dir: Optional[str] = None,
                        verbose: bool = True,
                        curriculum_schedule: Optional[Dict] = None,
-                       resume_from: Optional[str] = None) -> Tuple[NetworkGenome, List[NetworkGenome]]:
+                       resume_from: Optional[str] = None,
+                       n_workers: int = 1) -> Tuple[NetworkGenome, List[NetworkGenome]]:
     """
     Main GA loop for architecture evolution.
 
@@ -215,6 +229,7 @@ def evolve_architecture(problem,
         seed: Random seed for reproducibility (None = random)
         save_dir: Directory to save results (None = don't save)
         verbose: Print progress
+        n_workers: Number of parallel workers for genome evaluation (default 1 = sequential)
 
     Returns:
         (best_genome, final_population)
@@ -306,38 +321,63 @@ def evolve_architecture(problem,
             print(f"GENERATION {gen + 1}/{generations}")
             print(f"{'='*80}")
         
-        # Evaluate all genomes
+        # Evaluate all genomes (parallel or sequential based on n_workers)
         fitness_scores = []
-        
-        for i, genome in enumerate(population):
+
+        if n_workers > 1:
+            # Parallel evaluation using multiprocessing
             if verbose:
-                print(f"\n[{i+1}/{population_size}] Evaluating genome {genome.genome_id}...")
-                print(f"  Architecture: hidden={genome.genes['hidden_dim']}, "
-                      f"layers={genome.genes['enc_layers']}, "
-                      f"head={genome.genes['head_hidden']}")
-                print(f"  Attention: type={genome.genes['attention_type']}, "
-                      f"heads={genome.genes['attention_heads']}, "
-                      f"inds={genome.genes['num_inducing_points']}")
-                print(f"  Features: patch={genome.genes['patch_size']}, "
-                      f"cnn={genome.genes['cnn_channels']}, "
-                      f"act={genome.genes['activation']}, "
-                      f"drop={genome.genes['dropout']}")
-            
-            fitness, metrics = evaluate_genome_fitness(
-                genome=genome,
-                env=env,
-                items=items.copy(),
-                episodes=episodes_per_eval,
-                verbose=False
-            )
-            
-            fitness_scores.append(fitness)
-            
-            if verbose:
-                print(f"  -> Fitness: {fitness:.4f} | "
-                      f"Util: {metrics['avg_utilization']:.3f} | "
-                      f"Bins: {metrics['avg_bins_used']:.1f} | "
-                      f"Complexity: {genome.get_network_complexity():.3f}M params")
+                print(f"\nEvaluating {len(population)} genomes in parallel using {n_workers} workers...")
+
+            # Prepare arguments for parallel evaluation
+            eval_args = [
+                (genome, env, items.copy(), episodes_per_eval, False, 1.0)
+                for genome in population
+            ]
+
+            # Evaluate in parallel
+            with Pool(processes=n_workers) as pool:
+                results = pool.map(_evaluate_genome_wrapper, eval_args)
+
+            # Unpack results and update genomes
+            for i, (genome, (fitness, metrics)) in enumerate(zip(population, results)):
+                fitness_scores.append(fitness)
+                if verbose:
+                    print(f"[{i+1}/{len(population)}] Genome {genome.genome_id}: "
+                          f"Fitness={fitness:.4f} | Util={metrics['avg_utilization']:.3f} | "
+                          f"Bins={metrics['avg_bins_used']:.1f} | "
+                          f"Complexity={genome.get_network_complexity():.3f}M params")
+        else:
+            # Sequential evaluation (original behavior)
+            for i, genome in enumerate(population):
+                if verbose:
+                    print(f"\n[{i+1}/{population_size}] Evaluating genome {genome.genome_id}...")
+                    print(f"  Architecture: hidden={genome.genes['hidden_dim']}, "
+                          f"layers={genome.genes['enc_layers']}, "
+                          f"head={genome.genes['head_hidden']}")
+                    print(f"  Attention: type={genome.genes['attention_type']}, "
+                          f"heads={genome.genes['attention_heads']}, "
+                          f"inds={genome.genes['num_inducing_points']}")
+                    print(f"  Features: patch={genome.genes['patch_size']}, "
+                          f"cnn={genome.genes['cnn_channels']}, "
+                          f"act={genome.genes['activation']}, "
+                          f"drop={genome.genes['dropout']}")
+
+                fitness, metrics = evaluate_genome_fitness(
+                    genome=genome,
+                    env=env,
+                    items=items.copy(),
+                    episodes=episodes_per_eval,
+                    verbose=False
+                )
+
+                fitness_scores.append(fitness)
+
+                if verbose:
+                    print(f"  -> Fitness: {fitness:.4f} | "
+                          f"Util: {metrics['avg_utilization']:.3f} | "
+                          f"Bins: {metrics['avg_bins_used']:.1f} | "
+                          f"Complexity: {genome.get_network_complexity():.3f}M params")
         
         # Sort population by fitness
         population.sort(key=lambda g: g.fitness, reverse=True)
