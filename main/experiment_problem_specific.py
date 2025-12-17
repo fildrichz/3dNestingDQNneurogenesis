@@ -29,7 +29,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from nesting.dataset_loader import load_problem, BinPackingProblem
-from ga_evolution import evolve_architecture
+from ga_evolution import evolve_architecture, generate_all_visualizations
 from example_ga_training import train_with_evolved_genome
 from genome import NetworkGenome
 
@@ -252,6 +252,18 @@ def run_problem_specific_experiment(
             if verbose:
                 print(f"\nBest genome saved to: {genome_file}")
                 print(f"Evolution fitness: {best_genome.fitness:.4f}")
+
+            # Generate evolution visualizations and reports
+            if verbose:
+                print(f"\nGenerating evolution visualizations...")
+
+            try:
+                generate_all_visualizations(str(evolution_dir), create_plots_subdir=True)
+            except Exception as viz_error:
+                if verbose:
+                    print(f"  Warning: Visualization generation failed: {viz_error}")
+                    import traceback
+                    traceback.print_exc()
 
             # Phase 2: Train final model
             if verbose:
