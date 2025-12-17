@@ -43,7 +43,7 @@ from packing_with_dqncore2_enhanced import load_problem_as_items, MultiBinPackin
 def evaluate_genome_multi_problem(
     genome: NetworkGenome,
     problems: List[Tuple[BinPackingProblem, Path]],
-    episodes_per_problem: int = 10,
+    episodes: int = 10,
     item_fraction: float = 1.0,
     verbose: bool = False
 ) -> Tuple[float, Dict]:
@@ -56,7 +56,7 @@ def evaluate_genome_multi_problem(
     Args:
         genome: NetworkGenome to evaluate
         problems: List of (problem, problem_file_path) tuples
-        episodes_per_problem: Episodes to train on each problem
+        episodes: Number of training episodes (each episode = one pass through all problems)
         item_fraction: Fraction of items to use for curriculum
         verbose: Print progress
 
@@ -102,7 +102,8 @@ def evaluate_genome_multi_problem(
         })
 
     # Create ONE shared agent that will learn from all problems
-    total_episodes = episodes_per_problem * len(problems)
+    # Total training steps = episodes * num_problems
+    total_episodes = episodes * len(problems)
     cfg = genome.to_dqn_config(
         obs_dim=8,
         action_feat_dim=25,
@@ -118,10 +119,10 @@ def evaluate_genome_multi_problem(
     try:
         # Phase 1: Train the shared model on all problems (round-robin)
         if verbose:
-            print(f"  Training shared model on {len(problems)} problems...")
+            print(f"  Training shared model: {episodes} episodes × {len(problems)} problems = {total_episodes} total steps...")
 
-        for episode in range(episodes_per_problem):
-            # Round-robin: train one episode on each problem
+        for episode in range(episodes):
+            # Each episode: train one round on EACH problem
             for prob_idx, pdata in enumerate(problem_data):
                 env = pdata['env']
                 items = pdata['items']
@@ -287,7 +288,7 @@ def evolve_multi_problem_architecture(
     problems: List[Tuple[BinPackingProblem, Path]],
     population_size: int = 100,
     generations: int = 100,
-    episodes_per_problem: int = 200,
+    episodes: int = 200,
     adaptive_population: bool = True,
     elite_size: int = 10,
     mutation_rate: float = 0.2,
@@ -304,7 +305,7 @@ def evolve_multi_problem_architecture(
         problems: List of (problem, problem_file_path) tuples
         population_size: Base population size
         generations: Number of generations to evolve
-        episodes_per_problem: Episodes per problem for fitness evaluation
+        episodes: Training episodes (each episode = one pass through all problems)
         adaptive_population: Enable adaptive population sizing (1.5x early, 0.75x late)
         elite_size: Number of top genomes to preserve
         mutation_rate: Initial probability of gene mutation
@@ -362,7 +363,7 @@ def evolve_multi_problem_architecture(
         else:
             print(f"Adaptive population: disabled (fixed size)")
         print(f"Generations: {generations}")
-        print(f"Episodes per problem: {episodes_per_problem}")
+        print(f"Training episodes: {episodes} (each = 1 pass through all {len(problems)} problems)")
         if curriculum_schedule:
             print(f"Curriculum learning: enabled")
         print(f"{'='*80}\n")
@@ -399,12 +400,12 @@ def evolve_multi_problem_architecture(
 
         # Determine curriculum parameters
         current_item_fraction = 1.0
-        current_episodes = episodes_per_problem
+        current_episodes = episodes
 
         if curriculum_schedule:
             gen_thresholds = curriculum_schedule.get('generations', [])
             item_fractions = curriculum_schedule.get('item_fractions', [1.0])
-            episode_counts = curriculum_schedule.get('episodes', [episodes_per_problem])
+            episode_counts = curriculum_schedule.get('episodes', [episodes])
 
             for i, threshold in enumerate(gen_thresholds):
                 if gen >= threshold:
@@ -413,7 +414,7 @@ def evolve_multi_problem_architecture(
 
             if verbose:
                 print(f"Curriculum: {current_item_fraction*100:.0f}% items, "
-                      f"{current_episodes} episodes per problem")
+                      f"{current_episodes} episodes")
 
         # Evaluate all genomes
         fitness_scores = []
@@ -425,7 +426,7 @@ def evolve_multi_problem_architecture(
             fitness, metrics = evaluate_genome_multi_problem(
                 genome=genome,
                 problems=problems,
-                episodes_per_problem=current_episodes,
+                episodes=current_episodes,
                 item_fraction=current_item_fraction,
                 verbose=verbose
             )
@@ -547,11 +548,11 @@ def evolve_multi_problem_architecture(
 
 def run_multi_problem_experiment(
     training_datasets: List[str],
-    test_dataset: str,
+    test_datasets: List[str],
     results_dir: str,
     population_size: int = 20,
     generations: int = 15,
-    episodes_per_problem: int = 10,
+    episodes: int = 10,
     training_episodes: int = 300,
     use_curriculum: bool = True,
     adaptive_population: bool = True,
@@ -562,16 +563,16 @@ def run_multi_problem_experiment(
     resume: bool = True
 ):
     """
-    Run multi-problem training experiment with target evaluation.
+    Run multi-problem training experiment with multi-dataset evaluation.
 
     Args:
         training_datasets: List of paths to training problem files
-        test_dataset: Path to test problem file
+        test_datasets: List of paths to test problem files
         results_dir: Directory to save results
         population_size: GA base population size
         generations: Number of GA generations
-        episodes_per_problem: Episodes per problem for fitness evaluation
-        training_episodes: Episodes for final training on test problem
+        episodes: Training episodes (each = one pass through all training problems)
+        training_episodes: Final training episodes on test problems
         use_curriculum: Enable curriculum learning
         adaptive_population: Enable adaptive population sizing (1.5x early, 0.75x late)
         elite_size: Number of elite genomes
@@ -592,20 +593,23 @@ def run_multi_problem_experiment(
         problem = load_problem(str(dataset_file))
         training_problems.append((problem, dataset_file))
 
-    # Load test problem
-    test_file = Path(test_dataset)
-    if not test_file.exists():
-        raise ValueError(f"Test dataset not found: {test_dataset}")
-    test_problem = load_problem(str(test_file))
+    # Load test problems
+    test_problems = []
+    for dataset_path in test_datasets:
+        test_file = Path(dataset_path)
+        if not test_file.exists():
+            raise ValueError(f"Test dataset not found: {dataset_path}")
+        problem = load_problem(str(test_file))
+        test_problems.append((problem, test_file))
 
     if verbose:
         print("="*80)
-        print("EXPERIMENT: MULTI-PROBLEM TRAINING WITH TARGET EVALUATION")
+        print("EXPERIMENT: MULTI-PROBLEM TRAINING WITH MULTI-DATASET EVALUATION")
         print("="*80)
         print(f"Results directory: {results_dir}")
-        print(f"\nTest problem: {test_file.stem}")
-        print(f"  Dimensions: {test_problem.bin_dimensions}")
-        print(f"  Items: {len(test_problem.items)} types")
+        print(f"\nTest problems: {len(test_problems)}")
+        for prob, path in test_problems:
+            print(f"  - {path.stem}: {prob.bin_dimensions}, {len(prob.items)} item types")
         print(f"\nTraining problems: {len(training_problems)}")
         for prob, path in training_problems:
             print(f"  - {path.stem}: {prob.bin_dimensions}, {len(prob.items)} item types")
@@ -616,7 +620,7 @@ def run_multi_problem_experiment(
         else:
             print(f"  Adaptive population: disabled (fixed size)")
         print(f"  Generations: {generations}")
-        print(f"  Episodes per problem: {episodes_per_problem}")
+        print(f"  Training episodes: {episodes} (each = 1 pass through all {len(training_problems)} training problems)")
         print(f"  Curriculum learning: {use_curriculum}")
         print(f"\nTraining Configuration:")
         print(f"  Final training episodes: {training_episodes}")
@@ -630,9 +634,9 @@ def run_multi_problem_experiment(
             'generations': [0, generations // 3, 2 * generations // 3],
             'item_fractions': [0.3, 0.6, 1.0],
             'episodes': [
-                max(5, episodes_per_problem // 2),
-                max(7, int(episodes_per_problem * 0.75)),
-                episodes_per_problem
+                max(5, episodes // 2),
+                max(7, int(episodes * 0.75)),
+                episodes
             ]
         }
         if verbose:
@@ -655,7 +659,7 @@ def run_multi_problem_experiment(
         problems=training_problems,
         population_size=population_size,
         generations=generations,
-        episodes_per_problem=episodes_per_problem,
+        episodes=episodes,
         adaptive_population=adaptive_population,
         elite_size=elite_size,
         mutation_rate=mutation_rate,
@@ -675,197 +679,246 @@ def run_multi_problem_experiment(
         print(f"\nBest genome saved to: {genome_file}")
         print(f"Evolution fitness: {best_genome.fitness:.4f}")
 
-    # Phase 2: Train and evaluate on test problem
-    if verbose:
-        print(f"\n[Phase 2/3] Training on test problem: {test_file.stem}...")
+    # Phase 2 & 3: Train and evaluate on each test problem
+    test_results = {}
 
-    model_save_path = results_path / "trained_model.pth"
+    for test_idx, (test_problem, test_file) in enumerate(test_problems):
+        test_name = test_file.stem
 
-    agent = train_with_evolved_genome(
-        problem_path=str(test_file),
-        genome=best_genome,
-        episodes=training_episodes,
-        save_path=None  # Don't save full checkpoint
-    )
+        if verbose:
+            print(f"\n{'='*80}")
+            print(f"[Phase 2/{len(test_problems)}] Processing test problem: {test_name}")
+            print(f"{'='*80}")
 
-    # Save minimal checkpoint (weights + architecture + performance only)
-    # Get performance metrics from agent's training history
-    from packing_with_dqncore2_enhanced import MultiBinPackingEnv, load_problem_as_items
-    temp_items = load_problem_as_items(test_problem)
-    temp_env = MultiBinPackingEnv(
-        test_problem.bin_dimensions[0], test_problem.bin_dimensions[1], test_problem.bin_dimensions[2],
-        items=temp_items, max_actions=128, topk_eps=1000, seed=42, gamma=0.992, problem=test_problem
-    )
+        # Create test-specific result directory
+        test_dir = results_path / test_name
+        test_dir.mkdir(parents=True, exist_ok=True)
 
-    # Run quick evaluation to get best metrics
-    best_bins_count = float('inf')
-    best_items_count = 0
-    best_util = 0.0
+        # Train on this test problem
+        if verbose:
+            print(f"\n  Training on {test_name} for {training_episodes} episodes...")
 
-    for _ in range(5):
-        obs = temp_env.reset(items=temp_items.copy())
-        done = False
-        steps = 0
-        agent._eps = 0.0
+        agent = train_with_evolved_genome(
+            problem_path=str(test_file),
+            genome=best_genome,
+            episodes=training_episodes,
+            save_path=None  # Don't save full checkpoint
+        )
 
-        while not done and steps < 1000:
-            from packing_with_dqncore2_enhanced import build_action_features
-            from nesting.heightmap_utils import extract_patches_for_actions
-            actions, mask = temp_env.action_space()
-            if len(actions) == 0:
-                break
-            feats = build_action_features(temp_env, actions)
-            patches = extract_patches_for_actions(temp_env, actions, patch_size=best_genome.genes['patch_size'])
-            act_idx = agent.select_action(obs, feats, patches, mask)
-            if act_idx is None or act_idx >= len(actions):
-                break
-            obs, rew, done, info = temp_env.step(actions[act_idx])
-            steps += 1
-
-        bins_used = len([b for b in temp_env.bins if len(b.placed) > 0])
-        items_packed = sum(len(b.placed) for b in temp_env.bins)
-        total_vol = sum(sum(it.w * it.d * it.h for it in b.placed) for b in temp_env.bins)
-        utilization = total_vol / (temp_env.bin_volume * bins_used) if bins_used > 0 else 0
-
-        if items_packed > best_items_count or (items_packed == best_items_count and bins_used < best_bins_count):
-            best_bins_count = bins_used
-            best_items_count = items_packed
-            best_util = utilization
-
-    del temp_env
-
-    # Save minimal checkpoint
-    torch.save({
-        'model_state_dict': agent.q.state_dict(),
-        'genome': best_genome.to_dict(),
-        'best_bins': best_bins_count,
-        'best_items': best_items_count,
-        'best_util': best_util
-    }, str(model_save_path), pickle_protocol=4)
-
-    # Phase 3: Visualize best packing solution
-    if verbose:
-        print(f"\n[Phase 3/3] Generating visualizations for {test_file.stem}...")
-
-    # Create visualization directory
-    viz_dir = results_path / "visualizations"
-    viz_dir.mkdir(exist_ok=True)
-
-    # Reload environment to get best solution
-    from packing_with_dqncore2_enhanced import MultiBinPackingEnv, load_problem_as_items
-    items = load_problem_as_items(test_problem)
-    W, D, H = test_problem.bin_dimensions
-
-    env = MultiBinPackingEnv(
-        W, D, H,
-        items=items,
-        max_actions=128,
-        topk_eps=1000,
-        seed=42,
-        gamma=0.992,
-        problem=test_problem
-    )
-
-    # Run one episode with trained agent to get solution
-    agent._eps = 0.0  # Greedy evaluation (set internal variable directly)
-    obs = env.reset(items=items.copy())
-    done = False
-    step_count = 0
-
-    while not done and step_count < 1000:
-        from packing_with_dqncore2_enhanced import build_action_features
+        # Evaluate and get best metrics
+        from packing_with_dqncore2_enhanced import MultiBinPackingEnv, load_problem_as_items, build_action_features
         from nesting.heightmap_utils import extract_patches_for_actions
 
-        actions, mask_short = env.action_space()
-        if len(actions) == 0:
-            break
+        temp_items = load_problem_as_items(test_problem)
+        temp_env = MultiBinPackingEnv(
+            test_problem.bin_dimensions[0], test_problem.bin_dimensions[1], test_problem.bin_dimensions[2],
+            items=temp_items, max_actions=128, topk_eps=1000, seed=42, gamma=0.992, problem=test_problem
+        )
 
-        feats = build_action_features(env, actions)
-        patches = extract_patches_for_actions(env, actions, patch_size=best_genome.genes['patch_size'])
+        # Run evaluation episodes to get best metrics
+        best_bins_count = float('inf')
+        best_items_count = 0
+        best_util = 0.0
 
-        act_idx = agent.select_action(obs, feats, patches, mask_short)
-        if act_idx is None or act_idx >= len(actions):
-            break
+        for _ in range(5):
+            obs = temp_env.reset(items=temp_items.copy())
+            done = False
+            steps = 0
+            agent._eps = 0.0
 
-        obs, rew, done, info = env.step(actions[act_idx])
-        step_count += 1
+            while not done and steps < 1000:
+                actions, mask = temp_env.action_space()
+                if len(actions) == 0:
+                    break
+                feats = build_action_features(temp_env, actions)
+                patches = extract_patches_for_actions(temp_env, actions, patch_size=best_genome.genes['patch_size'])
+                act_idx = agent.select_action(obs, feats, patches, mask)
+                if act_idx is None or act_idx >= len(actions):
+                    break
+                obs, rew, done, info = temp_env.step(actions[act_idx])
+                steps += 1
 
-    # Visualize all bins with items
-    for i, bin_obj in enumerate(env.bins):
-        if len(bin_obj.placed) > 0:
-            bin_util = sum(b.w * b.d * b.h for b in bin_obj.placed) / env.bin_volume
+            bins_used = len([b for b in temp_env.bins if len(b.placed) > 0])
+            items_packed = sum(len(b.placed) for b in temp_env.bins)
+            total_vol = sum(sum(it.w * it.d * it.h for it in b.placed) for b in temp_env.bins)
+            utilization = total_vol / (temp_env.bin_volume * bins_used) if bins_used > 0 else 0
 
-            # Save filled version (clean)
-            bin_obj.plot3d_filled(
-                title=f"{test_file.stem} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f})",
-                save_path=str(viz_dir / f"bin_{i+1}_filled.png"),
-                show=False
-            )
+            if items_packed > best_items_count or (items_packed == best_items_count and bins_used < best_bins_count):
+                best_bins_count = bins_used
+                best_items_count = items_packed
+                best_util = utilization
 
-            # Save version with EMS (for analysis)
-            bin_obj.plot3d(
-                title=f"{test_file.stem} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f}) [with EMS]",
-                save_path=str(viz_dir / f"bin_{i+1}_with_ems.png"),
-                show=False
-            )
+        del temp_env
 
-    if verbose:
-        print(f"  Visualizations saved to: {viz_dir}")
+        # Save model checkpoint for this test problem
+        model_save_path = test_dir / "trained_model.pth"
+        torch.save({
+            'model_state_dict': agent.q.state_dict(),
+            'genome': best_genome.to_dict(),
+            'best_bins': best_bins_count,
+            'best_items': best_items_count,
+            'best_util': best_util
+        }, str(model_save_path), pickle_protocol=4)
 
-    # Clean up
-    del agent
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+        # Generate visualizations
+        if verbose:
+            print(f"  Generating visualizations for {test_name}...")
 
-    # Load and record results
-    checkpoint = torch.load(str(model_save_path), map_location='cpu', weights_only=False)
+        viz_dir = test_dir / "visualizations"
+        viz_dir.mkdir(exist_ok=True)
 
-    results = {
+        # Get best solution for visualization
+        items = load_problem_as_items(test_problem)
+        W, D, H = test_problem.bin_dimensions
+
+        env = MultiBinPackingEnv(
+            W, D, H,
+            items=items,
+            max_actions=128,
+            topk_eps=1000,
+            seed=42,
+            gamma=0.992,
+            problem=test_problem
+        )
+
+        # Run one episode with trained agent to get solution
+        agent._eps = 0.0
+        obs = env.reset(items=items.copy())
+        done = False
+        step_count = 0
+
+        while not done and step_count < 1000:
+            actions, mask_short = env.action_space()
+            if len(actions) == 0:
+                break
+
+            feats = build_action_features(env, actions)
+            patches = extract_patches_for_actions(env, actions, patch_size=best_genome.genes['patch_size'])
+
+            act_idx = agent.select_action(obs, feats, patches, mask_short)
+            if act_idx is None or act_idx >= len(actions):
+                break
+
+            obs, rew, done, info = env.step(actions[act_idx])
+            step_count += 1
+
+        # Visualize all bins with items
+        for i, bin_obj in enumerate(env.bins):
+            if len(bin_obj.placed) > 0:
+                bin_util = sum(b.w * b.d * b.h for b in bin_obj.placed) / env.bin_volume
+
+                # Save filled version (clean)
+                bin_obj.plot3d_filled(
+                    title=f"{test_name} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f})",
+                    save_path=str(viz_dir / f"bin_{i+1}_filled.png"),
+                    show=False
+                )
+
+                # Save version with EMS (for analysis)
+                bin_obj.plot3d(
+                    title=f"{test_name} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f}) [with EMS]",
+                    save_path=str(viz_dir / f"bin_{i+1}_with_ems.png"),
+                    show=False
+                )
+
+        if verbose:
+            print(f"  Visualizations saved to: {viz_dir}")
+
+        # Clean up environment
+        del env
+        del agent
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Save test-specific results
+        test_result = {
+            'problem_name': test_name,
+            'problem_file': str(test_file),
+            'training_episodes': training_episodes,
+            'best_utilization': best_util,
+            'best_bins': best_bins_count,
+            'best_items': best_items_count,
+        }
+
+        test_results[test_name] = test_result
+
+        # Save individual test results
+        test_result_file = test_dir / "results.json"
+        with open(test_result_file, 'w') as f:
+            json.dump(test_result, f, indent=2)
+
+        if verbose:
+            print(f"\n  {test_name} Results:")
+            print(f"    Best utilization: {best_util:.3f}")
+            print(f"    Best bins: {best_bins_count}")
+            print(f"    Best items: {best_items_count}")
+
+    # Generate final summary report
+    summary = {
         'experiment_type': 'multi_problem',
-        'test_problem': test_file.stem,
         'training_problems': [p.stem for _, p in training_problems],
-        'evolution': {
-            'generations': generations,
+        'test_problems': [p.stem for _, p in test_problems],
+        'configuration': {
             'base_population_size': population_size,
             'adaptive_population': adaptive_population,
+            'generations': generations,
+            'training_episodes': episodes,
+            'final_training_episodes': training_episodes,
+            'use_curriculum': use_curriculum,
+        },
+        'evolution': {
+            'generations': generations,
             'best_fitness': best_genome.fitness,
             'training_metrics': best_genome.metrics,
-        },
-        'test_evaluation': {
-            'training_episodes': training_episodes,
-            'best_utilization': checkpoint.get('best_util', 0.0),
-            'best_bins': checkpoint.get('best_bins', 0),
-            'best_items': checkpoint.get('best_items', 0),
         },
         'architecture': {
             'hidden_dim': best_genome.genes['hidden_dim'],
             'enc_layers': best_genome.genes['enc_layers'],
             'attention_type': best_genome.genes['attention_type'],
+            'patch_size': best_genome.genes['patch_size'],
             'complexity': best_genome.get_network_complexity(),
             'genome': best_genome.to_dict()
+        },
+        'test_results': test_results,
+        'summary_statistics': {
+            'num_test_problems': len(test_problems),
+            'avg_utilization': np.mean([r['best_utilization'] for r in test_results.values()]),
+            'std_utilization': np.std([r['best_utilization'] for r in test_results.values()]),
+            'min_utilization': np.min([r['best_utilization'] for r in test_results.values()]),
+            'max_utilization': np.max([r['best_utilization'] for r in test_results.values()]),
+            'avg_bins': np.mean([r['best_bins'] for r in test_results.values()]),
         }
     }
 
-    # Save results
-    results_file = results_path / "results.json"
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
+    # Save final summary
+    summary_file = results_path / "experiment_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
 
     if verbose:
         print(f"\n{'='*80}")
         print("EXPERIMENT COMPLETE")
         print(f"{'='*80}")
-        print(f"Test problem: {test_file.stem}")
-        print(f"Best utilization: {results['test_evaluation']['best_utilization']:.3f}")
-        print(f"Best bins: {results['test_evaluation']['best_bins']}")
-        print(f"Architecture complexity: {results['architecture']['complexity']:.3f}M params")
-        print(f"\nResults saved to: {results_file}")
+        print(f"Training problems: {len(training_problems)}")
+        print(f"Test problems: {len(test_problems)}")
+        print(f"\nTest Results Summary:")
+        for test_name, result in test_results.items():
+            print(f"  {test_name}:")
+            print(f"    Utilization: {result['best_utilization']:.3f}")
+            print(f"    Bins: {result['best_bins']}")
+            print(f"    Items: {result['best_items']}")
+        print(f"\nAggregate Statistics:")
+        print(f"  Avg utilization: {summary['summary_statistics']['avg_utilization']:.3f} ± {summary['summary_statistics']['std_utilization']:.3f}")
+        print(f"  Utilization range: [{summary['summary_statistics']['min_utilization']:.3f}, {summary['summary_statistics']['max_utilization']:.3f}]")
+        print(f"  Avg bins: {summary['summary_statistics']['avg_bins']:.1f}")
+        print(f"\nArchitecture complexity: {summary['architecture']['complexity']:.3f}M params")
+        print(f"\nResults saved to: {summary_file}")
         print(f"{'='*80}\n")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run multi-problem training experiment with target evaluation"
+        description="Run multi-problem training experiment with multi-dataset evaluation"
     )
     parser.add_argument(
         '--training-datasets',
@@ -875,10 +928,11 @@ def main():
         help='Paths to training problem files (space-separated)'
     )
     parser.add_argument(
-        '--test-dataset',
+        '--test-datasets',
         type=str,
+        nargs='+',
         required=True,
-        help='Path to test problem file'
+        help='Paths to test problem files (space-separated)'
     )
     parser.add_argument(
         '--results-dir',
@@ -899,16 +953,16 @@ def main():
         help='Number of GA generations'
     )
     parser.add_argument(
-        '--episodes-per-problem',
+        '--episodes',
         type=int,
         default=10,
-        help='Episodes per problem for fitness evaluation'
+        help='Training episodes (each = one pass through all training problems)'
     )
     parser.add_argument(
         '--training-episodes',
         type=int,
         default=300,
-        help='Episodes for final training on test problem'
+        help='Final training episodes on each test problem'
     )
     parser.add_argument(
         '--no-curriculum',
@@ -953,11 +1007,11 @@ def main():
 
     run_multi_problem_experiment(
         training_datasets=args.training_datasets,
-        test_dataset=args.test_dataset,
+        test_datasets=args.test_datasets,
         results_dir=args.results_dir,
         population_size=args.population_size,
         generations=args.generations,
-        episodes_per_problem=args.episodes_per_problem,
+        episodes=args.episodes,
         training_episodes=args.training_episodes,
         use_curriculum=not args.no_curriculum,
         adaptive_population=not args.no_adaptive_population,
