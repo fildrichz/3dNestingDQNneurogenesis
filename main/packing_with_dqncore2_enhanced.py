@@ -658,12 +658,14 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
         obs = env.reset(items=items.copy())
         ep_ret = 0.0
         steps = 0
-        
+
+        # OPTIMIZATION: Pre-compute initial state features (will be reused in loop)
+        actions, mask_short = env.action_space()
+        feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+        patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
         while True:
-            actions, mask_short = env.action_space()
-            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
-            patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
-            
+            # Use pre-computed features (from initialization or previous step's "next")
             act_idx = agent.select_action(
                 obs,
                 feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
@@ -707,8 +709,14 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
             if steps % train_freq == 0:
                 for _ in range(num_train_steps):
                     agent.train_step()
-            
+
+            # OPTIMIZATION: Reuse next state features as current features for next iteration
+            # This avoids recomputing action_space, build_action_features, extract_patches
             obs = nobs
+            actions = n_actions
+            mask_short = n_mask_short
+            feats = n_feats
+            patches = n_patches
             ep_ret += rew
             steps += 1
             
@@ -851,14 +859,14 @@ def train_multibin_pack_dqn(
         ep_ret = 0.0
         steps = 0
         losses = []
-        
+
+        # OPTIMIZATION: Pre-compute initial state features (will be reused in loop)
+        actions, mask_short = env.action_space()
+        feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+        patches = extract_patches_for_actions(env, actions, patch_size=7) if len(actions) > 0 else np.zeros((0, 7, 7), np.float32)
+
         while True:
-            actions, mask_short = env.action_space()
-            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
-            
-            # NEW: Extract heightmap patches for each action
-            patches = extract_patches_for_actions(env, actions, patch_size=7) if len(actions) > 0 else np.zeros((0, 7, 7), np.float32)
-            
+            # Use pre-computed features (from initialization or previous step's "next")
             act_idx = agent.select_action(
                 obs,
                 feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
@@ -907,8 +915,14 @@ def train_multibin_pack_dqn(
                     loss = agent.train_step()
                     if loss is not None:
                         losses.append(loss)
-            
+
+            # OPTIMIZATION: Reuse next state features as current features for next iteration
+            # This avoids recomputing action_space, build_action_features, extract_patches
             obs = nobs
+            actions = n_actions
+            mask_short = n_mask_short
+            feats = n_feats
+            patches = n_patches
             ep_ret += rew
             steps += 1
             
