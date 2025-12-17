@@ -34,7 +34,7 @@ from example_ga_training import train_with_evolved_genome
 from genome import NetworkGenome
 
 
-def get_problem_files(dataset_dir: str) -> List[Path]:
+def get_problem_files(dataset_dir: str, problem_id: int) -> List[Path]:
     """
     Get all problem files from dataset directory.
 
@@ -45,7 +45,8 @@ def get_problem_files(dataset_dir: str) -> List[Path]:
         List of Path objects for problem files
     """
     dataset_path = Path(dataset_dir)
-    problem_files = sorted(dataset_path.glob("3dBPP_7*.txt"))
+    problem_files = sorted(dataset_path.glob(f"3dBPP_{problem_id}*.txt"))
+
 
     # Exclude solution files
     problem_files = [f for f in problem_files if not f.name.endswith("_sol.txt")]
@@ -95,6 +96,7 @@ def save_experiment_state(results_dir: Path, state: Dict):
 def run_problem_specific_experiment(
     dataset_dir: str,
     results_dir: str,
+    problem_id: int,
     population_size: int = 30,
     generations: int = 50,
     episodes_per_eval: int = 100,
@@ -137,7 +139,8 @@ def run_problem_specific_experiment(
     }
 
     # Get all problem files
-    problem_files = get_problem_files(dataset_dir)
+    problem_files = get_problem_files(dataset_dir, problem_id)
+
 
     if verbose:
         print("="*80)
@@ -540,6 +543,12 @@ def main():
         help='Directory to save results'
     )
     parser.add_argument(
+        "--problem-id",
+        type=int,
+        default=7,
+        help="Problem index used to load files 3dBPP_<ID>*.txt"
+    )
+    parser.add_argument(
         '--population-size',
         type=int,
         default=2,
@@ -607,6 +616,7 @@ def main():
     run_problem_specific_experiment(
         dataset_dir=args.dataset_dir,
         results_dir=args.results_dir,
+        problem_id=args.problem_id,
         population_size=args.population_size,
         generations=args.generations,
         episodes_per_eval=args.episodes_per_eval,
