@@ -24,7 +24,7 @@ from typing import List, Dict, Tuple, Optional
 import json
 import time
 from pathlib import Path
-from multiprocessing import Pool
+import multiprocessing
 import os
 
 from genome import NetworkGenome, create_initial_population, tournament_selection
@@ -76,7 +76,8 @@ def evaluate_genome_fitness(genome: NetworkGenome,
                            items: List,
                            episodes: int = 20,
                            verbose: bool = False,
-                           item_fraction: float = 1.0) -> Tuple[float, Dict]:
+                           item_fraction: float = 1.0,
+                           device: Optional[str] = None) -> Tuple[float, Dict]:
     """
     Evaluate fitness of a genome by training its architecture.
 
@@ -89,6 +90,8 @@ def evaluate_genome_fitness(genome: NetworkGenome,
         episodes: Number of training episodes
         verbose: Print detailed progress
         item_fraction: Fraction of items to use (0.0-1.0) for curriculum learning
+        device: Device to use ('cpu' or 'cuda'). If None, auto-detect.
+                IMPORTANT: Use 'cpu' for multiprocessing to avoid GPU conflicts.
 
     Returns:
         (fitness_score, metrics_dict)
@@ -104,13 +107,17 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     else:
         items_subset = items
 
+    # Determine device: explicit device > auto-detect
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
     # Build network from genome (with reduced buffer for GA phase)
     # Epsilon decay is calculated automatically based on total_episodes
     cfg = genome.to_dqn_config(
         obs_dim=8,  # Fixed for this environment
         action_feat_dim=25,  # Fixed
         max_actions=env.max_actions,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device=device,
         total_episodes=episodes  # Automatic episode-based epsilon decay
     )
 
@@ -184,9 +191,14 @@ def _evaluate_genome_wrapper(args):
 
     Takes a tuple of arguments and unpacks them to call evaluate_genome_fitness.
     This is necessary because Pool.map() can only pass a single argument.
+
+    CRITICAL: Forces CPU mode to prevent CUDA race conditions.
+    Multiple processes sharing a GPU will cause crashes and memory corruption.
     """
-    genome, env, items, episodes, verbose, item_fraction = args
-    return evaluate_genome_fitness(genome, env, items, episodes, verbose, item_fraction)
+    genome, env, items, episodes, verbose, item_fraction, device = args
+    return evaluate_genome_fitness(
+        genome, env, items, episodes, verbose, item_fraction, device=device
+    )
 
 
 def evolve_architecture(problem,
@@ -276,6 +288,10 @@ def evolve_architecture(problem,
         print(f"Episodes per evaluation: {episodes_per_eval}")
         print(f"Elite size: {elite_size}")
         print(f"Mutation rate: {mutation_rate} (adaptive: {adaptive_mutation})")
+        if n_workers > 1:
+            print(f"⚙️  Parallel workers: {n_workers} (CPU mode - thread-safe)")
+        else:
+            print(f"⚙️  Sequential mode: 1 worker (GPU-enabled if available)")
         print(f"{'='*80}\n")
 
     # Initialize population with starting size
@@ -326,17 +342,23 @@ def evolve_architecture(problem,
 
         if n_workers > 1:
             # Parallel evaluation using multiprocessing
+            # CRITICAL: Use CPU mode to avoid CUDA race conditions
             if verbose:
-                print(f"\nEvaluating {len(population)} genomes in parallel using {n_workers} workers...")
+                print(f"\n⚠️  PARALLEL MODE: Using CPU for {n_workers} workers (GPU conflicts prevented)")
+                print(f"   Evaluating {len(population)} genomes in parallel...")
 
             # Prepare arguments for parallel evaluation
+            # Force device='cpu' to prevent multiple processes fighting over GPU
             eval_args = [
-                (genome, env, items.copy(), episodes_per_eval, False, 1.0)
+                (genome, env, items.copy(), episodes_per_eval, False, 1.0, 'cpu')
                 for genome in population
             ]
 
-            # Evaluate in parallel
-            with Pool(processes=n_workers) as pool:
+            # Evaluate in parallel using process pool
+            # Each process gets its own Python interpreter and memory space
+            # Use 'spawn' context for better isolation (safer for CUDA/PyTorch)
+            ctx = multiprocessing.get_context('spawn')
+            with ctx.Pool(processes=n_workers) as pool:
                 results = pool.map(_evaluate_genome_wrapper, eval_args)
 
             # Unpack results and update genomes
