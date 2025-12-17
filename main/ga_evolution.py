@@ -192,12 +192,27 @@ def _evaluate_genome_wrapper(args):
     Takes a tuple of arguments and unpacks them to call evaluate_genome_fitness.
     This is necessary because Pool.map() can only pass a single argument.
 
-    CRITICAL: Forces CPU mode to prevent CUDA race conditions.
-    Multiple processes sharing a GPU will cause crashes and memory corruption.
+    Handles GPU assignment per worker:
+    - If gpu_id >= 0: Sets CUDA_VISIBLE_DEVICES to isolate that GPU for this worker
+    - If gpu_id < 0: Uses CPU mode (safe fallback)
+
+    This prevents GPU conflicts: each worker gets its own dedicated GPU or uses CPU.
     """
-    genome, env, items, episodes, verbose, item_fraction, device = args
+    genome, env, items, episodes, verbose, item_fraction, device, gpu_id = args
+
+    # Set GPU visibility for this worker process
+    if gpu_id >= 0:
+        # Isolate this GPU for this worker only
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+        # Worker sees its assigned GPU as device 0
+        actual_device = 'cuda:0' if device.startswith('cuda') else device
+    else:
+        # CPU mode - no GPU access
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        actual_device = 'cpu'
+
     return evaluate_genome_fitness(
-        genome, env, items, episodes, verbose, item_fraction, device=device
+        genome, env, items, episodes, verbose, item_fraction, device=actual_device
     )
 
 
@@ -288,10 +303,22 @@ def evolve_architecture(problem,
         print(f"Episodes per evaluation: {episodes_per_eval}")
         print(f"Elite size: {elite_size}")
         print(f"Mutation rate: {mutation_rate} (adaptive: {adaptive_mutation})")
+
+        # Show GPU/CPU configuration
+        import torch
+        n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
         if n_workers > 1:
-            print(f"⚙️  Parallel workers: {n_workers} (CPU mode - thread-safe)")
+            if n_gpus >= n_workers:
+                print(f"⚙️  Parallel workers: {n_workers} (each with dedicated GPU - optimal!)")
+            elif n_gpus > 0:
+                print(f"⚙️  Parallel workers: {n_workers} sharing {n_gpus} GPU(s) (may have OOM risk)")
+            else:
+                print(f"⚙️  Parallel workers: {n_workers} (CPU mode - thread-safe)")
         else:
-            print(f"⚙️  Sequential mode: 1 worker (GPU-enabled if available)")
+            if n_gpus > 0:
+                print(f"⚙️  Sequential mode: 1 worker (GPU {torch.cuda.get_device_name(0)})")
+            else:
+                print(f"⚙️  Sequential mode: 1 worker (CPU)")
         print(f"{'='*80}\n")
 
     # Initialize population with starting size
@@ -342,16 +369,44 @@ def evolve_architecture(problem,
 
         if n_workers > 1:
             # Parallel evaluation using multiprocessing
-            # CRITICAL: Use CPU mode to avoid CUDA race conditions
-            if verbose:
-                print(f"\n⚠️  PARALLEL MODE: Using CPU for {n_workers} workers (GPU conflicts prevented)")
-                print(f"   Evaluating {len(population)} genomes in parallel...")
+            # Auto-detect GPUs and assign one per worker if available
+
+            # Check available GPUs
+            import torch
+            n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+            # Determine device strategy
+            if n_gpus >= n_workers:
+                # Enough GPUs: assign one GPU per worker (SAFE & FAST)
+                device_mode = 'cuda'
+                gpu_assignments = list(range(n_workers))  # [0, 1, 2, ...]
+                if verbose:
+                    print(f"\n🚀 PARALLEL MODE: {n_workers} workers, each with dedicated GPU")
+                    print(f"   GPUs available: {n_gpus}, using GPUs {gpu_assignments}")
+                    print(f"   Evaluating {len(population)} genomes in parallel...")
+            elif n_gpus > 0:
+                # Some GPUs but not enough: round-robin assignment (RISKY - warn user)
+                device_mode = 'cuda'
+                gpu_assignments = [i % n_gpus for i in range(n_workers)]
+                if verbose:
+                    print(f"\n⚠️  PARALLEL MODE: {n_workers} workers but only {n_gpus} GPU(s)")
+                    print(f"   WARNING: Multiple workers will share GPUs - may cause OOM errors")
+                    print(f"   GPU assignment: {gpu_assignments}")
+                    print(f"   Consider using n_workers={n_gpus} or CPU mode for stability")
+            else:
+                # No GPUs: use CPU (SAFE but slower)
+                device_mode = 'cpu'
+                gpu_assignments = [-1] * n_workers  # -1 = CPU mode
+                if verbose:
+                    print(f"\n💻 PARALLEL MODE: Using CPU for {n_workers} workers (no GPUs detected)")
+                    print(f"   Evaluating {len(population)} genomes in parallel...")
 
             # Prepare arguments for parallel evaluation
-            # Force device='cpu' to prevent multiple processes fighting over GPU
+            # Each worker gets: genome, env, items, episodes, verbose, fraction, device, gpu_id
             eval_args = [
-                (genome, env, items.copy(), episodes_per_eval, False, 1.0, 'cpu')
-                for genome in population
+                (genome, env, items.copy(), episodes_per_eval, False, 1.0,
+                 device_mode, gpu_assignments[i % n_workers])
+                for i, genome in enumerate(population)
             ]
 
             # Evaluate in parallel using process pool
