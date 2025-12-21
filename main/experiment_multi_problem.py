@@ -330,15 +330,17 @@ def evolve_multi_problem_architecture(
         with open(resume_from, 'r') as f:
             checkpoint = json.load(f)
         start_generation = checkpoint['generation']
-        population = [NetworkGenome(genes=g['genes'], genome_id=g.get('genome_id'))
-                      for g in checkpoint['population']]
+        # Restore full population with fitness and metrics
+        population = [NetworkGenome.from_dict(g) for g in checkpoint['population']]
         history = checkpoint['history']
-        best_genome_ever = NetworkGenome(genes=checkpoint['best_genome']['genes'])
-        best_genome_ever.fitness = checkpoint['best_fitness']
+        # Restore best genome with all data
+        best_genome_ever = NetworkGenome.from_dict(checkpoint['best_genome'])
         best_fitness_ever = checkpoint['best_fitness']
         if verbose:
             print(f"Resuming from generation {start_generation}/{generations}")
-            print(f"Best fitness so far: {best_fitness_ever:.4f}\n")
+            print(f"Population size: {len(population)}")
+            print(f"Best fitness so far: {best_fitness_ever:.4f}")
+            print(f"Skipping re-evaluation of loaded population\n")
 
     if save_dir:
         save_dir = Path(save_dir)
@@ -410,23 +412,31 @@ def evolve_multi_problem_architecture(
                       f"{current_episodes} episodes")
 
         # Evaluate all genomes
+        # Skip evaluation if population was just loaded from checkpoint (already evaluated)
         fitness_scores = []
+        needs_evaluation = any(g.fitness is None for g in population)
 
-        for i, genome in enumerate(population):
+        if needs_evaluation:
+            for i, genome in enumerate(population):
+                if verbose:
+                    print(f"\n[{i+1}/{len(population)}] Evaluating genome {genome.genome_id}...")
+
+                fitness, metrics = evaluate_genome_multi_problem(
+                    genome=genome,
+                    training_problems=training_problems,
+                    episodes=current_episodes,
+                    item_fraction=current_item_fraction,
+                    verbose=verbose
+                )
+
+                fitness_scores.append(fitness)
+                genome.fitness = fitness
+                genome.metrics = metrics
+        else:
+            # Population already evaluated (loaded from checkpoint)
             if verbose:
-                print(f"\n[{i+1}/{len(population)}] Evaluating genome {genome.genome_id}...")
-
-            fitness, metrics = evaluate_genome_multi_problem(
-                genome=genome,
-                training_problems=training_problems,
-                episodes=current_episodes,
-                item_fraction=current_item_fraction,
-                verbose=verbose
-            )
-
-            fitness_scores.append(fitness)
-            genome.fitness = fitness
-            genome.metrics = metrics
+                print(f"\nPopulation already evaluated (loaded from checkpoint), skipping evaluation...")
+            fitness_scores = [g.fitness for g in population]
 
         # Sort population by fitness
         population.sort(key=lambda g: g.fitness, reverse=True)
