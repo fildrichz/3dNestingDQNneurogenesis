@@ -1,19 +1,21 @@
 # Curriculum Learning Review - experiment_multi_problem.py
 
 ## Summary
-The curriculum learning implementation in `experiment_multi_problem.py` has **one critical bug** and **one design concern**.
+The curriculum learning implementation in `experiment_multi_problem.py` has **FUNDAMENTAL CONCEPTUAL ERRORS** that make it incorrect.
 
 ---
 
-## ✅ What's Working Correctly
+## ❌ CRITICAL: Curriculum Applied at Wrong Level
 
-### 1. Multi-Problem Implementation (experiment_multi_problem.py)
-The curriculum learning IS being used in `experiment_multi_problem.py`:
+### The Fundamental Problem
+
+**Current Implementation (WRONG):**
+Curriculum is applied **across GA generations** in `experiment_multi_problem.py`:
 
 **Curriculum Schedule Definition** (lines 700-717):
 ```python
 curriculum_schedule = {
-    'generations': [0, generations // 3, 2 * generations // 3],
+    'generations': [0, generations // 3, 2 * generations // 3],  # ← WRONG LEVEL
     'item_fractions': [0.3, 0.6, 1.0],
     'episodes': [
         max(10, episodes_per_eval // 2),
@@ -23,179 +25,276 @@ curriculum_schedule = {
 }
 ```
 
-**Curriculum Application** (lines 444-460):
+**What currently happens:**
+- Generation 0-16: All genomes evaluated on 30% items, 50 episodes
+- Generation 17-33: All genomes evaluated on 60% items, 75 episodes
+- Generation 34+: All genomes evaluated on 100% items, 100 episodes
+
+**Why this is fundamentally wrong:**
+
+1. **Incomparable Fitness Scores**:
+   - Genome A (gen 5) trained on 30% items → fitness 0.85
+   - Genome B (gen 40) trained on 100% items → fitness 0.80
+   - Which is better? You can't tell! They solved different problems.
+
+2. **Defeats GA Purpose**:
+   - GA should select architectures that excel at the FULL problem
+   - Instead, it's selecting based on progressively different problem difficulties
+   - Early generations get artificially inflated fitness scores
+
+3. **Items Not Sorted by Difficulty**:
+   - `items[:num_items]` assumes items are ordered by difficulty
+   - They're not! So you're just getting a random subset
+   - Not a true curriculum progression
+
+## ✅ Correct Curriculum Learning Approach
+
+**Curriculum should apply WITHIN each genome's training, not across GA generations.**
+
+### Correct Implementation:
+
 ```python
-# Determine curriculum parameters
-current_item_fraction = 1.0
-current_episodes = episodes_per_eval
+def evaluate_genome_with_curriculum(genome, training_problems, total_episodes=100):
+    """
+    Train a single genome using curriculum learning.
 
-if curriculum_schedule:
-    gen_thresholds = curriculum_schedule.get('generations', [])
-    item_fractions = curriculum_schedule.get('item_fractions', [1.0])
-    episode_counts = curriculum_schedule.get('episodes', [episodes_per_eval])
+    Curriculum applies episode-by-episode WITHIN this evaluation:
+    - Episodes 0-33: Train on 30% of items (easiest)
+    - Episodes 34-66: Train on 60% of items (medium)
+    - Episodes 67-100: Train on 100% of items (full problem)
 
-    for i, threshold in enumerate(gen_thresholds):
-        if gen >= threshold:
-            current_item_fraction = item_fractions[i]
-            current_episodes = episode_counts[i]
+    Then evaluate at eps=0 on FULL PROBLEM for fitness.
+    """
+
+    # Define curriculum stages within this evaluation
+    curriculum_stages = [
+        {'episodes': (0, 33), 'item_fraction': 0.3},
+        {'episodes': (34, 66), 'item_fraction': 0.6},
+        {'episodes': (67, 100), 'item_fraction': 1.0}
+    ]
+
+    for episode in range(total_episodes):
+        # Determine current curriculum stage
+        current_fraction = 1.0
+        for stage in curriculum_stages:
+            if stage['episodes'][0] <= episode < stage['episodes'][1]:
+                current_fraction = stage['item_fraction']
+                break
+
+        # Select items for this episode
+        if current_fraction < 1.0:
+            # Sort items by difficulty (e.g., volume)
+            items_sorted = sorted(items, key=lambda x: x[0] * x[1] * x[2])
+            num_items = max(1, int(len(items_sorted) * current_fraction))
+            training_items = items_sorted[:num_items]
+        else:
+            training_items = items
+
+        # Train on current difficulty level
+        train_episode(agent, env, training_items)
+
+    # CRITICAL: Evaluate fitness on FULL problem (100% items)
+    fitness = evaluate_at_greedy(agent, env, items)  # All items, eps=0
+
+    return fitness
 ```
 
-**Item Selection** (lines 111-114):
-```python
-# Apply curriculum learning
-if item_fraction < 1.0:
-    num_items = max(1, int(len(items) * item_fraction))
-    items = items[:num_items]
-```
+### Key Principles:
 
-This logic works correctly - it progressively increases difficulty by:
-- Generation 0-16: 30% items, 50 episodes
-- Generation 17-33: 60% items, 75 episodes
-- Generation 34+: 100% items, 100 episodes
+1. **Same problem for all genomes**: Every genome in the GA is evaluated on the same FULL problem
+2. **Curriculum within training**: Difficulty increases episode-by-episode during each genome's training
+3. **Fair comparison**: All fitness scores are from the same problem difficulty
+4. **Items sorted by difficulty**: Start with smaller/easier items, progress to larger/harder ones
 
 ---
 
-## ❌ Issues Found
+## ❌ Issues in Current Implementation
 
-### Issue 1: Curriculum Schedule Loop Logic (experiment_multi_problem.py:453-456)
+### Issue 1: Curriculum at Generation Level (experiment_multi_problem.py)
 
-**Problem**: Inefficient loop that overwrites values unnecessarily.
+**Location**: Lines 444-476, 700-717
 
-**Current Code**:
-```python
-for i, threshold in enumerate(gen_thresholds):
-    if gen >= threshold:
-        current_item_fraction = item_fractions[i]
-        current_episodes = episode_counts[i]
-```
+**Problem**: Curriculum applied across GA generations instead of within genome training.
 
-**What happens**: For generation 35 with thresholds [0, 16, 33]:
-1. Checks gen >= 0: TRUE → sets item_fraction=0.3, episodes=50
-2. Checks gen >= 16: TRUE → sets item_fraction=0.6, episodes=75
-3. Checks gen >= 33: TRUE → sets item_fraction=1.0, episodes=100
+**Impact**:
+- Genomes trained in different generations face different problem difficulties
+- Fitness scores are incomparable
+- GA selection is biased toward early easy-problem performers
 
-**Status**: This works correctly but is inefficient. It should break after finding the right threshold.
+**Fix**: Remove generation-level curriculum entirely, or apply it per-episode within each evaluation.
 
-**Recommended Fix**:
-```python
-# Find the highest threshold that has been reached
-for i in range(len(gen_thresholds) - 1, -1, -1):
-    if gen >= gen_thresholds[i]:
-        current_item_fraction = item_fractions[i]
-        current_episodes = episode_counts[i]
-        break
-```
+### Issue 2: Unsorted Items (everywhere)
 
-### Issue 2: Item Selection Assumes Sorted Difficulty (experiment_multi_problem.py:111-114)
-
-**Problem**: Curriculum learning assumes items are pre-sorted by difficulty.
+**Location**: Lines 111-114 (experiment_multi_problem.py), similar in ga_evolution.py
 
 **Current Code**:
 ```python
-items = items[:num_items]  # Takes FIRST N items
+items = items[:num_items]  # Takes arbitrary first N items
 ```
 
-**Risk**: If items are NOT sorted by difficulty (e.g., randomized or sorted by size), this won't provide a proper curriculum. The agent would just train on an arbitrary subset, not progressively harder problems.
+**Problem**: Items are NOT sorted by difficulty, so this doesn't create a progression.
 
-**Questions to Answer**:
-1. Are items in the dataset files sorted by difficulty?
-2. If not, should they be sorted before applying curriculum?
-3. What metric defines "difficulty" (volume, aspect ratio, quantity)?
-
-**Recommended Fix**:
-Consider sorting items by difficulty first:
+**Fix**: Sort items before taking subset:
 ```python
-# Apply curriculum learning
-if item_fraction < 1.0:
-    # Sort items by difficulty metric (e.g., volume)
-    items_sorted = sorted(items, key=lambda x: x.w * x.d * x.h)
-    num_items = max(1, int(len(items_sorted) * item_fraction))
-    items = items_sorted[:num_items]
+# Sort by volume (smaller items = easier)
+items_sorted = sorted(items, key=lambda x: x[0] * x[1] * x[2])
+num_items = max(1, int(len(items_sorted) * item_fraction))
+items = items_sorted[:num_items]
 ```
 
----
+### Issue 3: ga_evolution.py Ignores Curriculum Schedule
 
-## ⚠️ Critical Bug in ga_evolution.py
+**Location**: ga_evolution.py, line 355-361
 
-### Issue 3: Curriculum Schedule NOT Used in ga_evolution.py
+**Problem**: The `curriculum_schedule` parameter is accepted but never used.
 
-**Problem**: The `curriculum_schedule` parameter is accepted but **NEVER USED** in the evolution loop!
+**Status**: Actually this might be CORRECT behavior if curriculum shouldn't be at generation level!
 
-**File**: `ga_evolution.py` (used by `experiment_problem_specific.py`)
-
-**Evidence**:
-- Line 200: `curriculum_schedule: Optional[Dict] = None` (parameter accepted)
-- Lines 355-361: `evaluate_genome_fitness()` called WITHOUT curriculum parameters
-- The `item_fraction` parameter is never passed, so it defaults to 1.0
-
-**Impact**: When running `experiment_problem_specific.py` with `--use-curriculum`, the curriculum schedule is created but completely ignored during evolution!
-
-**Recommended Fix**:
-```python
-# In ga_evolution.py, inside the main loop (after line 336)
-# Determine curriculum parameters based on current generation
-current_item_fraction = 1.0
-current_episodes = episodes_per_eval
-
-if curriculum_schedule:
-    gen_thresholds = curriculum_schedule.get('generations', [])
-    item_fractions = curriculum_schedule.get('item_fractions', [1.0])
-    episode_counts = curriculum_schedule.get('episodes', [episodes_per_eval])
-
-    for i in range(len(gen_thresholds) - 1, -1, -1):
-        if gen >= gen_thresholds[i]:
-            current_item_fraction = item_fractions[i]
-            current_episodes = episode_counts[i]
-            break
-
-    if verbose:
-        print(f"Curriculum: {current_item_fraction*100:.0f}% items, "
-              f"{current_episodes} episodes")
-
-# Then update the evaluation call (line 355):
-fitness, metrics = evaluate_genome_fitness(
-    genome=genome,
-    env=env,
-    items=items.copy(),
-    episodes=current_episodes,  # Use curriculum episodes
-    verbose=False,
-    item_fraction=current_item_fraction  # Use curriculum item fraction
-)
-```
+**Decision needed**: Should ga_evolution.py use:
+- Option A: No curriculum (current behavior, might be correct)
+- Option B: Episode-level curriculum within each genome's evaluation
 
 ---
 
 ## Recommendations
 
-### High Priority
-1. **Fix ga_evolution.py**: Add curriculum application logic (Issue #3)
-2. **Verify item ordering**: Check if items are sorted by difficulty (Issue #2)
+### Critical (Must Fix)
 
-### Medium Priority
-3. **Optimize loop**: Use reverse iteration with break (Issue #1)
-4. **Add validation**: Warn if curriculum is enabled but items aren't sorted
-5. **Add tests**: Unit tests for curriculum schedule application
+1. **Redesign Curriculum Application**:
+   - Move curriculum from generation-level to episode-level
+   - Apply curriculum within each genome's training, not across GA generations
+   - Ensure all genomes are evaluated on the same full problem for fair fitness comparison
 
-### Low Priority
-6. **Document assumptions**: Clarify item ordering requirements in docstrings
-7. **Make configurable**: Add option to specify difficulty metric for sorting
+2. **Sort Items by Difficulty**:
+   - Implement proper item sorting before taking subsets
+   - Use volume (w × d × h) as a simple difficulty metric
+   - Smaller items first → larger items later
+
+3. **Fix evaluate_genome_multi_problem()**:
+   - Currently takes `item_fraction` as a parameter for the entire evaluation
+   - Should instead vary `item_fraction` per episode within the training loop
+   - Always evaluate final fitness on 100% items
+
+### Proposed Changes
+
+#### Option A: Simple Fix - Remove Curriculum from GA Level
+If curriculum doesn't help, just remove it:
+- Set `use_curriculum=False` by default
+- All genomes train on full problem from the start
+- Simpler and guarantees fair comparison
+
+#### Option B: Proper Episode-Level Curriculum
+Implement curriculum correctly:
+
+```python
+def evaluate_genome_multi_problem(
+    genome: NetworkGenome,
+    training_problems: List[Tuple[BinPackingProblem, Path]],
+    episodes: int = 100,
+    use_curriculum: bool = True,  # Changed parameter
+    verbose: bool = False
+) -> Tuple[float, Dict]:
+    """
+    Evaluate genome with optional curriculum learning.
+
+    If use_curriculum=True:
+        - Episodes 0-33: 30% items (smallest by volume)
+        - Episodes 34-66: 60% items
+        - Episodes 67-100: 100% items
+    Fitness always evaluated on 100% items at eps=0.
+    """
+
+    # Load all environments
+    envs_and_items = []
+    for problem, problem_path in training_problems:
+        items = load_problem_as_items(problem)
+
+        # Sort items by volume for proper curriculum
+        if use_curriculum:
+            items = sorted(items, key=lambda x: x[0] * x[1] * x[2])
+
+        W, D, H = problem.bin_dimensions
+        env = MultiBinPackingEnv(...)
+        envs_and_items.append((env, items, problem_path))
+
+    # Build agent...
+    agent = DQNAgentEnhanced(cfg)
+
+    # Define curriculum stages
+    if use_curriculum:
+        curriculum_stages = [
+            (0, episodes // 3, 0.3),
+            (episodes // 3, 2 * episodes // 3, 0.6),
+            (2 * episodes // 3, episodes, 1.0)
+        ]
+    else:
+        curriculum_stages = [(0, episodes, 1.0)]
+
+    # Round-robin training with curriculum
+    for episode in range(episodes):
+        # Determine curriculum fraction for THIS episode
+        item_fraction = 1.0
+        for start_ep, end_ep, fraction in curriculum_stages:
+            if start_ep <= episode < end_ep:
+                item_fraction = fraction
+                break
+
+        # Select problem (round-robin)
+        problem_idx = episode % len(envs_and_items)
+        env, items_full, problem_path = envs_and_items[problem_idx]
+
+        # Apply curriculum to items for this episode
+        if item_fraction < 1.0:
+            num_items = max(1, int(len(items_full) * item_fraction))
+            items_episode = items_full[:num_items]  # Already sorted above
+        else:
+            items_episode = items_full
+
+        # Train on items_episode for this episode
+        obs = env.reset(items=items_episode.copy())
+        # ... training loop ...
+
+    # Evaluate at eps=0 on FULL problems (100% items)
+    for env, items_full, problem_path in envs_and_items:
+        # Evaluate using ALL items
+        # ... evaluation loop ...
+
+    return fitness, metrics
+```
+
+### Testing Plan
+
+1. **Verify Curriculum Application**:
+   - Log `item_fraction` and `num_items` for each episode
+   - Confirm progression: 30% → 60% → 100%
+
+2. **Confirm Item Sorting**:
+   - Print first/last item volumes before curriculum
+   - Verify smallest items come first
+
+3. **Compare Approaches**:
+   - Run with curriculum: `--use-curriculum`
+   - Run without: `--no-curriculum`
+   - Compare final fitness and training curves
+
+4. **Validate Fair Comparison**:
+   - All genomes should show same evaluation metrics
+   - Fitness scores should be comparable across generations
 
 ---
 
-## Testing Recommendations
+## Questions to Answer
 
-To verify curriculum is working:
+1. **Does curriculum help?**
+   - Compare convergence speed with/without curriculum
+   - Does starting with easier problems improve final performance?
 
-1. **Print curriculum status per generation**:
-   - Current item fraction
-   - Current episode count
-   - Number of items being used
+2. **What difficulty metric?**
+   - Volume (w × d × h)?
+   - Aspect ratio (max/min dimension)?
+   - Some combination?
 
-2. **Track learning curves separately**:
-   - Early generations (30% items)
-   - Mid generations (60% items)
-   - Late generations (100% items)
-
-3. **Compare with/without curriculum**:
-   - Run same experiment with `--no-curriculum`
-   - Compare convergence speed and final performance
+3. **What curriculum schedule?**
+   - Current: 30% → 60% → 100% at 1/3 intervals
+   - Alternative: More gradual (50% → 75% → 100%)
+   - Alternative: Faster (50% → 100% at halfway point)
