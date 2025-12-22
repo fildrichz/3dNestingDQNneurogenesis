@@ -95,9 +95,10 @@ def evaluate_genome_multi_problem(
     import torch
     import gc
     from packing_with_dqncore2_enhanced import (
-        MultiBinPackingEnv, load_problem_as_items, build_action_features
+        MultiBinPackingEnv, load_problem_as_items, build_action_features,
+        pad_feats_mask, ACTION_FEAT_DIM
     )
-    from nesting.heightmap_utils import extract_patches_for_actions
+    from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
 
     if verbose:
         print(f"  Training on {len(training_problems)} problems for {episodes} episodes (round-robin)...")
@@ -155,18 +156,38 @@ def evaluate_genome_multi_problem(
             step_count = 0
             episode_reward = 0.0
 
+            patch_size = genome.genes['patch_size']
+
             while not done and step_count < 1000:
-                # Get valid actions
+                # Get valid actions for current state
                 actions, mask = env.action_space()
                 if len(actions) == 0:
                     break
 
-                # Build features
-                feats = build_action_features(env, actions)
-                patches = extract_patches_for_actions(env, actions, patch_size=genome.genes['patch_size'])
+                # Build features for current state
+                feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
-                # Select action
-                act_idx = agent.select_action(obs, feats, patches, mask)
+                # Pad current features
+                currF, currM = pad_feats_mask(
+                    feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
+                    mask if mask.shape[0] > 0 else np.zeros((0,), np.float32),
+                    env.max_actions
+                )
+                currP = pad_patches(
+                    patches if patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                    env.max_actions,
+                    patch_size
+                )
+
+                # Select action (use unpadded features for selection)
+                act_idx = agent.select_action(
+                    obs,
+                    feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                    patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
+                    mask if mask.shape[0] > 0 else np.zeros((1,), np.float32)
+                )
+
                 if act_idx is None or act_idx >= len(actions):
                     break
 
@@ -174,8 +195,27 @@ def evaluate_genome_multi_problem(
                 next_obs, reward, done, info = env.step(actions[act_idx])
                 episode_reward += reward
 
+                # Get next state actions and features
+                next_actions, next_mask = env.action_space()
+                next_feats = build_action_features(env, next_actions) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                next_patches = extract_patches_for_actions(env, next_actions, patch_size=patch_size) if len(next_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+                # Pad next features
+                nextF, nextM = pad_feats_mask(
+                    next_feats,
+                    next_mask if next_mask.shape[0] > 0 else np.zeros((0,), np.float32),
+                    env.max_actions
+                )
+                nextP = pad_patches(
+                    next_patches if next_patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                    env.max_actions,
+                    patch_size
+                )
+
                 # Store transition
-                agent.store_transition(obs, feats, patches, act_idx, reward, next_obs, done, mask)
+                agent.store(obs, act_idx, reward, next_obs, done,
+                           curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                           next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
 
                 obs = next_obs
                 step_count += 1
@@ -699,9 +739,10 @@ def run_multi_problem_experiment(
     # For final training, we'll use a simple approach: round-robin training similar to evaluation
     # but with more episodes, then save the trained model
     from packing_with_dqncore2_enhanced import (
-        MultiBinPackingEnv, load_problem_as_items, build_action_features
+        MultiBinPackingEnv, load_problem_as_items, build_action_features,
+        pad_feats_mask, ACTION_FEAT_DIM
     )
-    from nesting.heightmap_utils import extract_patches_for_actions
+    from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
     from dqn_core.dqn_enhanced import DQNAgentEnhanced
 
     # Build agent with evolved architecture
@@ -746,6 +787,8 @@ def run_multi_problem_experiment(
 
     # Round-robin training
     num_training_problems = len(training_envs)
+    patch_size = best_genome.genes['patch_size']
+
     for episode in range(training_episodes):
         problem_idx = episode % num_training_problems
         env, items, path = training_envs[problem_idx]
@@ -755,20 +798,61 @@ def run_multi_problem_experiment(
         step_count = 0
 
         while not done and step_count < 1000:
+            # Current state actions and features
             actions, mask = env.action_space()
             if len(actions) == 0:
                 break
 
-            feats = build_action_features(env, actions)
-            patches = extract_patches_for_actions(env, actions, patch_size=best_genome.genes['patch_size'])
+            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
-            act_idx = agent.select_action(obs, feats, patches, mask)
+            # Pad current features
+            currF, currM = pad_feats_mask(
+                feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
+                mask if mask.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            currP = pad_patches(
+                patches if patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                env.max_actions,
+                patch_size
+            )
+
+            # Select action
+            act_idx = agent.select_action(
+                obs,
+                feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
+                patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
+                mask if mask.shape[0] > 0 else np.zeros((1,), np.float32)
+            )
+
             if act_idx is None or act_idx >= len(actions):
                 break
 
+            # Step environment
             next_obs, reward, done, info = env.step(actions[act_idx])
 
-            agent.store_transition(obs, feats, patches, act_idx, reward, next_obs, done, mask)
+            # Next state actions and features
+            next_actions, next_mask = env.action_space()
+            next_feats = build_action_features(env, next_actions) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            next_patches = extract_patches_for_actions(env, next_actions, patch_size=patch_size) if len(next_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+
+            # Pad next features
+            nextF, nextM = pad_feats_mask(
+                next_feats,
+                next_mask if next_mask.shape[0] > 0 else np.zeros((0,), np.float32),
+                env.max_actions
+            )
+            nextP = pad_patches(
+                next_patches if next_patches.shape[0] > 0 else np.zeros((0, patch_size, patch_size), np.float32),
+                env.max_actions,
+                patch_size
+            )
+
+            # Store transition
+            agent.store(obs, act_idx, reward, next_obs, done,
+                       curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                       next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
 
             obs = next_obs
             step_count += 1
