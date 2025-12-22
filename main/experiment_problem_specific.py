@@ -45,7 +45,7 @@ def get_problem_files(dataset_dir: str, problem_id: int) -> List[Path]:
         List of Path objects for problem files
     """
     dataset_path = Path(dataset_dir)
-    problem_files = sorted(dataset_path.glob(f"3dBPP_{problem_id}*.txt"))
+    problem_files = sorted(dataset_path.glob(f"3dBPP_{problem_id}.txt"))
 
 
     # Exclude solution files

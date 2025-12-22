@@ -395,7 +395,7 @@ class MultiBinPackingEnv:
                 if affinity_violations > 0:
                     reward -= 0.1 * affinity_violations  # Small penalty
                     info["affinity_violations"] = affinity_violations
-                    print(f"âš ï¸  WARNING: Affinity violation despite proactive blocking!")
+                    print(f" WARNING: Affinity violation despite proactive blocking!")
             else:
                 reward -= 0.2 * (len(self.items) / self.n_items)
             

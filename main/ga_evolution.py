@@ -1284,7 +1284,7 @@ def generate_summary_report(save_dir: str, output_file: Optional[str] = None):
         f.write("## Evolution Configuration\n\n")
         f.write(f"- **Generations:** {len(history['generation'])}\n")
         if 'population_size' in history:
-            f.write(f"- **Population Size:** {history['population_size'][0]} → {history['population_size'][-1]}\n")
+            f.write(f"- **Population Size:** {history['population_size'][0]} -> {history['population_size'][-1]}\n")
         f.write("\n")
 
         f.write("## Performance Summary\n\n")
