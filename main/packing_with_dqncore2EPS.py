@@ -165,19 +165,19 @@ class MultiBinPackingEnv:
     def check_affinity_placement(self, item_id: int, target_bin_idx: int) -> bool:
         """
         PROACTIVE: Check if placing item_id in target_bin would violate affinity.
-        
+
         This prevents splitting affinity pairs across bins by checking BEFORE placement.
-        
+
         Args:
             item_id: ID of item to place
             target_bin_idx: Index of bin where we want to place it
-            
+
         Returns:
             True if placement allowed, False if would violate affinity
         """
         if not self.positive_affinities:
             return True
-        
+
         # Find all items that have affinity with this item
         affinity_partners = set()
         for a, b in self.positive_affinities:
@@ -185,21 +185,30 @@ class MultiBinPackingEnv:
                 affinity_partners.add(b)
             if item_id == b:
                 affinity_partners.add(a)
-        
+
         if not affinity_partners:
             return True  # No affinity constraints for this item
-        
-        # Check: are any affinity partners already placed in OTHER bins?
+
+        # Check constraints across all bins
         for bin_idx, bin in enumerate(self.bins):
             if bin_idx == target_bin_idx:
                 continue  # Placing in same bin is OK
-            
-            # Check if this bin contains any affinity partners
+
+            # CRITICAL: If this same item_id is already placed in another bin,
+            # we must place this instance in the SAME bin (not target_bin)
+            # This prevents splitting multiple instances of the same type across bins
+            # when they have affinity constraints
+            if item_id in bin.item_ids_in_bin:
+                # This item_id already exists in a different bin!
+                # With affinity constraints, all instances must stay together
+                return False
+
+            # Check if any affinity partners are already placed in other bins
             for partner_id in affinity_partners:
                 if partner_id in bin.item_ids_in_bin:
                     # VIOLATION: Partner already in different bin!
                     return False
-        
+
         return True
 
     def enumerate_actions(self):
