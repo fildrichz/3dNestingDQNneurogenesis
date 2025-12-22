@@ -90,12 +90,12 @@ def extract_patches_for_actions(env, actions, patch_size: int = 7):
 def pad_patches(patches: np.ndarray, max_actions: int, patch_size: int) -> np.ndarray:
     """
     Pad patches array to max_actions size.
-    
+
     Args:
         patches: (A, patch_size, patch_size) array
         max_actions: Target size
         patch_size: Patch dimensions
-    
+
     Returns:
         padded: (max_actions, patch_size, patch_size) array
     """
@@ -103,3 +103,64 @@ def pad_patches(patches: np.ndarray, max_actions: int, patch_size: int) -> np.nd
     padded = np.zeros((max_actions, patch_size, patch_size), dtype=np.float32)
     padded[:A] = patches[:A]
     return padded
+
+
+def extract_multiscale_patches_for_actions(env, actions, base_patch_size: int = 7):
+    """
+    Extract heightmap patches at multiple scales for all actions.
+
+    Args:
+        env: MultiBinPackingEnv instance
+        actions: List of action tuples
+        base_patch_size: Base patch size (medium scale)
+
+    Returns:
+        Tuple of (patches_small, patches_medium, patches_large)
+        Each: (num_actions, patch_size, patch_size) array
+    """
+    W, D, H = env.bin_size
+
+    # Calculate three scales
+    small_size = max(3, base_patch_size // 2)
+    medium_size = base_patch_size
+    large_size = min(15, base_patch_size * 2)
+
+    patches_small = []
+    patches_medium = []
+    patches_large = []
+
+    for action in actions:
+        if action is None:
+            # Padding action - return zero patches
+            patches_small.append(np.zeros((small_size, small_size), dtype=np.float32))
+            patches_medium.append(np.zeros((medium_size, medium_size), dtype=np.float32))
+            patches_large.append(np.zeros((large_size, large_size), dtype=np.float32))
+        else:
+            # Unpack action
+            bin_idx, item_idx, ems_idx, rot_idx, ems, size, weight, item_id = action
+            target_bin = env.bins[bin_idx]
+            ex, ey, ez = ems.x, ems.y, ems.z
+
+            # Extract patches at three scales
+            patch_s = extract_heightmap_patch(
+                target_bin.heightmap, ex, ey,
+                small_size, target_bin.resolution, W, D, H
+            )
+            patch_m = extract_heightmap_patch(
+                target_bin.heightmap, ex, ey,
+                medium_size, target_bin.resolution, W, D, H
+            )
+            patch_l = extract_heightmap_patch(
+                target_bin.heightmap, ex, ey,
+                large_size, target_bin.resolution, W, D, H
+            )
+
+            patches_small.append(patch_s)
+            patches_medium.append(patch_m)
+            patches_large.append(patch_l)
+
+    return (
+        np.array(patches_small, dtype=np.float32),
+        np.array(patches_medium, dtype=np.float32),
+        np.array(patches_large, dtype=np.float32)
+    )

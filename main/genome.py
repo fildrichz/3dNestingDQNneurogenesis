@@ -50,6 +50,9 @@ class NetworkGenome:
         'patch_size': {'type': 'multiplicative', 'base': 7, 'min': 3, 'max': 15},
         'cnn_channels': [[8, 16], [16, 32], [32, 64], [16, 48]],  # Discrete (complex structure)
 
+        # Item embeddings
+        'item_embed_dim': {'type': 'multiplicative', 'base': 16, 'min': 8, 'max': 32},
+
         # Regularization - discrete (non-integer floats)
         'dropout': [0.0, 0.05, 0.1, 0.15, 0.2],
 
@@ -128,7 +131,7 @@ class NetworkGenome:
 
     def to_dqn_config(self, obs_dim: int, action_feat_dim: int,
                      max_actions: int, device: str = "cpu",
-                     total_episodes: int = None) -> DQNConfigEnhanced:
+                     total_episodes: int = None, num_item_types: int = 100) -> DQNConfigEnhanced:
         # Calculate epsilon decay if total_episodes provided
         if total_episodes is not None:
             from dqn_core.dqn_enhanced import calculate_dynamic_epsilon_decay
@@ -188,6 +191,9 @@ class NetworkGenome:
             cnn_channels=self.genes['cnn_channels'],
             dropout=self.genes['dropout'],
             activation=self.genes['activation'],
+
+            item_embed_dim=self.genes['item_embed_dim'],
+            num_item_types=num_item_types,
 
             lr=self.genes['lr'],
             batch_size=self.genes['batch_size'],

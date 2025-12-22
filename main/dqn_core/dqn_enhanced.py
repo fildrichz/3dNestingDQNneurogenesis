@@ -291,6 +291,37 @@ class HeightmapCNN(nn.Module):
         # patches: (B, 1, patch_size, patch_size)
         return self.cnn(patches)
 
+class MultiScaleHeightmapCNN(nn.Module):
+    """Multi-scale CNN for heightmap patches - sees local, medium, and global context"""
+    def __init__(self, base_patch_size:int=7, out_dim:int=64, channels:list=None, activation=nn.ReLU):
+        super().__init__()
+        self.base_patch_size = base_patch_size
+
+        # Three scales: half, base, double (e.g., 3, 7, 15 for base=7)
+        self.small_size = max(3, base_patch_size // 2)
+        self.medium_size = base_patch_size
+        self.large_size = min(15, base_patch_size * 2)
+
+        # Each scale gets its own CNN (shared architecture, different parameters)
+        out_per_scale = out_dim // 3  # Split output evenly across scales
+        self.small_cnn = HeightmapCNN(self.small_size, out_per_scale, channels, activation)
+        self.medium_cnn = HeightmapCNN(self.medium_size, out_per_scale, channels, activation)
+        self.large_cnn = HeightmapCNN(self.large_size, out_per_scale, channels, activation)
+
+    def forward(self, patches_small, patches_medium, patches_large):
+        """
+        Args:
+            patches_small: (B, 1, small_size, small_size)
+            patches_medium: (B, 1, medium_size, medium_size)
+            patches_large: (B, 1, large_size, large_size)
+        Returns:
+            (B, out_dim) concatenated embeddings
+        """
+        z_small = self.small_cnn(patches_small)
+        z_medium = self.medium_cnn(patches_medium)
+        z_large = self.large_cnn(patches_large)
+        return torch.cat([z_small, z_medium, z_large], dim=-1)
+
 class SimpleHead(nn.Module):
     def __init__(self, in_dim:int, hidden:int=256, dropout:float=0.0):
         super().__init__()
@@ -304,11 +335,12 @@ class SimpleHead(nn.Module):
         return self.net(z)
 
 class QNetworkEnhanced(nn.Module):
-    """Enhanced Q-Network with heightmap CNN and Transformer/Set Transformer attention"""
+    """Enhanced Q-Network with multi-scale heightmap CNN, item embeddings, and Transformer attention"""
     def __init__(self, obs_dim:int, action_feat_dim:int, hidden:int=256, enc_layers:int=2,
                  head_hidden:int=256, heightmap_patch_size:int=7, use_attention:bool=True,
                  attention_type:str="standard", attention_heads:int=4, num_inducing_points:int=32,
-                 cnn_channels:list=None, dropout:float=0.0, activation:str="relu"):
+                 cnn_channels:list=None, dropout:float=0.0, activation:str="relu",
+                 item_embed_dim:int=16, num_item_types:int=100):
         super().__init__()
         self.patch_size = heightmap_patch_size
         self.use_attention = use_attention
@@ -321,12 +353,16 @@ class QNetworkEnhanced(nn.Module):
         self.state_enc = MLP(obs_dim, hidden=hidden, out_dim=hidden, layers=enc_layers,
                            activation=act_fn, dropout=dropout)
 
-        # Heightmap CNN
-        self.heightmap_cnn = HeightmapCNN(patch_size=heightmap_patch_size, out_dim=64,
-                                        channels=cnn_channels, activation=act_fn)
+        # Multi-scale Heightmap CNN
+        self.heightmap_cnn = MultiScaleHeightmapCNN(base_patch_size=heightmap_patch_size,
+                                                   out_dim=64, channels=cnn_channels,
+                                                   activation=act_fn)
 
-        # Action encoder (now takes action_feats + heightmap embedding)
-        self.action_enc = MLP(action_feat_dim + 64, hidden=hidden, out_dim=hidden,
+        # Item type embedding
+        self.item_embedding = nn.Embedding(num_item_types, item_embed_dim)
+
+        # Action encoder (now takes action_feats + multi-scale heightmap + item embedding)
+        self.action_enc = MLP(action_feat_dim + 64 + item_embed_dim, hidden=hidden, out_dim=hidden,
                             layers=enc_layers, activation=act_fn, dropout=dropout)
 
         # Attention mechanism for action relationships
@@ -355,30 +391,45 @@ class QNetworkEnhanced(nn.Module):
 
         self.head = SimpleHead(2*hidden, hidden=head_hidden, dropout=dropout)
 
-    def forward(self, s:torch.Tensor, action_feats:torch.Tensor, 
-                heightmap_patches:torch.Tensor, action_mask:torch.Tensor) -> torch.Tensor:
+    def forward(self, s:torch.Tensor, action_feats:torch.Tensor,
+                heightmap_patches_small:torch.Tensor, heightmap_patches_medium:torch.Tensor,
+                heightmap_patches_large:torch.Tensor, item_ids:torch.Tensor,
+                action_mask:torch.Tensor) -> torch.Tensor:
         """
         Args:
             s: (B, obs_dim) - state observations
             action_feats: (B, A, action_feat_dim) - action features
-            heightmap_patches: (B, A, patch_size, patch_size) - heightmap patches for each action
+            heightmap_patches_small: (B, A, small_size, small_size) - small scale patches
+            heightmap_patches_medium: (B, A, medium_size, medium_size) - medium scale patches
+            heightmap_patches_large: (B, A, large_size, large_size) - large scale patches
+            item_ids: (B, A) - item type IDs for each action
             action_mask: (B, A) - 1 for valid actions, 0 for padding
-        
+
         Returns:
             q: (B, A) - Q-values for each action
         """
         B, A = action_feats.shape[:2]
-        
+
         # Encode state
         zs = self.state_enc(s)  # (B, hidden)
-        
-        # Process heightmap patches through CNN
-        h_patches = heightmap_patches.view(B*A, 1, self.patch_size, self.patch_size)
-        zh = self.heightmap_cnn(h_patches)  # (B*A, 64)
-        
-        # Combine action features with heightmap embeddings
+
+        # Process multi-scale heightmap patches through CNN
+        small_size = self.heightmap_cnn.small_size
+        medium_size = self.heightmap_cnn.medium_size
+        large_size = self.heightmap_cnn.large_size
+
+        h_patches_s = heightmap_patches_small.view(B*A, 1, small_size, small_size)
+        h_patches_m = heightmap_patches_medium.view(B*A, 1, medium_size, medium_size)
+        h_patches_l = heightmap_patches_large.view(B*A, 1, large_size, large_size)
+        zh = self.heightmap_cnn(h_patches_s, h_patches_m, h_patches_l)  # (B*A, 64)
+
+        # Embed item IDs
+        item_ids_flat = item_ids.view(B*A).long()
+        zi = self.item_embedding(item_ids_flat)  # (B*A, item_embed_dim)
+
+        # Combine action features with heightmap embeddings and item embeddings
         action_feats_flat = action_feats.view(B*A, -1)
-        combined = torch.cat([action_feats_flat, zh], dim=-1)  # (B*A, action_feat_dim + 64)
+        combined = torch.cat([action_feats_flat, zh, zi], dim=-1)  # (B*A, action_feat_dim + 64 + item_embed_dim)
         
         # Encode actions
         za = self.action_enc(combined)  # (B*A, hidden)
@@ -432,6 +483,8 @@ class DQNConfigEnhanced:
     cnn_channels: list = None  # CNN channel progression, e.g., [16, 32]
     dropout: float = 0.0  # Dropout rate
     activation: str = "relu"  # Activation function: "relu", "gelu", or "silu"
+    item_embed_dim: int = 16  # Item embedding dimension
+    num_item_types: int = 100  # Number of unique item types
     device: str = "cpu"
     double_dqn: bool = True
     warmup_steps: int = 1000
@@ -470,11 +523,13 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
-            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
+            attention_heads=cfg.attention_heads,
             num_inducing_points=cfg.num_inducing_points,
             cnn_channels=cfg.cnn_channels,
             dropout=cfg.dropout,
-            activation=cfg.activation
+            activation=cfg.activation,
+            item_embed_dim=cfg.item_embed_dim,
+            num_item_types=cfg.num_item_types
         ).to(self.device)
 
         self.q_target = QNetworkEnhanced(
@@ -484,11 +539,13 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
-            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
+            attention_heads=cfg.attention_heads,
             num_inducing_points=cfg.num_inducing_points,
             cnn_channels=cfg.cnn_channels,
             dropout=cfg.dropout,
-            activation=cfg.activation
+            activation=cfg.activation,
+            item_embed_dim=cfg.item_embed_dim,
+            num_item_types=cfg.num_item_types
         ).to(self.device)
 
         self.q_target.load_state_dict(self.q.state_dict())
