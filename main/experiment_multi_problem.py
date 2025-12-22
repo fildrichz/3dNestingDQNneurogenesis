@@ -224,6 +224,9 @@ def evaluate_genome_multi_problem(
                 if episode > 0 and step_count % 5 == 0:
                     agent.train_step()
 
+            # Update episode counter for epsilon decay
+            agent.on_episode_end()
+
         # Evaluation phase: Evaluate at eps=0 on ALL training problems
         if verbose:
             print(f"  Evaluating at eps=0 on {num_problems} training problems...")
@@ -855,6 +858,9 @@ def run_multi_problem_experiment(
 
             if episode > 0 and step_count % 5 == 0:
                 agent.train_step()
+
+        # Update episode counter for epsilon decay
+        agent.on_episode_end()
 
         if verbose and (episode + 1) % 100 == 0:
             print(f"  Episode {episode+1}/{training_episodes} completed")
