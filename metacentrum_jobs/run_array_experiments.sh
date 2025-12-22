@@ -56,14 +56,14 @@ import sys
 import numpy as np
 import torch
 
-print(f"✓ NumPy {np.__version__}")
-print(f"✓ PyTorch {torch.__version__}")
+print(f"[OK] NumPy {np.__version__}")
+print(f"[OK] PyTorch {torch.__version__}")
 
 if not torch.cuda.is_available():
-    print("✗ ERROR: GPU job but CUDA not available!")
+    print("[ERROR] ERROR: GPU job but CUDA not available!")
     sys.exit(1)
 
-print(f"✓ CUDA available")
+print(f"[OK] CUDA available")
 print(f"  Device: {torch.cuda.get_device_name(0)}")
 EOF
 

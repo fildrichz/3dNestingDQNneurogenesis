@@ -1,7 +1,7 @@
 """
 Multi-Bin Packing Environment - ENHANCED VERSION
 
-âœ… ENHANCEMENTS:
+[OK] ENHANCEMENTS:
    1. Heightmap CNN: Processes 7x7 patches around each placement position
       - Learns spatial patterns (corners, walls, valleys)
       - Adds 64-dim spatial embedding to action features
@@ -422,7 +422,7 @@ class MultiBinPackingEnv:
         target_bin = self.bins[bin_idx]
 
         # === COMPUTE POTENTIAL BEFORE PLACEMENT ===
-        # Potential-based shaping: Φ(s) = bin_utilization + β * EMS_quality
+        # Potential-based shaping: Phi(s) = bin_utilization + beta * EMS_quality
         # Use TARGET BIN's utilization (not global) for meaningful per-step rewards
         bin_vol_prev = sum(b.w * b.d * b.h for b in target_bin.placed)
         bin_util_prev = bin_vol_prev / self.bin_volume
@@ -450,7 +450,7 @@ class MultiBinPackingEnv:
         potential_next = bin_util_next + 0.3 * ems_quality_next
 
         # Potential-based shaped reward (theoretically sound - doesn't change optimal policy)
-        # F(s,a,s') = r + γ*Φ(s') - Φ(s)
+        # F(s,a,s') = r + gamma*Phi(s') - Phi(s)
         # Using per-bin utilization gives ~0.01-0.05 per step instead of ~0.001
         reward = (self.gamma * potential_next) - potential_prev
 
@@ -478,7 +478,7 @@ class MultiBinPackingEnv:
             if affinity_violations > 0:
                 reward -= 0.1 * affinity_violations
                 info["affinity_violations"] = affinity_violations
-                print(f"âš ï¸  WARNING: Affinity violation despite proactive blocking!")
+                print(f"   WARNING: Affinity violation despite proactive blocking!")
             
             info["utilization"] = util_next
             info["bins_used"] = bins_used
@@ -780,8 +780,8 @@ def train_multibin_pack_dqn(
     
     W, D, H = problem.bin_dimensions
     
-    print(f"\n“ PROBLEM SPECIFICATION:")
-    print(f"   Container: {W}—{D}—{H} (volume: {W*D*H:,})")
+    print(f"\nPROBLEM SPECIFICATION:")
+    print(f"   Container: {W}x{D}x{H} (volume: {W*D*H:,})")
     print(f"   Max weight per bin: {problem.max_weight}")
     print(f"   Max bins available: {problem.max_bins}")
     print(f"   Items to pack: {len(items)} items from {len(problem.items)} types")
@@ -1126,7 +1126,7 @@ def load_model(load_path: str, problem_path: str = None, device: str = None):
             gamma=cfg.gamma,
             problem=problem
         )
-        print(f"  Environment created: {W}×{D}×{H}")
+        print(f"  Environment created: {W}x{D}x{H}")
 
     if 'training_stats' in checkpoint:
         stats = checkpoint['training_stats']

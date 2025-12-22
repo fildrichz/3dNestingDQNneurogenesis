@@ -39,9 +39,9 @@ def get_adaptive_population_size(generation: int,
     Calculate dynamic population size based on evolution phase (2024 improvement).
 
     Strategy:
-    - Early phase (first 1/3): Larger population for exploration (exploration_ratio × base)
-    - Middle phase (middle 1/3): Normal population (1.0 × base)
-    - Late phase (final 1/3): Smaller population for exploitation (exploitation_ratio × base)
+    - Early phase (first 1/3): Larger population for exploration (exploration_ratio x base)
+    - Middle phase (middle 1/3): Normal population (1.0 x base)
+    - Late phase (final 1/3): Smaller population for exploitation (exploitation_ratio x base)
 
     This adapts computational resources to the search phase:
     - More diversity early when exploring the space
@@ -257,10 +257,10 @@ def evolve_architecture(problem,
         print(f"\n{'='*80}")
         print(f"GA-BASED NEURAL ARCHITECTURE EVOLUTION")
         print(f"{'='*80}")
-        print(f"Problem: {W}×{D}×{H} container, {len(items)} items")
+        print(f"Problem: {W}x{D}x{H} container, {len(items)} items")
         print(f"Base population size: {population_size}")
         if adaptive_population:
-            print(f"Adaptive population: ENABLED (exploration={exploration_ratio}×, middle=(1x), exploitation={exploitation_ratio}×)")
+            print(f"Adaptive population: ENABLED (exploration={exploration_ratio}x, middle=(1x), exploitation={exploitation_ratio}x)")
         else:
             print(f"Adaptive population: DISABLED (fixed size)")
         print(f"Generations: {generations}")
@@ -377,7 +377,7 @@ def evolve_architecture(problem,
             best_fitness_ever = gen_best.fitness
             best_genome_ever = gen_best
             if verbose:
-                print(f"\n✨ NEW BEST GENOME FOUND!")
+                print(f"\n*** NEW BEST GENOME FOUND!")
                 print(f"   Fitness: {best_fitness_ever:.4f}")
                 print(f"   Utilization: {gen_best.metrics['avg_utilization']:.3f}")
                 print(gen_best)
@@ -489,13 +489,13 @@ def evolve_architecture(problem,
             print(f"Generation {gen + 1} Summary:")
             print(f"  Population size: {len(population)}")
             print(f"  Best fitness: {gen_best.fitness:.4f} (improvement: {fitness_improvement:+.4f})")
-            print(f"  Avg fitness: {avg_fitness:.4f} ± {std_fitness:.4f}")
+            print(f"  Avg fitness: {avg_fitness:.4f} +/- {std_fitness:.4f}")
             print(f"  Best utilization: {gen_best.metrics['avg_utilization']:.3f}")
             print(f"  Avg utilization: {avg_util:.3f}")
             print(f"  Best items packed: {best_items}/{total_items} ({best_items/max(total_items,1):.1%})")
             print(f"  Avg items packed: {avg_items:.1f} (success rate: {packing_rate:.1%})")
-            print(f"  Bins used: {gen_best.metrics.get('avg_bins_used', 0):.1f} (avg: {avg_bins:.1f}±{std_bins:.1f})")
-            print(f"  Complexity: {gen_best.get_network_complexity():.3f}M params (avg: {avg_complexity:.3f}±{std_complexity:.3f}M)")
+            print(f"  Bins used: {gen_best.metrics.get('avg_bins_used', 0):.1f} (avg: {avg_bins:.1f}+/-{std_bins:.1f})")
+            print(f"  Complexity: {gen_best.get_network_complexity():.3f}M params (avg: {avg_complexity:.3f}+/-{std_complexity:.3f}M)")
             print(f"  Diversity: {diversity_score:.2%}")
             if stagnation_count > 0:
                 print(f"  Stagnation: {stagnation_count} generation(s)")
@@ -926,7 +926,7 @@ def plot_convergence_analysis(save_dir: str, output_file: Optional[str] = None):
         ax.bar(gens, improvements, color=colors, alpha=0.6)
         ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
         ax.set_xlabel('Generation')
-        ax.set_ylabel('Fitness Improvement (Δ)')
+        ax.set_ylabel('Fitness Improvement (Delta)')
         ax.set_title('Fitness Improvement per Generation')
         ax.grid(True, alpha=0.3, axis='y')
 
@@ -1342,16 +1342,16 @@ def generate_summary_report(save_dir: str, output_file: Optional[str] = None):
 
         # Check for low diversity
         if np.mean(history['diversity_score'][-3:]) < 0.3:
-            f.write("- ⚠️ **Low diversity detected** in final generations. Consider increasing mutation rate or population size.\n")
+            f.write("- WARNING: **Low diversity detected** in final generations. Consider increasing mutation rate or population size.\n")
 
         # Check for early convergence
         if 'stagnation_counter' in history and max(history['stagnation_counter']) > 5:
-            f.write("- ⚠️ **Extended stagnation detected**. Evolution may have converged early.\n")
+            f.write("- WARNING: **Extended stagnation detected**. Evolution may have converged early.\n")
 
         # Check complexity trends
         if len(history['avg_complexity']) > 3:
             if history['avg_complexity'][-1] > history['avg_complexity'][0] * 1.5:
-                f.write("- 📈 Network complexity increased significantly. Consider stronger parsimony pressure.\n")
+                f.write("- [CHART] Network complexity increased significantly. Consider stronger parsimony pressure.\n")
 
         f.write("\n---\n")
         f.write("*Report generated by ga_evolution.py*\n")

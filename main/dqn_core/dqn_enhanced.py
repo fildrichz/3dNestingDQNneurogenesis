@@ -336,7 +336,7 @@ class QNetworkEnhanced(nn.Module):
                 self.action_attention = SetTransformer(
                     dim_input=hidden,
                     dim_output=hidden,
-                    num_heads=attention_heads,  # ✅ Now uses evolved parameter
+                    num_heads=attention_heads,  # [OK] Now uses evolved parameter
                     num_inds=num_inducing_points,
                     ln=True
                 )
@@ -344,7 +344,7 @@ class QNetworkEnhanced(nn.Module):
                 # Standard Transformer (default)
                 encoder_layer = nn.TransformerEncoderLayer(
                     d_model=hidden,
-                    nhead=attention_heads,  # ✅ Now uses evolved parameter
+                    nhead=attention_heads,  # [OK] Now uses evolved parameter
                     dim_feedforward=hidden*2,
                     dropout=dropout,  # Use evolved dropout value directly
                     batch_first=True
@@ -470,7 +470,7 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
-            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
+            attention_heads=cfg.attention_heads,  # [OK] Now passed from config
             num_inducing_points=cfg.num_inducing_points,
             cnn_channels=cfg.cnn_channels,
             dropout=cfg.dropout,
@@ -484,7 +484,7 @@ class DQNAgentEnhanced:
             heightmap_patch_size=cfg.heightmap_patch_size,
             use_attention=cfg.use_attention,
             attention_type=cfg.attention_type,
-            attention_heads=cfg.attention_heads,  # ✅ Now passed from config
+            attention_heads=cfg.attention_heads,  # [OK] Now passed from config
             num_inducing_points=cfg.num_inducing_points,
             cnn_channels=cfg.cnn_channels,
             dropout=cfg.dropout,

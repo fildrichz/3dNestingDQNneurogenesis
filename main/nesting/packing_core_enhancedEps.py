@@ -1,4 +1,4 @@
-# packing_core_complete.py — Complete implementation with ALL constraints + gravity
+# packing_core_complete.py x Complete implementation with ALL constraints + gravity
 from typing import List, Tuple, Dict, Optional, Set
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
