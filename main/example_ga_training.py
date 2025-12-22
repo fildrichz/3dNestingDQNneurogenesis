@@ -173,7 +173,7 @@ def train_with_evolved_genome(problem_path: str,
     W, D, H = problem.bin_dimensions
 
     print("Problem Specification:")
-    print(f"  Container: {W}×{D}×{H} (volume: {W*D*H:,})")
+    print(f"  Container: {W}x{D}x{H} (volume: {W*D*H:,})")
     print(f"  Max weight per bin: {problem.max_weight}")
     print(f"  Max bins available: {problem.max_bins}")
     print(f"  Items to pack: {len(items)}")
@@ -215,7 +215,7 @@ def train_with_evolved_genome(problem_path: str,
     agent = DQNAgentEnhanced(cfg)
 
     print(f"Agent initialized on {device}")
-    print(f"  Heightmap patches: {cfg.heightmap_patch_size}×{cfg.heightmap_patch_size}")
+    print(f"  Heightmap patches: {cfg.heightmap_patch_size}x{cfg.heightmap_patch_size}")
     print(f"  Attention: {cfg.attention_type if cfg.use_attention else 'None'}")
     print(f"Starting training...\n")
 
@@ -411,7 +411,7 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None,
     W, D, H = problem.bin_dimensions
 
     print(f"\nProblem Specification:")
-    print(f"  Container: {W}×{D}×{H}")
+    print(f"  Container: {W}x{D}x{H}")
     print(f"  Items: {len(items)}")
 
     # Create environment to get obs_dim
@@ -457,7 +457,7 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None,
         agent.q.eval()  # Set to evaluation mode
 
     print(f"\nLoaded on device: {device}")
-    print(f"  Heightmap patches: {cfg.heightmap_patch_size}×{cfg.heightmap_patch_size}")
+    print(f"  Heightmap patches: {cfg.heightmap_patch_size}x{cfg.heightmap_patch_size}")
     print(f"  Attention: {cfg.attention_type if cfg.use_attention else 'None'}")
 
     # Display saved performance metrics
@@ -542,7 +542,7 @@ def continue_training_on_new_dataset(
     )
 
     print(f"\nNew Problem:")
-    print(f"  Container: {W}×{D}×{H}")
+    print(f"  Container: {W}x{D}x{H}")
     print(f"  Items: {len(items)}")
     print(f"{'='*80}\n")
 
@@ -734,7 +734,7 @@ def main():
     # Step 1: Load problem
     print("\n[1/4] Loading problem...")
     problem = load_problem(problem_path)
-    print(f"OK Loaded: {problem.bin_dimensions[0]}×{problem.bin_dimensions[1]}×{problem.bin_dimensions[2]} container")
+    print(f"OK Loaded: {problem.bin_dimensions[0]}x{problem.bin_dimensions[1]}x{problem.bin_dimensions[2]} container")
     
     # Step 2: Evolve architecture
     print("\n[2/4] Evolving architecture with GA...")

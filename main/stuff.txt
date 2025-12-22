@@ -1,0 +1,1 @@
+python experiment_multi_problem.py  --training-problem-ids 1 2 3  --test-problem-ids 7 8   --population-size 2  --generations 2  --episodes-per-eval 20  --training-episodes 30  --results-dir results/test_multi_problem

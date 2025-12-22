@@ -1,7 +1,7 @@
 """
 Multi-Bin Packing Environment - ENHANCED VERSION
 
-âœ… ENHANCEMENTS:
+[OK] ENHANCEMENTS:
    1. Heightmap CNN: Processes 7x7 patches around each placement position
       - Learns spatial patterns (corners, walls, valleys)
       - Adds 64-dim spatial embedding to action features
@@ -288,7 +288,7 @@ class MultiBinPackingEnv:
                 if affinity_violations > 0:
                     reward -= 0.1 * affinity_violations  # Small penalty
                     info["affinity_violations"] = affinity_violations
-                    print(f"âš ï¸  WARNING: Affinity violation despite proactive blocking!")
+                    print(f"   WARNING: Affinity violation despite proactive blocking!")
             else:
                 reward -= 0.2 * (len(self.items) / self.n_items)
             
@@ -355,7 +355,7 @@ class MultiBinPackingEnv:
             if affinity_violations > 0:
                 reward -= 0.1 * affinity_violations
                 info["affinity_violations"] = affinity_violations
-                print(f"âš ï¸  WARNING: Affinity violation despite proactive blocking!")
+                print(f"   WARNING: Affinity violation despite proactive blocking!")
             
             info["utilization"] = util_next
             info["bins_used"] = bins_used
@@ -641,8 +641,8 @@ def train_multibin_pack_dqn(
     
     W, D, H = problem.bin_dimensions
     
-    print(f"\n“¦ PROBLEM SPECIFICATION:")
-    print(f"   Container: {W}Ã—{D}Ã—{H} (volume: {W*D*H:,})")
+    print(f"\nPROBLEM SPECIFICATION:")
+    print(f"   Container: {W}x{D}x{H} (volume: {W*D*H:,})")
     print(f"   Max weight per bin: {problem.max_weight}")
     print(f"   Max bins available: {problem.max_bins}")
     print(f"   Items to pack: {len(items)} items from {len(problem.items)} types")
@@ -803,7 +803,7 @@ def train_multibin_pack_dqn(
                           f"Items: {items_placed:2d}/{len(items)} ({items_placed/len(items)*100:.0f}%) | "
                           f"Util: {util:.3f} (MA:{ma_util:.3f}) | "
                           f"Best: {best_bins}bins/{best_items}items | "
-                          f"µ:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
+                          f"epsilon:{agent.epsilon():.3f} | L:{avg_loss:.4f}")
                     
                     # Per-bin breakdown every 50 episodes
                     if (ep + 1) % 50 == 0 and "per_bin_utils" in info:

@@ -1,4 +1,4 @@
-# packing_core_complete.py — Complete implementation with ALL constraints + gravity + EMS
+# packing_core_complete.py x Complete implementation with ALL constraints + gravity + EMS
 from typing import List, Tuple, Dict, Optional, Set
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
@@ -468,11 +468,11 @@ class Container(box3d):
 
         if not (fits_container_final and relpos_ok_final):
             # Debug: This should rarely happen if enumerate_actions checks gravity properly
-            print(f"⚠️  Placement failed constraint re-check at final position {final_ep}")
+            print(f"WARNING:  Placement failed constraint re-check at final position {final_ep}")
             print(f"    Item: id={item_id}, size={size}")
             print(f"    Initial EMS: ({ems.x}, {ems.y}, {ems.z})")
             print(f"    After gravity: ({x}, {y}, {z}) -> ({x}, {y}, {final_z})")
-            print(f"    fits_container: {fits_container_final} (container: {self.w}×{self.d}×{self.h})")
+            print(f"    fits_container: {fits_container_final} (container: {self.w}x{self.d}x{self.h})")
             if not fits_container_final:
                 print(f"      REASON: Box at ({x},{y},{final_z}) + size {size} exceeds container bounds!")
                 print(f"      final_z + h = {final_z} + {h} = {final_z + h} > {self.h}")
