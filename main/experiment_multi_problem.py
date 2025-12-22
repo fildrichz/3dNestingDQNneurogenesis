@@ -420,7 +420,16 @@ def evolve_multi_problem_architecture(
             'std_fitness': [],
             'best_utilization': [],
             'avg_utilization': [],
+            'best_bins': [],
+            'avg_bins': [],
+            'std_bins': [],
+            'avg_complexity': [],
+            'std_complexity': [],
             'mutation_rate': [],
+            'diversity_score': [],
+            'best_items_packed': [],
+            'avg_items_packed': [],
+            'packing_success_rate': [],
         }
 
     # Main evolution loop
@@ -494,6 +503,17 @@ def evolve_multi_problem_architecture(
         avg_fitness = np.mean(fitness_scores)
         std_fitness = np.std(fitness_scores)
         avg_util = np.mean([g.metrics['avg_utilization'] for g in population])
+        avg_bins = np.mean([g.metrics.get('avg_bins_used', 0) for g in population])
+        std_bins = np.std([g.metrics.get('avg_bins_used', 0) for g in population])
+        avg_complexity = np.mean([g.get_network_complexity() for g in population])
+        std_complexity = np.std([g.get_network_complexity() for g in population])
+
+        # Calculate diversity (unique gene combinations)
+        gene_signatures = set()
+        for g in population:
+            sig = tuple(sorted(g.genes.items(), key=lambda x: x[0]))
+            gene_signatures.add(str(sig))
+        diversity_score = len(gene_signatures) / len(population)
 
         history['generation'].append(gen + 1)
         history['best_fitness'].append(gen_best.fitness)
@@ -501,7 +521,17 @@ def evolve_multi_problem_architecture(
         history['std_fitness'].append(std_fitness)
         history['best_utilization'].append(gen_best.metrics['avg_utilization'])
         history['avg_utilization'].append(avg_util)
+        history['best_bins'].append(gen_best.metrics.get('avg_bins_used', 0))
+        history['avg_bins'].append(avg_bins)
+        history['std_bins'].append(std_bins)
+        history['avg_complexity'].append(avg_complexity)
+        history['std_complexity'].append(std_complexity)
         history['mutation_rate'].append(mutation_rate)
+        history['diversity_score'].append(diversity_score)
+        # For items packed, we'll use a placeholder since multi-problem doesn't track this
+        history['best_items_packed'].append(0)
+        history['avg_items_packed'].append(0)
+        history['packing_success_rate'].append(1.0)
 
         gen_time = time.time() - gen_start_time
 
@@ -865,11 +895,13 @@ def run_multi_problem_experiment(
         if verbose and (episode + 1) % 100 == 0:
             print(f"  Episode {episode+1}/{training_episodes} completed")
 
-    # Evaluate trained model on test problems
+    # Phase 3: Evaluate trained model on test problems and generate visualizations
     if verbose:
         print(f"\n[Phase 3/3] Evaluating on {len(test_problems)} test problems...")
 
     test_results = []
+    test_visualizations = {}  # Store best episode state for each problem
+
     for problem, path in test_problems:
         items = load_problem_as_items(problem)
         W, D, H = problem.bin_dimensions
@@ -884,12 +916,14 @@ def run_multi_problem_experiment(
             problem=problem
         )
 
-        # Run multiple evaluation episodes
+        # Run multiple evaluation episodes, track best for visualization
         problem_utils = []
         problem_bins = []
         problem_items = []
+        best_util = 0.0
+        best_env_state = None
 
-        for _ in range(10):
+        for eval_ep in range(10):
             obs = env.reset(items=items.copy())
             done = False
             step_count = 0
@@ -919,12 +953,26 @@ def run_multi_problem_experiment(
             problem_bins.append(bins_used)
             problem_items.append(items_packed)
 
+            # Track best episode for visualization
+            if utilization > best_util:
+                best_util = utilization
+                # Store a copy of the bins for visualization
+                import copy
+                best_env_state = copy.deepcopy(env.bins)
+
         test_results.append({
             'problem': path.stem,
             'avg_utilization': np.mean(problem_utils),
             'avg_bins': np.mean(problem_bins),
             'avg_items': np.mean(problem_items)
         })
+
+        # Store best episode state for visualization
+        test_visualizations[path.stem] = {
+            'bins': best_env_state,
+            'bin_volume': env.bin_volume,
+            'utilization': best_util
+        }
 
         if verbose:
             print(f"  {path.stem}: util={np.mean(problem_utils):.3f}, "
@@ -947,12 +995,45 @@ def run_multi_problem_experiment(
     if verbose:
         print(f"\nTrained model saved to: {model_save_path}")
 
-    # Clean up
+    # Clean up agent
     del agent
     for env, _, _ in training_envs:
         del env
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+    # Generate bin packing visualizations for each test problem
+    if verbose:
+        print(f"\nGenerating bin packing visualizations for test problems...")
+
+    for problem_name, viz_data in test_visualizations.items():
+        viz_dir = results_path / f"visualizations_{problem_name}"
+        viz_dir.mkdir(exist_ok=True)
+
+        bins = viz_data['bins']
+        bin_volume = viz_data['bin_volume']
+
+        if bins is not None:
+            for i, bin_obj in enumerate(bins):
+                if len(bin_obj.placed) > 0:
+                    bin_util = sum(b.w * b.d * b.h for b in bin_obj.placed) / bin_volume
+
+                    # Save filled version (clean)
+                    bin_obj.plot3d_filled(
+                        title=f"{problem_name} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f})",
+                        save_path=str(viz_dir / f"bin_{i+1}_filled.png"),
+                        show=False
+                    )
+
+                    # Save version with EMS (for analysis)
+                    bin_obj.plot3d(
+                        title=f"{problem_name} - Bin {i+1} ({len(bin_obj.placed)} items, util:{bin_util:.3f}) [with EMS]",
+                        save_path=str(viz_dir / f"bin_{i+1}_with_ems.png"),
+                        show=False
+                    )
+
+            if verbose:
+                print(f"  {problem_name}: Saved {len([b for b in bins if len(b.placed) > 0])} bin visualizations to {viz_dir}")
 
     # Save final results
     experiment_time = time.time() - experiment_start_time
