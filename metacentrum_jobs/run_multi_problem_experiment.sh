@@ -95,7 +95,8 @@ $PYTHON -u experiment_multi_problem.py \
     --training-episodes "$TRAINING_EPISODES" \
     --elite-size "$ELITE_SIZE" \
     --mutation-rate "$MUTATION_RATE" \
-    --seed "$SEED"
+    --seed "$SEED" \
+    --no-curriculum
 
 EXIT_CODE=$?
 
