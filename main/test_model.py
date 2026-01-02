@@ -237,7 +237,7 @@ def evaluate_model_on_problem(
         print(f"    Items packed: {items_packed}/{len(items)}")
         print(f"    Utilization: {utilization:.4f}")
         print(f"    Total reward: {episode_reward:.4f}")
-        print(f"    All items packed: {'✓' if all_packed else '✗'}")
+        print(f"    All items packed: {'YES' if all_packed else 'NO'}")
 
         # Generate visualization for first episode if requested
         if visualize and episode == 0 and output_dir:
