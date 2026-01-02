@@ -68,7 +68,14 @@ def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -
     # Load trained weights
     print(f"Loading model weights from: {model_path}")
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-    agent.q.load_state_dict(checkpoint)
+
+    # Extract model state dict from checkpoint (checkpoint contains multiple keys)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model_state = checkpoint['model_state_dict']
+    else:
+        model_state = checkpoint
+
+    agent.q.load_state_dict(model_state)
     agent.q.eval()  # Set to evaluation mode
 
     # Disable exploration (use greedy policy)
