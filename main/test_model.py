@@ -21,7 +21,11 @@ import sys
 # Import project modules
 from genome import NetworkGenome
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
-from packing_with_dqncore2_enhanced import MultiBinPackingEnv, build_action_features
+from packing_with_dqncore2_enhanced import (
+    MultiBinPackingEnv,
+    build_action_features,
+    load_problem_as_items
+)
 from nesting.dataset_loader import load_problem
 from nesting.heightmap_utils import extract_patches_for_actions
 
@@ -129,15 +133,8 @@ def evaluate_model_on_problem(
     print(f"  Positive affinities: {len(problem.positive_affinities)}")
     print(f"  Relative positioning constraints: {len(problem.relative_pos)}")
 
-    # Prepare items list (expand quantities)
-    items = []
-    for item in problem.items:
-        for _ in range(item.quantity):
-            items.append({
-                'id': item.id,
-                'size': (item.length, item.width, item.height),
-                'weight': item.weight
-            })
+    # Prepare items list (expand quantities) - use correct format: (length, width, height, weight, item_id)
+    items = load_problem_as_items(problem)
 
     # Get patch size from genome
     patch_size = genome.genes.get('patch_size', 7)
@@ -203,8 +200,9 @@ def evaluate_model_on_problem(
         items_left = sum(1 for item in env.items if item is not None)
 
         # Calculate utilization
+        # Items are tuples: (length, width, height, weight, item_id)
         total_item_volume = sum(
-            item['size'][0] * item['size'][1] * item['size'][2]
+            item[0] * item[1] * item[2]  # length * width * height
             for item in items
         )
         packed_volume = sum(
