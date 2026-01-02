@@ -83,7 +83,7 @@ def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -
     agent.q.eval()  # Set to evaluation mode
 
     # Disable exploration (use greedy policy)
-    agent.epsilon = 0.0
+    agent._eps = 0.0  # Set internal epsilon to 0 for greedy policy
 
     print("Model loaded successfully!")
     return agent, genome
