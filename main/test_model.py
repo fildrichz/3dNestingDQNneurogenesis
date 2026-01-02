@@ -19,7 +19,7 @@ from typing import Dict, List, Tuple
 import sys
 
 # Import project modules
-from genome import Genome
+from genome import NetworkGenome
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
 from packing_with_dqncore2_enhanced import MultiBinPackingEnv
 from nesting.dataset_loader import load_problem
@@ -31,7 +31,7 @@ from example_ga_training import (
 )
 
 
-def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -> Tuple[DQNAgentEnhanced, Genome]:
+def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -> Tuple[DQNAgentEnhanced, NetworkGenome]:
     """
     Load a trained model and its genome configuration.
 
@@ -48,7 +48,7 @@ def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -
         genome_data = json.load(f)
 
     # Reconstruct genome
-    genome = Genome()
+    genome = NetworkGenome()
     genome.genes = genome_data['genes']
 
     print(f"Loaded genome with configuration:")
@@ -85,7 +85,7 @@ def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -
 
 def evaluate_model_on_problem(
     agent: DQNAgentEnhanced,
-    genome: Genome,
+    genome: NetworkGenome,
     problem_path: str,
     num_episodes: int = 10,
     visualize: bool = False,
