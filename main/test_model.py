@@ -314,29 +314,45 @@ def visualize_solution(env: MultiBinPackingEnv, problem_path: str, output_dir: s
 
 
 def main():
+    # Get script directory for relative paths
+    script_dir = Path(__file__).parent
+
+    # Default paths (relative to script directory)
+    default_dataset_dir = script_dir / "nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Input"
+    default_model_path = script_dir / "trainedModels/trained_model.pth"
+    default_genome_path = script_dir / "trainedModels/evolved_genome.json"
+
     parser = argparse.ArgumentParser(
         description="Test trained 3D bin packing models on specific problems",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Required arguments
+    # Model/genome paths (now optional with defaults)
     parser.add_argument(
         '--model-path',
         type=str,
-        required=True,
+        default=str(default_model_path),
         help='Path to trained model weights (.pth file)'
     )
     parser.add_argument(
         '--genome-path',
         type=str,
-        required=True,
+        default=str(default_genome_path),
         help='Path to evolved genome configuration (.json file)'
+    )
+
+    # Problem selection (can use either --problem-id or --problem-file)
+    parser.add_argument(
+        '--problem-id',
+        type=int,
+        default=1,
+        help='Problem ID to test (e.g., 1 for 3dBPP_1.txt). Ignored if --problem-file is specified.'
     )
     parser.add_argument(
         '--problem-file',
         type=str,
-        required=True,
-        help='Path to problem file to solve'
+        default=None,
+        help='Path to specific problem file (overrides --problem-id)'
     )
 
     # Optional arguments
@@ -383,6 +399,13 @@ def main():
 
     args = parser.parse_args()
 
+    # Determine problem file path
+    if args.problem_file is None:
+        # Use problem ID to construct path
+        problem_file = default_dataset_dir / f"3dBPP_{args.problem_id}.txt"
+    else:
+        problem_file = Path(args.problem_file)
+
     # Validate paths
     if not Path(args.model_path).exists():
         print(f"Error: Model file not found: {args.model_path}")
@@ -392,8 +415,8 @@ def main():
         print(f"Error: Genome file not found: {args.genome_path}")
         sys.exit(1)
 
-    if not Path(args.problem_file).exists():
-        print(f"Error: Problem file not found: {args.problem_file}")
+    if not problem_file.exists():
+        print(f"Error: Problem file not found: {problem_file}")
         sys.exit(1)
 
     # Load model
@@ -407,7 +430,7 @@ def main():
     results = evaluate_model_on_problem(
         agent=agent,
         genome=genome,
-        problem_path=args.problem_file,
+        problem_path=str(problem_file),
         num_episodes=args.num_episodes,
         visualize=args.visualize,
         output_dir=args.output_dir,

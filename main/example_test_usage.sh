@@ -2,55 +2,27 @@
 # Example usage of model testing scripts
 #
 # This script demonstrates how to test trained models on specific problems.
-# Adjust the paths below to match your actual model and problem locations.
-
-# Set paths (ADJUST THESE TO YOUR ACTUAL PATHS)
-MODEL_PATH="results/experiment_multi_problem/trained_model.pth"
-GENOME_PATH="results/experiment_multi_problem/evolved_genome.json"
-DATASET_DIR="nesting/inputData/Thpack/Input"
+# The scripts now use predetermined paths by default:
+#   - Model/Genome: trainedModels/trained_model.pth and evolved_genome.json
+#   - Dataset: nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Input
 
 echo "========================================"
 echo "Model Testing Examples"
 echo "========================================"
 echo ""
-
-# Check if model files exist
-if [ ! -f "$MODEL_PATH" ]; then
-    echo "ERROR: Model file not found: $MODEL_PATH"
-    echo "Please train a model first using experiment_multi_problem.py"
-    exit 1
-fi
-
-if [ ! -f "$GENOME_PATH" ]; then
-    echo "ERROR: Genome file not found: $GENOME_PATH"
-    echo "Please train a model first using experiment_multi_problem.py"
-    exit 1
-fi
-
-if [ ! -d "$DATASET_DIR" ]; then
-    echo "ERROR: Dataset directory not found: $DATASET_DIR"
-    echo "Please check your dataset path"
-    exit 1
-fi
-
-echo "Found model files:"
-echo "  Model: $MODEL_PATH"
-echo "  Genome: $GENOME_PATH"
-echo "  Dataset: $DATASET_DIR"
+echo "Note: Scripts use default paths from trainedModels/ folder"
+echo "You can override with --model-path, --genome-path, --dataset-dir"
 echo ""
 
-# Example 1: Test on a single problem with visualization
+# Example 1: Test on a single problem with visualization (using defaults)
 echo "========================================"
-echo "Example 1: Single Problem Test"
+echo "Example 1: Single Problem Test (Default: Problem 1)"
 echo "========================================"
 echo ""
-echo "Testing on problem 3dBPP_1.txt with visualization..."
+echo "Testing on problem 3dBPP_1.txt with visualization (using default paths)..."
 echo ""
 
 python test_model.py \
-    --model-path "$MODEL_PATH" \
-    --genome-path "$GENOME_PATH" \
-    --problem-file "$DATASET_DIR/3dBPP_1.txt" \
     --num-episodes 5 \
     --visualize \
     --save-results \
@@ -60,19 +32,33 @@ echo ""
 echo "Results saved to: test_results_example1/"
 echo ""
 
-# Example 2: Batch test on multiple problems
+# Example 2: Test a specific problem by ID
 echo "========================================"
-echo "Example 2: Batch Test (Multiple Problems)"
+echo "Example 2: Test Specific Problem by ID"
 echo "========================================"
 echo ""
-echo "Testing on problems 1, 2, 3, 4, 5..."
+echo "Testing problem 3dBPP_4.txt (using --problem-id 4)..."
+echo ""
+
+python test_model.py \
+    --problem-id 4 \
+    --num-episodes 5 \
+    --visualize \
+    --output-dir "test_results_example2"
+
+echo ""
+echo "Results saved to: test_results_example2/"
+echo ""
+
+# Example 3: Batch test on multiple problems (using defaults)
+echo "========================================"
+echo "Example 3: Batch Test (Default: Problems 1-5)"
+echo "========================================"
+echo ""
+echo "Testing on problems 1, 2, 3, 4, 5 (using default paths)..."
 echo ""
 
 python test_model_batch.py \
-    --model-path "$MODEL_PATH" \
-    --genome-path "$GENOME_PATH" \
-    --dataset-dir "$DATASET_DIR" \
-    --problem-ids 1 2 3 4 5 \
     --num-episodes 5 \
     --output-dir "test_results_batch_example"
 
@@ -80,26 +66,25 @@ echo ""
 echo "Results saved to: test_results_batch_example/"
 echo ""
 
-# Example 3: Quick test without visualization
+# Example 4: Batch test with custom problem IDs
 echo "========================================"
-echo "Example 3: Quick Test (No Visualization)"
+echo "Example 4: Batch Test (Custom Problems)"
 echo "========================================"
 echo ""
-echo "Quick test on problem 3dBPP_2.txt..."
+echo "Testing on problems 6, 7, 8, 9..."
 echo ""
 
-python test_model.py \
-    --model-path "$MODEL_PATH" \
-    --genome-path "$GENOME_PATH" \
-    --problem-file "$DATASET_DIR/3dBPP_2.txt" \
+python test_model_batch.py \
+    --problem-ids 6 7 8 9 \
     --num-episodes 3 \
-    --output-dir "test_results_quick"
+    --output-dir "test_results_custom"
 
 echo ""
 echo "All examples completed!"
 echo ""
-echo "To run these examples individually:"
-echo "  1. Edit this script to adjust paths if needed"
-echo "  2. Comment out examples you don't want to run"
-echo "  3. Run: ./example_test_usage.sh"
+echo "Quick usage:"
+echo "  Test default problem:     python test_model.py"
+echo "  Test specific problem:    python test_model.py --problem-id 4"
+echo "  Batch test defaults:      python test_model_batch.py"
+echo "  Batch test custom:        python test_model_batch.py --problem-ids 1 4 12"
 echo ""

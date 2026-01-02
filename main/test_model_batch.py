@@ -45,35 +45,43 @@ def get_problem_files(dataset_dir: str, problem_ids: List[int]) -> List[Path]:
 
 
 def main():
+    # Get script directory for relative paths
+    script_dir = Path(__file__).parent
+
+    # Default paths (relative to script directory)
+    default_dataset_dir = script_dir / "nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Input"
+    default_model_path = script_dir / "trainedModels/trained_model.pth"
+    default_genome_path = script_dir / "trainedModels/evolved_genome.json"
+
     parser = argparse.ArgumentParser(
         description="Batch test trained models on multiple 3D bin packing problems",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Required arguments
+    # Model/genome paths (now optional with defaults)
     parser.add_argument(
         '--model-path',
         type=str,
-        required=True,
+        default=str(default_model_path),
         help='Path to trained model weights (.pth file)'
     )
     parser.add_argument(
         '--genome-path',
         type=str,
-        required=True,
+        default=str(default_genome_path),
         help='Path to evolved genome configuration (.json file)'
     )
     parser.add_argument(
         '--dataset-dir',
         type=str,
-        required=True,
+        default=str(default_dataset_dir),
         help='Directory containing problem files'
     )
     parser.add_argument(
         '--problem-ids',
         type=int,
         nargs='+',
-        required=True,
+        default=[1, 2, 3, 4, 5],
         help='List of problem IDs to test (e.g., 1 2 3 4 5)'
     )
 

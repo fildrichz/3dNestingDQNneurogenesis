@@ -10,24 +10,33 @@
 
 ## Quick Start
 
-### Test a single problem:
+**Prerequisites:** Place your trained model and genome in `trainedModels/` folder:
+- `trainedModels/trained_model.pth`
+- `trainedModels/evolved_genome.json`
+
+### Test a single problem (using defaults):
 ```bash
-python test_model.py \
-    --model-path results/experiment_multi_problem/trained_model.pth \
-    --genome-path results/experiment_multi_problem/evolved_genome.json \
-    --problem-file nesting/inputData/Thpack/Input/3dBPP_1.txt \
-    --num-episodes 10 \
-    --visualize
+python test_model.py
 ```
 
-### Test multiple problems:
+### Test a specific problem by ID:
 ```bash
-python test_model_batch.py \
-    --model-path results/experiment_multi_problem/trained_model.pth \
-    --genome-path results/experiment_multi_problem/evolved_genome.json \
-    --dataset-dir nesting/inputData/Thpack/Input \
-    --problem-ids 1 2 3 4 5 \
-    --num-episodes 10
+python test_model.py --problem-id 4  # Tests 3dBPP_4.txt
+```
+
+### Test with visualization:
+```bash
+python test_model.py --visualize --num-episodes 10
+```
+
+### Test multiple problems (using defaults: problems 1-5):
+```bash
+python test_model_batch.py
+```
+
+### Test custom problem set:
+```bash
+python test_model_batch.py --problem-ids 1 4 12  # Test problems
 ```
 
 ### Run examples:
