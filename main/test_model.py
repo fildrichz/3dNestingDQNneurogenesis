@@ -21,14 +21,9 @@ import sys
 # Import project modules
 from genome import NetworkGenome
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
-from packing_with_dqncore2_enhanced import MultiBinPackingEnv
+from packing_with_dqncore2_enhanced import MultiBinPackingEnv, build_action_features
 from nesting.dataset_loader import load_problem
 from nesting.heightmap_utils import extract_patches_for_actions
-from example_ga_training import (
-    build_action_features,
-    get_placement_location,
-    run_one_episode
-)
 
 
 def load_trained_model(model_path: str, genome_path: str, device: str = "cpu") -> Tuple[DQNAgentEnhanced, NetworkGenome]:
