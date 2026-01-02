@@ -154,6 +154,10 @@ def evaluate_model_on_problem(
     total_items_packed = 0
     successful_episodes = 0
 
+    # Track best episode for visualization
+    best_utilization = 0.0
+    best_env_state = None
+
     # Run evaluation episodes
     for episode in range(num_episodes):
         print(f"\n--- Episode {episode + 1}/{num_episodes} ---")
@@ -239,9 +243,12 @@ def evaluate_model_on_problem(
         print(f"    Total reward: {episode_reward:.4f}")
         print(f"    All items packed: {'YES' if all_packed else 'NO'}")
 
-        # Generate visualization for first episode if requested
-        if visualize and episode == 0 and output_dir:
-            visualize_solution(env, problem_path, output_dir)
+        # Track best episode for visualization
+        if utilization > best_utilization:
+            best_utilization = utilization
+            # Store a copy of the environment state for visualization
+            if visualize and output_dir:
+                best_env_state = env
 
     # Calculate averages
     avg_utilization = total_utilization / num_episodes
@@ -270,6 +277,11 @@ def evaluate_model_on_problem(
     print(f"Success rate: {success_rate:.2%} ({successful_episodes}/{num_episodes})")
     print(f"{'='*80}\n")
 
+    # Generate visualization for best episode
+    if visualize and output_dir and best_env_state is not None:
+        print(f"\nGenerating visualization for best episode (utilization: {best_utilization:.4f})...")
+        visualize_solution(best_env_state, problem_path, output_dir)
+
     return results
 
 
@@ -283,8 +295,6 @@ def visualize_solution(env: MultiBinPackingEnv, problem_path: str, output_dir: s
         output_dir: Directory to save visualizations
     """
     try:
-        from nesting.packing_core_enhanced import plot_bin_3d
-
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -292,23 +302,23 @@ def visualize_solution(env: MultiBinPackingEnv, problem_path: str, output_dir: s
         viz_dir = output_path / f"visualizations_{problem_name}"
         viz_dir.mkdir(exist_ok=True)
 
-        print(f"\nGenerating visualizations in: {viz_dir}")
+        print(f"Generating visualizations in: {viz_dir}")
 
         for i, bin in enumerate(env.bins):
             if len(bin.placed) > 0:
-                # Filled bin
+                # Filled bin visualization
                 plot_path = viz_dir / f"bin_{i+1}_filled.png"
-                plot_bin_3d(bin, show_ems=False, title=f"Bin {i+1} - Filled", save_path=str(plot_path))
+                bin.plot3d_filled(save_path=str(plot_path), title=f"Bin {i+1} - Filled")
                 print(f"  Saved: {plot_path}")
 
-                # Bin with EMS
+                # Bin with EMS visualization
                 plot_path = viz_dir / f"bin_{i+1}_with_ems.png"
-                plot_bin_3d(bin, show_ems=True, title=f"Bin {i+1} - With EMS", save_path=str(plot_path))
+                bin.plot3d(save_path=str(plot_path), title=f"Bin {i+1} - With EMS")
                 print(f"  Saved: {plot_path}")
 
         print("Visualizations complete!")
 
-    except ImportError as e:
+    except Exception as e:
         print(f"Warning: Could not generate visualizations - {e}")
         print("Make sure matplotlib and required dependencies are installed.")
 
