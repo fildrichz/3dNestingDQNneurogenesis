@@ -46,7 +46,7 @@ Simple example demonstrating GA-based architecture evolution.
 python example_ga_training.py
 ```
 
-This runs a complete workflow: evolves architecture → trains model → compares with baseline
+This runs a complete workflow: evolves architecture -> trains model -> compares with baseline
 
 ## MetaCentrum Jobs
 
