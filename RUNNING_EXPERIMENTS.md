@@ -66,6 +66,8 @@ qsub metacentrum_jobs/run_multi_problem_experiment.sh
 
 Trains on problems 2,3,5,6,7,8,9,10,11 and tests on 1,4,12 by default.
 
+**Note:** This job was used for the generalized training experiment in the thesis experiment section.
+
 ### Array Job (Parallel)
 
 Runs multiple problems in parallel (one job per problem).
@@ -75,6 +77,8 @@ qsub metacentrum_jobs/run_array_experiments.sh
 ```
 
 Processes problems 3dBPP_1 through 3dBPP_12 in parallel using PBS array jobs.
+
+**Note:** This job was used to generate results for the problem-specific experiment section in the thesis.
 
 ## Dataset
 
@@ -104,6 +108,25 @@ Each file contains:
 - Bin dimensions and constraints
 - Item specifications (id, quantity, dimensions, weight)
 - Packing constraints (incompatibilities, affinities, etc.)
+
+### Generating New Datasets
+
+The dataset comes with a generator script:
+
+```
+nesting/inputData/Benchmark dataset and instance generator for Real-World 3dBPP/Q4RealBPP-DataGen.py
+```
+
+To create new problem instances:
+1. Open `Q4RealBPP-DataGen.py`
+2. Modify the internal parameters (num_categories, dimensions, weights, constraints)
+3. Run the script to generate new dataset files
+
+The generator allows customization of:
+- Number of item categories
+- Item dimension ranges (width, depth, height, weight)
+- Positive affinities and incompatibilities
+- Number of items per instance
 
 ## Quick Start
 
