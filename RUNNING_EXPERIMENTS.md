@@ -50,6 +50,29 @@ This runs a complete workflow: evolves architecture → trains model → compare
 
 ## MetaCentrum Jobs
 
+**Note:** All experiments can be run locally using the Python scripts above. MetaCentrum is used for long-running experiments (full population sizes and generations take hours/days).
+
+### Environment Setup
+
+Before running jobs on MetaCentrum, you need:
+
+1. **Create conda environment** (one-time setup):
+   ```bash
+   module add mambaforge
+   mamba create -p ~/dp_env python=3.10 numpy torch torchvision matplotlib -c pytorch
+   ```
+
+2. **Upload project** to your MetaCentrum home:
+   ```bash
+   scp -r dp-filip-spidla-spidlfil /storage/praha1/home/$USER/
+   ```
+
+The job scripts automatically:
+- Load the mambaforge module
+- Use the pre-configured environment at `~/dp_env/bin/python`
+- Copy project to scratch for faster I/O
+- Copy results back to storage when done
+
 ### Single Problem (GPU)
 
 ```bash
