@@ -96,7 +96,7 @@ def evaluate_genome_multi_problem(
     import gc
     from packing_with_dqncore2_enhanced import (
         MultiBinPackingEnv, load_problem_as_items, build_action_features,
-        pad_feats_mask, ACTION_FEAT_DIM
+        pad_feats_mask, ACTION_FEAT_DIM, _build_constraint_cache
     )
     from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
 
@@ -123,13 +123,15 @@ def evaluate_genome_multi_problem(
             gamma=0.992,
             problem=problem
         )
-        envs_and_items.append((env, items, problem_path))
+        # Pre-compute constraint cache once per problem
+        constraint_cache = _build_constraint_cache(problem)
+        envs_and_items.append((env, items, problem_path, constraint_cache))
 
     # Build network from genome
     first_env = envs_and_items[0][0]
     cfg = genome.to_dqn_config(
         obs_dim=8,
-        action_feat_dim=25,
+        action_feat_dim=ACTION_FEAT_DIM,
         max_actions=first_env.max_actions,
         device="cuda" if torch.cuda.is_available() else "cpu",
         total_episodes=episodes
@@ -148,7 +150,7 @@ def evaluate_genome_multi_problem(
         for episode in range(episodes):
             # Select which problem to train on this episode (round-robin)
             problem_idx = episode % num_problems
-            env, items, problem_path = envs_and_items[problem_idx]
+            env, items, problem_path, constraint_cache = envs_and_items[problem_idx]
 
             # Reset environment for this problem
             obs = env.reset(items=items.copy())
@@ -165,7 +167,7 @@ def evaluate_genome_multi_problem(
                     break
 
                 # Build features for current state
-                feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
                 patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
                 # Pad current features
@@ -197,7 +199,7 @@ def evaluate_genome_multi_problem(
 
                 # Get next state actions and features
                 next_actions, next_mask = env.action_space()
-                next_feats = build_action_features(env, next_actions) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                next_feats = build_action_features(env, next_actions, constraint_cache) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
                 next_patches = extract_patches_for_actions(env, next_actions, patch_size=patch_size) if len(next_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
                 # Pad next features
@@ -769,7 +771,7 @@ def run_multi_problem_experiment(
     # but with more episodes, then save the trained model
     from packing_with_dqncore2_enhanced import (
         MultiBinPackingEnv, load_problem_as_items, build_action_features,
-        pad_feats_mask, ACTION_FEAT_DIM
+        pad_feats_mask, ACTION_FEAT_DIM, _build_constraint_cache
     )
     from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
     from dqn_core.dqn_enhanced import DQNAgentEnhanced
@@ -790,7 +792,7 @@ def run_multi_problem_experiment(
 
     cfg = best_genome.to_dqn_config(
         obs_dim=8,
-        action_feat_dim=25,
+        action_feat_dim=ACTION_FEAT_DIM,
         max_actions=temp_env.max_actions,
         device="cuda" if torch.cuda.is_available() else "cpu",
         total_episodes=training_episodes
@@ -812,7 +814,8 @@ def run_multi_problem_experiment(
             gamma=0.992,
             problem=problem
         )
-        training_envs.append((env, items, path))
+        constraint_cache = _build_constraint_cache(problem)
+        training_envs.append((env, items, path, constraint_cache))
 
     # Round-robin training
     num_training_problems = len(training_envs)
@@ -820,7 +823,7 @@ def run_multi_problem_experiment(
 
     for episode in range(training_episodes):
         problem_idx = episode % num_training_problems
-        env, items, path = training_envs[problem_idx]
+        env, items, path, constraint_cache = training_envs[problem_idx]
 
         obs = env.reset(items=items.copy())
         done = False
@@ -832,7 +835,7 @@ def run_multi_problem_experiment(
             if len(actions) == 0:
                 break
 
-            feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
             patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
             # Pad current features
@@ -863,7 +866,7 @@ def run_multi_problem_experiment(
 
             # Next state actions and features
             next_actions, next_mask = env.action_space()
-            next_feats = build_action_features(env, next_actions) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            next_feats = build_action_features(env, next_actions, constraint_cache) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
             next_patches = extract_patches_for_actions(env, next_actions, patch_size=patch_size) if len(next_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
             # Pad next features

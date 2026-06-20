@@ -508,21 +508,107 @@ class MultiBinPackingEnv:
         return self._obs(), reward, self.done, info
 
 
-# Action features now include bin_idx
-ACTION_FEAT_DIM = 25  # Same dimension, but different semantics
+# Constraint encoding constants
+# K relation types: incompatibility, positive affinity, relative positioning
+# For each item being placed, we sum partner item features per relation type.
+# Partner features: [length, width, height, weight, volume] normalized = 5 dims.
+# Permutation-invariant (sum pool) and ID-free — generalizes to unseen pairs.
+_K_RELATION_TYPES = 3
+_ITEM_FEAT_DIM = 5
+CONSTRAINT_FEAT_DIM = _K_RELATION_TYPES * _ITEM_FEAT_DIM  # 15
+
+BASE_ACTION_FEAT_DIM = 25
+ACTION_FEAT_DIM = BASE_ACTION_FEAT_DIM + CONSTRAINT_FEAT_DIM  # 40
 
 
-def build_action_features(env: MultiBinPackingEnv, actions):
+def _build_constraint_cache(problem) -> dict:
+    """
+    Pre-compute constraint feature vector for each item type.
+
+    For each item type t and relation type k, sums the normalized feature
+    vectors of all partner items connected to t via relation k.
+
+    Relation types (channels 0-2):
+        0: incompatibility  (dims  0-4)
+        1: positive affinity (dims  5-9)
+        2: relative positioning (dims 10-14)
+
+    Item features (5 dims): [length, width, height, weight, volume] — all
+    normalized within the problem so the network sees relative magnitudes,
+    not absolute values. This lets it generalize to new item combinations.
+
+    Returns:
+        dict mapping item_id -> np.array of shape [CONSTRAINT_FEAT_DIM]
+    """
+    if problem is None:
+        return {}
+
+    W, D, H = problem.bin_dimensions
+    max_dim = max(W, D, H)
+    bin_vol = float(W * D * H)
+    max_weight = max((item.weight for item in problem.items), default=1) or 1
+
+    def item_feat(item):
+        vol = item.length * item.width * item.height
+        return np.array([
+            item.length / max_dim,
+            item.width / max_dim,
+            item.height / max_dim,
+            item.weight / max_weight,
+            vol / bin_vol,
+        ], dtype=np.float32)
+
+    feat_by_id = {item.id: item_feat(item) for item in problem.items}
+    cache = {item.id: np.zeros(CONSTRAINT_FEAT_DIM, dtype=np.float32)
+             for item in problem.items}
+
+    # Channel 0: incompatibilities
+    for a, b in problem.incompatibilities:
+        off = 0 * _ITEM_FEAT_DIM
+        if a in cache and b in feat_by_id:
+            cache[a][off:off + _ITEM_FEAT_DIM] += feat_by_id[b]
+        if b in cache and a in feat_by_id:
+            cache[b][off:off + _ITEM_FEAT_DIM] += feat_by_id[a]
+
+    # Channel 1: positive affinities
+    for a, b in problem.positive_affinities:
+        off = 1 * _ITEM_FEAT_DIM
+        if a in cache and b in feat_by_id:
+            cache[a][off:off + _ITEM_FEAT_DIM] += feat_by_id[b]
+        if b in cache and a in feat_by_id:
+            cache[b][off:off + _ITEM_FEAT_DIM] += feat_by_id[a]
+
+    # Channel 2: relative positioning (light_id, heavy_id) pairs
+    for _, tuple_list in problem.relative_pos.items():
+        off = 2 * _ITEM_FEAT_DIM
+        for light_id, heavy_id in tuple_list:
+            if heavy_id in cache and light_id in feat_by_id:
+                cache[heavy_id][off:off + _ITEM_FEAT_DIM] += feat_by_id[light_id]
+            if light_id in cache and heavy_id in feat_by_id:
+                cache[light_id][off:off + _ITEM_FEAT_DIM] += feat_by_id[heavy_id]
+
+    return cache
+
+
+def build_action_features(env: MultiBinPackingEnv, actions,
+                          constraint_cache: dict = None):
     """
     Build action features for multi-bin environment using EMS.
 
-    NEW (EMS-based):
-    - Features 6-8: EMS corner position (sx, sy, sz)
-    - Features 9-11: EMS dimensions (ew, ed, eh) - BETTER than residual capacity!
-    - Features 12-14: Slack space after placement (ew-rw, ed-rd, eh-rh)
+    Features 0-24: geometric / packing features (unchanged)
+    Features 25-39: constraint encoding — per-relation-type sum of partner
+        item features, permutation-invariant and item-ID-free so the network
+        can generalize to constraint combinations not seen during training.
+
+    Args:
+        env: current packing environment
+        actions: list of action tuples from action_space()
+        constraint_cache: pre-computed {item_id: np.array[15]} from
+            _build_constraint_cache(problem). Pass None when no constraints.
     """
     W, D, H = env.bin_size
     binV = float(env.bin_volume)
+    _zero_constraint = np.zeros(CONSTRAINT_FEAT_DIM, dtype=np.float32)
     rows = []
 
     for a in actions:
@@ -586,7 +672,7 @@ def build_action_features(env: MultiBinPackingEnv, actions):
         bin_idx_norm = bin_idx / env.max_bins
         bin_current_util = sum(b.w * b.d * b.h for b in target_bin.placed) / binV
 
-        row = [
+        base = [
             iw/W, id_/D, ih/H,          # 0-2: Original item size
             rw_n, rd_n, rh_n,            # 3-5: Rotated item size
             sx_n, sy_n, sz_n,            # 6-8: EMS corner position
@@ -602,7 +688,13 @@ def build_action_features(env: MultiBinPackingEnv, actions):
             bin_current_util,            # 24: Bin utilization
         ]
 
-        rows.append(row)
+        # Constraint features 25-39: sum of partner item features per relation type
+        if constraint_cache:
+            constraint_vec = constraint_cache.get(item_id, _zero_constraint)
+        else:
+            constraint_vec = _zero_constraint
+
+        rows.append(base + constraint_vec.tolist())
 
     return np.asarray(rows, dtype=np.float32)
 
@@ -655,14 +747,17 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
         }
     """
     import time
-    
+
     start_time = time.time()
-    
+
+    # Pre-compute constraint cache once per problem (static across all episodes)
+    constraint_cache = _build_constraint_cache(env.problem)
+
     utils = []
     bins_used_list = []
     items_placed_list = []
     returns = []
-    
+
     for ep in range(episodes):
         obs = env.reset(items=items.copy())
         ep_ret = 0.0
@@ -670,7 +765,7 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
 
         # OPTIMIZATION: Pre-compute initial state features (will be reused in loop)
         actions, mask_short = env.action_space()
-        feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+        feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
         patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
 
         while True:
@@ -682,7 +777,7 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
                 mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
             )
             act = None if (act_idx is None or actions == [] or actions[act_idx] is None) else actions[act_idx]
-            
+
             currF, currM = pad_feats_mask(
                 feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
                 mask_short if mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
@@ -693,11 +788,11 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
                 env.max_actions,
                 patch_size
             )
-            
+
             nobs, rew, done, info = env.step(act)
-            
+
             n_actions, n_mask_short = env.action_space()
-            n_feats = build_action_features(env, n_actions) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            n_feats = build_action_features(env, n_actions, constraint_cache) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
             n_patches = extract_patches_for_actions(env, n_actions, patch_size=patch_size) if len(n_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
             
             nextF, nextM = pad_feats_mask(
@@ -845,7 +940,10 @@ def train_multibin_pack_dqn(
         use_attention=True,      # NEW: Enable Transformer attention
     )
     agent = DQNAgentEnhanced(cfg)  # Use enhanced agent
-    
+
+    # Pre-compute constraint cache once — static across all training episodes
+    constraint_cache = _build_constraint_cache(problem)
+
     # Tracking
     import collections
     import copy
@@ -857,12 +955,14 @@ def train_multibin_pack_dqn(
     best_items = 0
     best_util = 0.0
     best_solution = None  # Will store the best bins configuration
-    
+
     print(f"Enhanced agent initialized on {cfg.device}")
     print(f"   Heightmap patches: {cfg.heightmap_patch_size}x{cfg.heightmap_patch_size}")
     print(f"   Transformer attention: {'Enabled' if cfg.use_attention else 'Disabled'}")
+    n_constrained = sum(1 for v in constraint_cache.values() if v.any())
+    print(f"   Constraint encoding: {n_constrained}/{len(constraint_cache)} item types have relations")
     print(f"Starting training...\n")
-    
+
     for ep in range(episodes):
         obs = env.reset(items=items.copy())
         ep_ret = 0.0
@@ -871,7 +971,7 @@ def train_multibin_pack_dqn(
 
         # OPTIMIZATION: Pre-compute initial state features (will be reused in loop)
         actions, mask_short = env.action_space()
-        feats = build_action_features(env, actions) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+        feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
         patches = extract_patches_for_actions(env, actions, patch_size=7) if len(actions) > 0 else np.zeros((0, 7, 7), np.float32)
 
         while True:
@@ -879,28 +979,26 @@ def train_multibin_pack_dqn(
             act_idx = agent.select_action(
                 obs,
                 feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
-                patches if patches.shape[0] > 0 else np.zeros((1, 7, 7), np.float32),  # NEW: Pass patches
+                patches if patches.shape[0] > 0 else np.zeros((1, 7, 7), np.float32),
                 mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
             )
             act = None if (act_idx is None or actions == [] or actions[act_idx] is None) else actions[act_idx]
-            
+
             currF, currM = pad_feats_mask(
                 feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
                 mask_short if mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
                 env.max_actions
             )
-            # NEW: Pad patches
             currP = pad_patches(
                 patches if patches.shape[0] > 0 else np.zeros((0, 7, 7), np.float32),
                 env.max_actions,
                 7
             )
-            
+
             nobs, rew, done, info = env.step(act)
-            
+
             n_actions, n_mask_short = env.action_space()
-            n_feats = build_action_features(env, n_actions) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
-            # NEW: Extract next patches
+            n_feats = build_action_features(env, n_actions, constraint_cache) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
             n_patches = extract_patches_for_actions(env, n_actions, patch_size=7) if len(n_actions) > 0 else np.zeros((0, 7, 7), np.float32)
             
             nextF, nextM = pad_feats_mask(
