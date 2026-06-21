@@ -96,7 +96,8 @@ def evaluate_genome_multi_problem(
     import gc
     from packing_with_dqncore2_enhanced import (
         MultiBinPackingEnv, load_problem_as_items, build_action_features,
-        pad_feats_mask, ACTION_FEAT_DIM, _build_constraint_cache
+        build_item_node_indices, pad_feats_mask, ACTION_FEAT_DIM,
+        _build_constraint_graph
     )
     from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
 
@@ -123,9 +124,9 @@ def evaluate_genome_multi_problem(
             gamma=0.992,
             problem=problem
         )
-        # Pre-compute constraint cache once per problem
-        constraint_cache = _build_constraint_cache(problem)
-        envs_and_items.append((env, items, problem_path, constraint_cache))
+        # Build constraint graph once per problem
+        constraint_graph = _build_constraint_graph(problem)
+        envs_and_items.append((env, items, problem_path, constraint_graph))
 
     # Build network from genome
     first_env = envs_and_items[0][0]
@@ -159,18 +160,24 @@ def evaluate_genome_multi_problem(
             episode_reward = 0.0
 
             patch_size = genome.genes['patch_size']
+            id_to_idx = constraint_graph.get('id_to_idx', {})
+
+            # Set constraint graph on agent when switching problems
+            agent.set_problem_graph(
+                constraint_graph['node_feats'],
+                constraint_graph['edge_index'],
+                constraint_graph['edge_types'],
+            )
 
             while not done and step_count < 1000:
-                # Get valid actions for current state
                 actions, mask = env.action_space()
                 if len(actions) == 0:
                     break
 
-                # Build features for current state
-                feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                feats = build_action_features(env, actions, constraint_graph) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
                 patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+                item_node_ids = build_item_node_indices(actions, id_to_idx, env.max_actions)
 
-                # Pad current features
                 currF, currM = pad_feats_mask(
                     feats if feats.shape[0] > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32),
                     mask if mask.shape[0] > 0 else np.zeros((0,), np.float32),
@@ -182,27 +189,25 @@ def evaluate_genome_multi_problem(
                     patch_size
                 )
 
-                # Select action (use unpadded features for selection)
                 act_idx = agent.select_action(
                     obs,
                     feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
                     patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
-                    mask if mask.shape[0] > 0 else np.zeros((1,), np.float32)
+                    mask if mask.shape[0] > 0 else np.zeros((1,), np.float32),
+                    item_ids=item_node_ids,
                 )
 
                 if act_idx is None or act_idx >= len(actions):
                     break
 
-                # Step environment
                 next_obs, reward, done, info = env.step(actions[act_idx])
                 episode_reward += reward
 
-                # Get next state actions and features
                 next_actions, next_mask = env.action_space()
-                next_feats = build_action_features(env, next_actions, constraint_cache) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+                next_feats = build_action_features(env, next_actions, constraint_graph) if len(next_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
                 next_patches = extract_patches_for_actions(env, next_actions, patch_size=patch_size) if len(next_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+                next_item_node_ids = build_item_node_indices(next_actions, id_to_idx, env.max_actions)
 
-                # Pad next features
                 nextF, nextM = pad_feats_mask(
                     next_feats,
                     next_mask if next_mask.shape[0] > 0 else np.zeros((0,), np.float32),
@@ -214,15 +219,14 @@ def evaluate_genome_multi_problem(
                     patch_size
                 )
 
-                # Store transition
                 agent.store(obs, act_idx, reward, next_obs, done,
-                           curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
-                           next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
+                            curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                            next_action_feats=nextF, next_mask=nextM, next_patches=nextP,
+                            curr_item_ids=item_node_ids, next_item_ids=next_item_node_ids)
 
                 obs = next_obs
                 step_count += 1
 
-                # Train agent periodically
                 if episode > 0 and step_count % 5 == 0:
                     agent.train_step()
 
@@ -234,8 +238,13 @@ def evaluate_genome_multi_problem(
             print(f"  Evaluating at eps=0 on {num_problems} training problems...")
 
         eval_metrics = []
-        for env, items, problem_path in envs_and_items:
-            # Run 5 evaluation episodes per problem at eps=0
+        for env, items, problem_path, constraint_graph in envs_and_items:
+            id_to_idx = constraint_graph.get('id_to_idx', {})
+            agent.set_problem_graph(
+                constraint_graph['node_feats'],
+                constraint_graph['edge_index'],
+                constraint_graph['edge_types'],
+            )
             problem_utils = []
             problem_bins = []
 
@@ -243,17 +252,18 @@ def evaluate_genome_multi_problem(
                 obs = env.reset(items=items.copy())
                 done = False
                 step_count = 0
-                agent._eps = 0.0  # Greedy evaluation
+                agent._eps = 0.0
 
                 while not done and step_count < 1000:
                     actions, mask = env.action_space()
                     if len(actions) == 0:
                         break
 
-                    feats = build_action_features(env, actions)
+                    feats = build_action_features(env, actions, constraint_graph)
                     patches = extract_patches_for_actions(env, actions, patch_size=genome.genes['patch_size'])
+                    item_node_ids = build_item_node_indices(actions, id_to_idx, env.max_actions)
 
-                    act_idx = agent.select_action(obs, feats, patches, mask)
+                    act_idx = agent.select_action(obs, feats, patches, mask, item_ids=item_node_ids)
                     if act_idx is None or act_idx >= len(actions):
                         break
 
@@ -308,7 +318,7 @@ def evaluate_genome_multi_problem(
     finally:
         # Clean up
         del agent
-        for env, _, _ in envs_and_items:
+        for env, _, _, _ in envs_and_items:
             del env
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -771,7 +781,8 @@ def run_multi_problem_experiment(
     # but with more episodes, then save the trained model
     from packing_with_dqncore2_enhanced import (
         MultiBinPackingEnv, load_problem_as_items, build_action_features,
-        pad_feats_mask, ACTION_FEAT_DIM, _build_constraint_cache
+        build_item_node_indices, pad_feats_mask, ACTION_FEAT_DIM,
+        _build_constraint_graph
     )
     from nesting.heightmap_utils import extract_patches_for_actions, pad_patches
     from dqn_core.dqn_enhanced import DQNAgentEnhanced

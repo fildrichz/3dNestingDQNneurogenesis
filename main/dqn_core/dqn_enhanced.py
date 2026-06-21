@@ -168,56 +168,69 @@ class ReplayBuffer:
         self.next_feats = np.zeros((capacity, A, D), dtype=np.float32)
         self.next_mask  = np.zeros((capacity, A), dtype=np.float32)
         
-        # NEW: Store heightmap patches
+        # Heightmap patches
         self.curr_patches = np.zeros((capacity, A, patch_size, patch_size), dtype=np.float32)
         self.next_patches = np.zeros((capacity, A, patch_size, patch_size), dtype=np.float32)
+
+        # GNN node indices: action -> node index in constraint graph (-1 = no node)
+        self.curr_item_ids = np.full((capacity, A), -1, dtype=np.int64)
+        self.next_item_ids = np.full((capacity, A), -1, dtype=np.int64)
 
         self.n_step_buffer = deque()
 
     def _n_step_push(self, transition):
         self.n_step_buffer.append(transition)
-        
+
         if len(self.n_step_buffer) < self.n_step:
             return None
-        
+
         oldest = self.n_step_buffer[0]
         s = oldest[0]
         a_idx = oldest[1]
         currF = oldest[5]
         currM = oldest[6]
-        currP = oldest[7]  # Current patches
-        
+        currP = oldest[7]
+        currI = oldest[8]   # curr_item_ids
+
         R = 0.0
         gamma_power = 1.0
-        
-        for i, (si, ai, ri, sni, di, cF, cM, cP, nF, nM, nP) in enumerate(self.n_step_buffer):
+
+        for (si, ai, ri, sni, di, cF, cM, cP, cI, nF, nM, nP, nI) in self.n_step_buffer:
             R += gamma_power * ri
             gamma_power *= self.gamma
-            
             if di:
                 self.n_step_buffer.popleft()
-                return (s, a_idx, R, sni, 1.0, currF, currM, currP, nF, nM, nP)
-        
+                return (s, a_idx, R, sni, 1.0, currF, currM, currP, currI, nF, nM, nP, nI)
+
         last = self.n_step_buffer[-1]
         s_next = last[3]
         done = last[4]
-        nextF = last[8]
-        nextM = last[9]
-        nextP = last[10]
-        
+        nextF = last[9]
+        nextM = last[10]
+        nextP = last[11]
+        nextI = last[12]
+
         self.n_step_buffer.popleft()
-        
-        return (s, a_idx, R, s_next, float(done), currF, currM, currP, nextF, nextM, nextP)
+        return (s, a_idx, R, s_next, float(done), currF, currM, currP, currI, nextF, nextM, nextP, nextI)
 
     def push(self, s, a_idx, r, s_next, done, curr_action_feats, curr_mask, curr_patches,
-             next_action_feats, next_mask, next_patches):
+             next_action_feats, next_mask, next_patches,
+             curr_item_ids=None, next_item_ids=None):
+        A = self.max_actions
+        if curr_item_ids is None:
+            curr_item_ids = np.full(A, -1, dtype=np.int64)
+        if next_item_ids is None:
+            next_item_ids = np.full(A, -1, dtype=np.int64)
+
         if self.n_step > 1:
-            agg = self._n_step_push((s, a_idx, r, s_next, done, 
-                                    curr_action_feats, curr_mask, curr_patches,
-                                    next_action_feats, next_mask, next_patches))
+            agg = self._n_step_push((s, a_idx, r, s_next, done,
+                                     curr_action_feats, curr_mask, curr_patches, curr_item_ids,
+                                     next_action_feats, next_mask, next_patches, next_item_ids))
             if agg is None:
                 return
-            s, a_idx, r, s_next, done, curr_action_feats, curr_mask, curr_patches, next_action_feats, next_mask, next_patches = agg
+            (s, a_idx, r, s_next, done,
+             curr_action_feats, curr_mask, curr_patches, curr_item_ids,
+             next_action_feats, next_mask, next_patches, next_item_ids) = agg
 
         i = self.ptr
         self.s[i] = s
@@ -226,29 +239,33 @@ class ReplayBuffer:
         self.s_next[i] = s_next
         self.done[i] = float(done)
         self.curr_feats[i] = curr_action_feats
-        self.curr_mask[i]  = curr_mask
+        self.curr_mask[i] = curr_mask
         self.curr_patches[i] = curr_patches
+        self.curr_item_ids[i] = curr_item_ids
         self.next_feats[i] = next_action_feats
-        self.next_mask[i]  = next_mask
+        self.next_mask[i] = next_mask
         self.next_patches[i] = next_patches
+        self.next_item_ids[i] = next_item_ids
 
         self.ptr = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size:int):
+    def sample(self, batch_size: int):
         idxs = np.random.randint(0, self.size, size=batch_size)
         return dict(
-            s = self.s[idxs],
-            a_idx = self.a_idx[idxs],
-            r = self.r[idxs],
-            s_next = self.s_next[idxs],
-            done = self.done[idxs],
-            curr_feats = self.curr_feats[idxs],
-            curr_mask = self.curr_mask[idxs],
-            curr_patches = self.curr_patches[idxs],
-            next_feats = self.next_feats[idxs],
-            next_mask = self.next_mask[idxs],
-            next_patches = self.next_patches[idxs],
+            s=self.s[idxs],
+            a_idx=self.a_idx[idxs],
+            r=self.r[idxs],
+            s_next=self.s_next[idxs],
+            done=self.done[idxs],
+            curr_feats=self.curr_feats[idxs],
+            curr_mask=self.curr_mask[idxs],
+            curr_patches=self.curr_patches[idxs],
+            curr_item_ids=self.curr_item_ids[idxs],
+            next_feats=self.next_feats[idxs],
+            next_mask=self.next_mask[idxs],
+            next_patches=self.next_patches[idxs],
+            next_item_ids=self.next_item_ids[idxs],
         )
 
 class MLP(nn.Module):
@@ -267,6 +284,71 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+class ConstraintGNN(nn.Module):
+    """Relational GNN for constraint encoding.
+
+    Items are nodes; constraints are typed directed edges.
+    Message passing: m(i->j) = MLP([h_i, h_j, r_embed])
+    Aggregation: sum over incoming messages (permutation invariant, ID-free).
+    One round of message passing is applied.
+
+    Relation type indices:
+        0 — incompatibility
+        1 — positive affinity
+        2 — relative positioning
+    """
+    N_RELATION_TYPES = 3
+
+    def __init__(self, item_feat_dim: int = 5, embed_dim: int = 32, dropout: float = 0.1):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.item_encoder = nn.Sequential(
+            nn.Linear(item_feat_dim, embed_dim),
+            nn.ReLU(),
+            nn.Linear(embed_dim, embed_dim),
+        )
+        self.relation_emb = nn.Embedding(self.N_RELATION_TYPES, embed_dim)
+        self.message_mlp = nn.Sequential(
+            nn.Linear(embed_dim * 3, embed_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(embed_dim, embed_dim),
+        )
+        self.update_mlp = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.ReLU(),
+        )
+
+    def forward(self, node_feats: torch.Tensor, edge_index: torch.Tensor,
+                edge_types: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            node_feats:  [N, item_feat_dim]
+            edge_index:  [2, E]  (src, dst)
+            edge_types:  [E]     relation type 0/1/2
+        Returns:
+            h: [N, embed_dim]
+        """
+        N = node_feats.shape[0]
+        h = self.item_encoder(node_feats)  # [N, embed_dim]
+
+        if edge_index.shape[1] == 0 or N == 0:
+            return h
+
+        src, dst = edge_index[0], edge_index[1]
+        r_emb = self.relation_emb(edge_types)  # [E, embed_dim]
+
+        msgs = self.message_mlp(
+            torch.cat([h[src], h[dst], r_emb], dim=-1)
+        )  # [E, embed_dim]
+
+        agg = torch.zeros(N, self.embed_dim, device=h.device, dtype=h.dtype)
+        agg.index_add_(0, dst, msgs)
+
+        h = self.update_mlp(torch.cat([h, agg], dim=-1))  # [N, embed_dim]
+        return h
+
 
 class HeightmapCNN(nn.Module):
     """CNN encoder for heightmap patches around placement positions"""
@@ -304,30 +386,42 @@ class SimpleHead(nn.Module):
         return self.net(z)
 
 class QNetworkEnhanced(nn.Module):
-    """Enhanced Q-Network with heightmap CNN and Transformer/Set Transformer attention"""
-    def __init__(self, obs_dim:int, action_feat_dim:int, hidden:int=256, enc_layers:int=2,
-                 head_hidden:int=256, heightmap_patch_size:int=7, use_attention:bool=True,
-                 attention_type:str="standard", attention_heads:int=4, num_inducing_points:int=32,
-                 cnn_channels:list=None, dropout:float=0.0, activation:str="relu"):
+    """Enhanced Q-Network with heightmap CNN and Transformer/Set Transformer attention.
+
+    Optionally uses a ConstraintGNN to embed items from a problem-specific constraint
+    graph. The GNN runs inside forward() so its weights receive gradients.
+    Call set_problem_graph() before each problem to register node_feats/edge_index.
+    """
+    def __init__(self, obs_dim: int, action_feat_dim: int, hidden: int = 256, enc_layers: int = 2,
+                 head_hidden: int = 256, heightmap_patch_size: int = 7, use_attention: bool = True,
+                 attention_type: str = "standard", attention_heads: int = 4, num_inducing_points: int = 32,
+                 cnn_channels: list = None, dropout: float = 0.0, activation: str = "relu",
+                 gnn_embed_dim: int = 32):
         super().__init__()
         self.patch_size = heightmap_patch_size
         self.use_attention = use_attention
         self.attention_type = attention_type
+        self.gnn_embed_dim = gnn_embed_dim
 
-        # Get activation function
         act_fn = get_activation(activation)
 
-        # State encoder
         self.state_enc = MLP(obs_dim, hidden=hidden, out_dim=hidden, layers=enc_layers,
-                           activation=act_fn, dropout=dropout)
+                             activation=act_fn, dropout=dropout)
 
-        # Heightmap CNN
         self.heightmap_cnn = HeightmapCNN(patch_size=heightmap_patch_size, out_dim=64,
-                                        channels=cnn_channels, activation=act_fn)
+                                          channels=cnn_channels, activation=act_fn)
 
-        # Action encoder (now takes action_feats + heightmap embedding)
-        self.action_enc = MLP(action_feat_dim + 64, hidden=hidden, out_dim=hidden,
-                            layers=enc_layers, activation=act_fn, dropout=dropout)
+        # GNN for constraint encoding (always present; zero-output when no graph set)
+        self.constraint_gnn = ConstraintGNN(item_feat_dim=5, embed_dim=gnn_embed_dim)
+
+        # Action encoder: action_feats + CNN(64) + GNN embed
+        self.action_enc = MLP(action_feat_dim + 64 + gnn_embed_dim, hidden=hidden, out_dim=hidden,
+                              layers=enc_layers, activation=act_fn, dropout=dropout)
+
+        # Problem graph buffers (set via set_problem_graph; None = no constraints)
+        self._gnn_node_feats: Optional[torch.Tensor] = None
+        self._gnn_edge_index: Optional[torch.Tensor] = None
+        self._gnn_edge_types: Optional[torch.Tensor] = None
 
         # Attention mechanism for action relationships
         if use_attention:
@@ -353,34 +447,58 @@ class QNetworkEnhanced(nn.Module):
         else:
             self.action_attention = None
 
-        self.head = SimpleHead(2*hidden, hidden=head_hidden, dropout=dropout)
+        self.head = SimpleHead(2 * hidden, hidden=head_hidden, dropout=dropout)
 
-    def forward(self, s:torch.Tensor, action_feats:torch.Tensor, 
-                heightmap_patches:torch.Tensor, action_mask:torch.Tensor) -> torch.Tensor:
+    def set_problem_graph(self, node_feats: np.ndarray, edge_index: np.ndarray,
+                          edge_types: np.ndarray) -> None:
+        """Register a problem's constraint graph. Call once per problem before rollouts."""
+        dev = next(self.parameters()).device
+        self._gnn_node_feats = torch.from_numpy(node_feats).float().to(dev)
+        self._gnn_edge_index = torch.from_numpy(edge_index).long().to(dev)
+        self._gnn_edge_types = torch.from_numpy(edge_types).long().to(dev)
+
+    def _run_gnn(self) -> Optional[torch.Tensor]:
+        """Run GNN on stored graph. Returns [N, gnn_embed_dim] or None."""
+        if self._gnn_node_feats is None:
+            return None
+        return self.constraint_gnn(
+            self._gnn_node_feats, self._gnn_edge_index, self._gnn_edge_types
+        )
+
+    def forward(self, s: torch.Tensor, action_feats: torch.Tensor,
+                heightmap_patches: torch.Tensor, action_mask: torch.Tensor,
+                item_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
-            s: (B, obs_dim) - state observations
-            action_feats: (B, A, action_feat_dim) - action features
-            heightmap_patches: (B, A, patch_size, patch_size) - heightmap patches for each action
-            action_mask: (B, A) - 1 for valid actions, 0 for padding
-        
+            s:                 (B, obs_dim)
+            action_feats:      (B, A, action_feat_dim)
+            heightmap_patches: (B, A, patch_size, patch_size)
+            action_mask:       (B, A)  1=valid 0=padding
+            item_ids:          (B, A)  GNN node indices; -1 for padding/no-constraint
         Returns:
-            q: (B, A) - Q-values for each action
+            q: (B, A)
         """
         B, A = action_feats.shape[:2]
-        
-        # Encode state
+
         zs = self.state_enc(s)  # (B, hidden)
-        
-        # Process heightmap patches through CNN
-        h_patches = heightmap_patches.view(B*A, 1, self.patch_size, self.patch_size)
+
+        h_patches = heightmap_patches.view(B * A, 1, self.patch_size, self.patch_size)
         zh = self.heightmap_cnn(h_patches)  # (B*A, 64)
-        
-        # Combine action features with heightmap embeddings
-        action_feats_flat = action_feats.view(B*A, -1)
-        combined = torch.cat([action_feats_flat, zh], dim=-1)  # (B*A, action_feat_dim + 64)
-        
-        # Encode actions
+
+        # GNN embeddings
+        gnn_h = self._run_gnn()  # [N, gnn_embed_dim] or None
+        if gnn_h is not None and item_ids is not None:
+            ids_flat = item_ids.view(B * A).clamp(min=0)         # [B*A]
+            gnn_embed = gnn_h[ids_flat]                           # [B*A, gnn_embed_dim]
+            # Zero out padding slots (item_id == -1)
+            pad_mask = (item_ids.view(B * A) < 0).unsqueeze(-1)  # [B*A, 1]
+            gnn_embed = gnn_embed.masked_fill(pad_mask, 0.0)
+        else:
+            gnn_embed = torch.zeros(B * A, self.gnn_embed_dim, device=s.device)
+
+        action_feats_flat = action_feats.view(B * A, -1)
+        combined = torch.cat([action_feats_flat, zh, gnn_embed], dim=-1)
+
         za = self.action_enc(combined)  # (B*A, hidden)
         za = za.view(B, A, -1)  # (B, A, hidden)
 
@@ -435,6 +553,7 @@ class DQNConfigEnhanced:
     device: str = "cpu"
     double_dqn: bool = True
     warmup_steps: int = 1000
+    gnn_embed_dim: int = 32
 
     def __post_init__(self):
         """Set default values for mutable defaults"""
@@ -462,34 +581,24 @@ class DQNAgentEnhanced:
         self.cfg = cfg
         self.device = torch.device(cfg.device)
 
-        # Initialize networks
-        self.q = QNetworkEnhanced(
-            cfg.obs_dim, cfg.action_feat_dim,
-            hidden=cfg.hidden, enc_layers=cfg.enc_layers,
-            head_hidden=cfg.head_hidden,
-            heightmap_patch_size=cfg.heightmap_patch_size,
-            use_attention=cfg.use_attention,
-            attention_type=cfg.attention_type,
-            attention_heads=cfg.attention_heads,  # [OK] Now passed from config
-            num_inducing_points=cfg.num_inducing_points,
-            cnn_channels=cfg.cnn_channels,
-            dropout=cfg.dropout,
-            activation=cfg.activation
-        ).to(self.device)
+        def _make_qnet():
+            return QNetworkEnhanced(
+                cfg.obs_dim, cfg.action_feat_dim,
+                hidden=cfg.hidden, enc_layers=cfg.enc_layers,
+                head_hidden=cfg.head_hidden,
+                heightmap_patch_size=cfg.heightmap_patch_size,
+                use_attention=cfg.use_attention,
+                attention_type=cfg.attention_type,
+                attention_heads=cfg.attention_heads,
+                num_inducing_points=cfg.num_inducing_points,
+                cnn_channels=cfg.cnn_channels,
+                dropout=cfg.dropout,
+                activation=cfg.activation,
+                gnn_embed_dim=cfg.gnn_embed_dim,
+            ).to(self.device)
 
-        self.q_target = QNetworkEnhanced(
-            cfg.obs_dim, cfg.action_feat_dim,
-            hidden=cfg.hidden, enc_layers=cfg.enc_layers,
-            head_hidden=cfg.head_hidden,
-            heightmap_patch_size=cfg.heightmap_patch_size,
-            use_attention=cfg.use_attention,
-            attention_type=cfg.attention_type,
-            attention_heads=cfg.attention_heads,  # [OK] Now passed from config
-            num_inducing_points=cfg.num_inducing_points,
-            cnn_channels=cfg.cnn_channels,
-            dropout=cfg.dropout,
-            activation=cfg.activation
-        ).to(self.device)
+        self.q = _make_qnet()
+        self.q_target = _make_qnet()
 
         self.q_target.load_state_dict(self.q.state_dict())
         self.q_target.eval()
@@ -507,6 +616,12 @@ class DQNAgentEnhanced:
         self.episodes_completed = 0  # NEW: Track episode count for episode-based epsilon
         self._eps = cfg.eps_start
 
+    def set_problem_graph(self, node_feats: np.ndarray, edge_index: np.ndarray,
+                          edge_types: np.ndarray) -> None:
+        """Register constraint graph for the current problem on both networks."""
+        self.q.set_problem_graph(node_feats, edge_index, edge_types)
+        self.q_target.set_problem_graph(node_feats, edge_index, edge_types)
+
     def on_episode_end(self):
         """Call this at the end of each episode to update episode-based epsilon decay."""
         self.episodes_completed += 1
@@ -518,37 +633,40 @@ class DQNAgentEnhanced:
         self._eps = self.cfg.eps_start + (self.cfg.eps_end - self.cfg.eps_start) * frac
         return self._eps
 
-    def select_action(self, obs: np.ndarray, action_feats: np.ndarray, 
-                     heightmap_patches: np.ndarray, mask: np.ndarray) -> int | None:
-        """Select action using epsilon-greedy policy"""
+    def select_action(self, obs: np.ndarray, action_feats: np.ndarray,
+                      heightmap_patches: np.ndarray, mask: np.ndarray,
+                      item_ids: Optional[np.ndarray] = None) -> int | None:
+        """Select action using epsilon-greedy policy."""
         valid = np.where(mask > 0.5)[0]
         if valid.size == 0:
             return None
-        
+
         eps = self.epsilon()
         self.env_steps += 1
-        
+
         if np.random.rand() < eps:
             return int(np.random.choice(valid))
-        
-        # Greedy action
+
         obs_t = to_torch(obs, self.device).float().unsqueeze(0)
         feats_t = to_torch(action_feats, self.device).float().unsqueeze(0)
         patches_t = to_torch(heightmap_patches, self.device).float().unsqueeze(0)
         mask_t = to_torch(mask, self.device).float().unsqueeze(0)
-        
+        ids_t = to_torch(item_ids, self.device).long().unsqueeze(0) if item_ids is not None else None
+
         with torch.no_grad():
-            q = self.q(obs_t, feats_t, patches_t, mask_t)[0].cpu().numpy()
-        
+            q = self.q(obs_t, feats_t, patches_t, mask_t, ids_t)[0].cpu().numpy()
+
         q[mask < 0.5] = -np.inf
         return int(np.argmax(q))
 
     def store(self, s, a_idx, r, s_next, done, *, curr_action_feats, curr_mask, curr_patches,
-              next_action_feats, next_mask, next_patches):
-        """Store transition in replay buffer"""
-        self.buffer.push(s, a_idx, r, s_next, done, 
-                        curr_action_feats, curr_mask, curr_patches,
-                        next_action_feats, next_mask, next_patches)
+              next_action_feats, next_mask, next_patches,
+              curr_item_ids=None, next_item_ids=None):
+        """Store transition in replay buffer."""
+        self.buffer.push(s, a_idx, r, s_next, done,
+                         curr_action_feats, curr_mask, curr_patches,
+                         next_action_feats, next_mask, next_patches,
+                         curr_item_ids=curr_item_ids, next_item_ids=next_item_ids)
 
     def train_step(self) -> float | None:
         if self.buffer.size < self.cfg.warmup_steps:
@@ -563,14 +681,16 @@ class DQNAgentEnhanced:
         s_next = to_torch(batch['s_next'], self.device).float()
         done = to_torch(batch['done'], self.device).float()
         curr_feats = to_torch(batch['curr_feats'], self.device).float()
-        curr_mask  = to_torch(batch['curr_mask'], self.device).float()
+        curr_mask = to_torch(batch['curr_mask'], self.device).float()
         curr_patches = to_torch(batch['curr_patches'], self.device).float()
+        curr_item_ids = to_torch(batch['curr_item_ids'], self.device).long()
         next_feats = to_torch(batch['next_feats'], self.device).float()
-        next_mask  = to_torch(batch['next_mask'], self.device).float()
+        next_mask = to_torch(batch['next_mask'], self.device).float()
         next_patches = to_torch(batch['next_patches'], self.device).float()
+        next_item_ids = to_torch(batch['next_item_ids'], self.device).long()
 
         # Compute Q(s,a)
-        q_all = self.q(s, curr_feats, curr_patches, curr_mask)
+        q_all = self.q(s, curr_feats, curr_patches, curr_mask, curr_item_ids)
         
         valid = (a_idx >= 0)
         if not valid.any():
@@ -582,7 +702,7 @@ class DQNAgentEnhanced:
         with torch.no_grad():
             if self.cfg.double_dqn:
                 # Double DQN: use online network to select action, target network to evaluate
-                q_next_online = self.q(s_next, next_feats, next_patches, next_mask)
+                q_next_online = self.q(s_next, next_feats, next_patches, next_mask, next_item_ids)
                 q_next_online_masked = torch.where(
                     next_mask > 0.5,
                     q_next_online,
@@ -590,7 +710,7 @@ class DQNAgentEnhanced:
                 )
                 next_a = torch.argmax(q_next_online_masked, dim=1, keepdim=True)
 
-                q_next_target = self.q_target(s_next, next_feats, next_patches, next_mask)
+                q_next_target = self.q_target(s_next, next_feats, next_patches, next_mask, next_item_ids)
                 max_next = q_next_target.gather(1, next_a).squeeze(1)
 
                 # Check if ANY valid actions exist (not just whether selected action is valid)
@@ -598,7 +718,7 @@ class DQNAgentEnhanced:
                 has_valid_actions = (next_mask.sum(dim=1) > 0.5)
                 max_next = torch.where(has_valid_actions, max_next, torch.zeros_like(max_next))
             else:
-                q_next = self.q_target(s_next, next_feats, next_patches, next_mask)
+                q_next = self.q_target(s_next, next_feats, next_patches, next_mask, next_item_ids)
                 q_next_masked = torch.where(
                     next_mask > 0.5,
                     q_next,

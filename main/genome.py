@@ -315,9 +315,8 @@ class NetworkGenome:
         for _ in range(max(0, layers - 1)):
             complexity += hidden * hidden
 
-        # Action encoder MLP (action_feat_dim+64 -> hidden, with 'layers' hidden layers)
-        # Layer 1: (25+64)=89 -> hidden
-        complexity += 89 * hidden
+        # Action encoder MLP: action_feat_dim(28) + CNN(64) + GNN(32) = 124 -> hidden
+        complexity += 124 * hidden
         # Intermediate layers: hidden -> hidden
         for _ in range(max(0, layers - 1)):
             complexity += hidden * hidden

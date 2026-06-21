@@ -508,108 +508,117 @@ class MultiBinPackingEnv:
         return self._obs(), reward, self.done, info
 
 
-# Constraint encoding constants
-# K relation types: incompatibility, positive affinity, relative positioning
-# For each item being placed, we sum partner item features per relation type.
-# Partner features: [length, width, height, weight, volume] normalized = 5 dims.
-# Permutation-invariant (sum pool) and ID-free — generalizes to unseen pairs.
+# Action feature dimensions
+# Base: 25 geometric/packing features
+# Dynamic status bits: 3 (one per relation type — whether a constraint partner is
+#   already placed in the target bin at decision time)
+# GNN embeddings (32 dims) are concatenated inside QNetworkEnhanced.forward(),
+#   NOT stored here — they travel as node indices (item_ids) through the replay buffer.
 _K_RELATION_TYPES = 3
 _ITEM_FEAT_DIM = 5
-CONSTRAINT_FEAT_DIM = _K_RELATION_TYPES * _ITEM_FEAT_DIM  # 15
+GNN_EMBED_DIM = 32
+_DYNAMIC_STATUS_BITS = 3  # partner-in-target-bin flag per relation type
 
 BASE_ACTION_FEAT_DIM = 25
-ACTION_FEAT_DIM = BASE_ACTION_FEAT_DIM + CONSTRAINT_FEAT_DIM  # 40
+ACTION_FEAT_DIM = BASE_ACTION_FEAT_DIM + _DYNAMIC_STATUS_BITS  # 28
 
 
-def _build_constraint_cache(problem) -> dict:
+def _build_constraint_graph(problem) -> dict:
+    """Build constraint graph for the relational GNN.
+
+    Returns a dict with:
+        node_feats  [N, 5]   — normalized item features (l,w,h,wt,vol)
+        edge_index  [2, E]   — (src, dst) directed edge pairs (bidirectional)
+        edge_types  [E]      — 0=incompatibility, 1=affinity, 2=relpos
+        id_to_idx   dict     — item_id -> node index
+        partner_sets dict    — item_id -> {rel_type: set of partner item_ids}
     """
-    Pre-compute constraint feature vector for each item type.
-
-    For each item type t and relation type k, sums the normalized feature
-    vectors of all partner items connected to t via relation k.
-
-    Relation types (channels 0-2):
-        0: incompatibility  (dims  0-4)
-        1: positive affinity (dims  5-9)
-        2: relative positioning (dims 10-14)
-
-    Item features (5 dims): [length, width, height, weight, volume] — all
-    normalized within the problem so the network sees relative magnitudes,
-    not absolute values. This lets it generalize to new item combinations.
-
-    Returns:
-        dict mapping item_id -> np.array of shape [CONSTRAINT_FEAT_DIM]
-    """
-    if problem is None:
-        return {}
+    if problem is None or not problem.items:
+        return {
+            'node_feats': np.zeros((1, _ITEM_FEAT_DIM), dtype=np.float32),
+            'edge_index': np.zeros((2, 0), dtype=np.int64),
+            'edge_types': np.zeros((0,), dtype=np.int64),
+            'id_to_idx': {},
+            'partner_sets': {},
+        }
 
     W, D, H = problem.bin_dimensions
     max_dim = max(W, D, H)
     bin_vol = float(W * D * H)
     max_weight = max((item.weight for item in problem.items), default=1) or 1
 
-    def item_feat(item):
+    id_to_idx = {item.id: i for i, item in enumerate(problem.items)}
+    N = len(problem.items)
+
+    node_feats = np.zeros((N, _ITEM_FEAT_DIM), dtype=np.float32)
+    for i, item in enumerate(problem.items):
         vol = item.length * item.width * item.height
-        return np.array([
+        node_feats[i] = [
             item.length / max_dim,
             item.width / max_dim,
             item.height / max_dim,
             item.weight / max_weight,
             vol / bin_vol,
-        ], dtype=np.float32)
+        ]
 
-    feat_by_id = {item.id: item_feat(item) for item in problem.items}
-    cache = {item.id: np.zeros(CONSTRAINT_FEAT_DIM, dtype=np.float32)
-             for item in problem.items}
+    partner_sets = {item.id: {0: set(), 1: set(), 2: set()} for item in problem.items}
+    edges_src, edges_dst, edges_type = [], [], []
 
-    # Channel 0: incompatibilities
+    def add_edge(a_id, b_id, etype):
+        if a_id in id_to_idx and b_id in id_to_idx:
+            ai, bi = id_to_idx[a_id], id_to_idx[b_id]
+            edges_src.append(ai); edges_dst.append(bi); edges_type.append(etype)
+            edges_src.append(bi); edges_dst.append(ai); edges_type.append(etype)
+            partner_sets[a_id][etype].add(b_id)
+            partner_sets[b_id][etype].add(a_id)
+
     for a, b in problem.incompatibilities:
-        off = 0 * _ITEM_FEAT_DIM
-        if a in cache and b in feat_by_id:
-            cache[a][off:off + _ITEM_FEAT_DIM] += feat_by_id[b]
-        if b in cache and a in feat_by_id:
-            cache[b][off:off + _ITEM_FEAT_DIM] += feat_by_id[a]
-
-    # Channel 1: positive affinities
+        add_edge(a, b, 0)
     for a, b in problem.positive_affinities:
-        off = 1 * _ITEM_FEAT_DIM
-        if a in cache and b in feat_by_id:
-            cache[a][off:off + _ITEM_FEAT_DIM] += feat_by_id[b]
-        if b in cache and a in feat_by_id:
-            cache[b][off:off + _ITEM_FEAT_DIM] += feat_by_id[a]
-
-    # Channel 2: relative positioning (light_id, heavy_id) pairs
+        add_edge(a, b, 1)
     for _, tuple_list in problem.relative_pos.items():
-        off = 2 * _ITEM_FEAT_DIM
         for light_id, heavy_id in tuple_list:
-            if heavy_id in cache and light_id in feat_by_id:
-                cache[heavy_id][off:off + _ITEM_FEAT_DIM] += feat_by_id[light_id]
-            if light_id in cache and heavy_id in feat_by_id:
-                cache[light_id][off:off + _ITEM_FEAT_DIM] += feat_by_id[heavy_id]
+            add_edge(light_id, heavy_id, 2)
 
-    return cache
+    if edges_src:
+        edge_index = np.array([edges_src, edges_dst], dtype=np.int64)
+        edge_types = np.array(edges_type, dtype=np.int64)
+    else:
+        edge_index = np.zeros((2, 0), dtype=np.int64)
+        edge_types = np.zeros((0,), dtype=np.int64)
+
+    return {
+        'node_feats': node_feats,
+        'edge_index': edge_index,
+        'edge_types': edge_types,
+        'id_to_idx': id_to_idx,
+        'partner_sets': partner_sets,
+    }
 
 
 def build_action_features(env: MultiBinPackingEnv, actions,
-                          constraint_cache: dict = None):
-    """
-    Build action features for multi-bin environment using EMS.
+                          constraint_graph: dict = None):
+    """Build action feature vectors for all candidate actions.
 
-    Features 0-24: geometric / packing features (unchanged)
-    Features 25-39: constraint encoding — per-relation-type sum of partner
-        item features, permutation-invariant and item-ID-free so the network
-        can generalize to constraint combinations not seen during training.
+    Features 0-24: geometric / packing features.
+    Features 25-27: dynamic constraint status bits — one per relation type
+        (incompatibility, affinity, relpos), set to 1.0 if ANY constraint
+        partner of this item is already placed in the TARGET bin.
+
+    The GNN item embeddings (32 dims) are NOT stored here; they flow through
+    the network via item_ids (node indices) stored separately in the replay
+    buffer and looked up inside QNetworkEnhanced.forward().
 
     Args:
         env: current packing environment
-        actions: list of action tuples from action_space()
-        constraint_cache: pre-computed {item_id: np.array[15]} from
-            _build_constraint_cache(problem). Pass None when no constraints.
+        actions: list of action tuples from env.action_space()
+        constraint_graph: output of _build_constraint_graph(problem), or None
     """
     W, D, H = env.bin_size
     binV = float(env.bin_volume)
-    _zero_constraint = np.zeros(CONSTRAINT_FEAT_DIM, dtype=np.float32)
     rows = []
+
+    partner_sets = constraint_graph.get('partner_sets', {}) if constraint_graph else {}
 
     for a in actions:
         if a is None:
@@ -622,81 +631,95 @@ def build_action_features(env: MultiBinPackingEnv, actions,
         iw, id_, ih, _, _ = env.items[item_idx]
         rw, rd, rh = size
 
-        # EMS features
-        sx, sy, sz = ems.x, ems.y, ems.z  # EMS corner position
-        ew, ed, eh = ems.w, ems.d, ems.h  # EMS dimensions
+        sx, sy, sz = ems.x, ems.y, ems.z
+        ew, ed, eh = ems.w, ems.d, ems.h
 
-        # Normalized features
-        rw_n, rd_n, rh_n = rw/W, rd/D, rh/H
-        sx_n, sy_n, sz_n = sx/W, sy/D, sz/H  # EMS corner
-        ew_n, ed_n, eh_n = ew/W, ed/D, eh/H  # EMS dimensions
+        rw_n, rd_n, rh_n = rw / W, rd / D, rh / H
+        sx_n, sy_n, sz_n = sx / W, sy / D, sz / H
+        ew_n, ed_n, eh_n = ew / W, ed / D, eh / H
 
-        # Slack space after placing item in EMS
-        slack_x, slack_y, slack_z = max(0, ew-rw), max(0, ed-rd), max(0, eh-rh)
-        slack_x_n, slack_y_n, slack_z_n = slack_x/W, slack_y/D, slack_z/H
+        slack_x = max(0, ew - rw)
+        slack_y = max(0, ed - rd)
+        slack_z = max(0, eh - rh)
+        slack_x_n, slack_y_n, slack_z_n = slack_x / W, slack_y / D, slack_z / H
 
         vol = float(rw * rd * rh)
         delta_u = vol / binV
-        tight = float((slack_x==0) + (slack_y==0) + (slack_z==0))  # How many dimensions are tight
+        tight = float((slack_x == 0) + (slack_y == 0) + (slack_z == 0))
 
-        # Heightmap features
         h_at_ep_norm = 0.0
         local_avg = 0.0
         try:
-            h_at_ep = target_bin.get_heightmap_at(sx, sy)
-            h_at_ep_norm = h_at_ep / H
-
+            h_at_ep_norm = target_bin.get_heightmap_at(sx, sy) / H
             resolution = target_bin.resolution
             gx = min(sx // resolution, target_bin.heightmap.shape[0] - 1)
             gy = min(sy // resolution, target_bin.heightmap.shape[1] - 1)
-
             local_heights = []
             for dx in [-1, 0, 1]:
                 for dy in [-1, 0, 1]:
                     ngx, ngy = gx + dx, gy + dy
                     if 0 <= ngx < target_bin.heightmap.shape[0] and 0 <= ngy < target_bin.heightmap.shape[1]:
                         local_heights.append(target_bin.heightmap[ngx, ngy])
-
             if local_heights:
                 local_avg = np.mean(local_heights) / H
-        except:
+        except Exception:
             pass
 
-        # Weight features
         item_weight_ratio = weight / env.max_weight if (env.max_weight and env.max_weight > 0) else 0.0
         remaining_weight_capacity = 0.0
         if env.max_weight is not None and env.max_weight > 0:
             remaining_weight_capacity = (env.max_weight - target_bin.current_weight) / env.max_weight
 
-        # Bin features
         bin_idx_norm = bin_idx / env.max_bins
         bin_current_util = sum(b.w * b.d * b.h for b in target_bin.placed) / binV
 
         base = [
-            iw/W, id_/D, ih/H,          # 0-2: Original item size
-            rw_n, rd_n, rh_n,            # 3-5: Rotated item size
-            sx_n, sy_n, sz_n,            # 6-8: EMS corner position
-            ew_n, ed_n, eh_n,            # 9-11: EMS dimensions (available space)
-            slack_x_n, slack_y_n, slack_z_n,  # 12-14: Slack after placement
-            delta_u, tight,              # 15-16: Volume utilization, tightness
-            W/D, D/H,                    # 17-18: Container aspect ratios
-            h_at_ep_norm,                # 19: Height at placement position
-            local_avg,                   # 20: Local average height
-            item_weight_ratio,           # 21: Item weight / max weight
-            remaining_weight_capacity,   # 22: Available weight capacity
-            bin_idx_norm,                # 23: Which bin
-            bin_current_util,            # 24: Bin utilization
+            iw / W, id_ / D, ih / H,              # 0-2: original item size
+            rw_n, rd_n, rh_n,                      # 3-5: rotated size
+            sx_n, sy_n, sz_n,                      # 6-8: EMS corner
+            ew_n, ed_n, eh_n,                      # 9-11: EMS dimensions
+            slack_x_n, slack_y_n, slack_z_n,       # 12-14: slack
+            delta_u, tight,                        # 15-16: utilization, tightness
+            W / D, D / H,                          # 17-18: container aspect ratios
+            h_at_ep_norm,                          # 19: height at placement
+            local_avg,                             # 20: local average height
+            item_weight_ratio,                     # 21: item weight ratio
+            remaining_weight_capacity,             # 22: remaining weight capacity
+            bin_idx_norm,                          # 23: which bin
+            bin_current_util,                      # 24: bin utilization
         ]
 
-        # Constraint features 25-39: sum of partner item features per relation type
-        if constraint_cache:
-            constraint_vec = constraint_cache.get(item_id, _zero_constraint)
+        # Dynamic constraint status bits 25-27
+        if partner_sets and item_id in partner_sets:
+            items_in_bin = target_bin.item_ids_in_bin
+            ps = partner_sets[item_id]
+            status = [
+                float(bool(ps[0] & items_in_bin)),   # 25: incompat partner in bin
+                float(bool(ps[1] & items_in_bin)),   # 26: affinity partner in bin
+                float(bool(ps[2] & items_in_bin)),   # 27: relpos partner in bin
+            ]
         else:
-            constraint_vec = _zero_constraint
+            status = [0.0, 0.0, 0.0]
 
-        rows.append(base + constraint_vec.tolist())
+        rows.append(base + status)
 
     return np.asarray(rows, dtype=np.float32)
+
+
+def build_item_node_indices(actions, id_to_idx: dict, max_actions: int) -> np.ndarray:
+    """Map actions to GNN node indices for replay buffer storage.
+
+    Returns np.array of shape [max_actions] with int64 node indices.
+    -1 means no GNN node (padded action or item not in graph).
+    """
+    indices = np.full(max_actions, -1, dtype=np.int64)
+    for i, a in enumerate(actions):
+        if i >= max_actions:
+            break
+        if a is not None:
+            item_id = a[7]
+            indices[i] = id_to_idx.get(item_id, -1)
+    return indices
 
 
 def pad_feats_mask(feats: np.ndarray, mask_short: np.ndarray, maxA: int):
@@ -750,8 +773,15 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
 
     start_time = time.time()
 
-    # Pre-compute constraint cache once per problem (static across all episodes)
-    constraint_cache = _build_constraint_cache(env.problem)
+    # Build constraint graph once per problem
+    constraint_graph = _build_constraint_graph(env.problem)
+    if agent is not None:
+        agent.set_problem_graph(
+            constraint_graph['node_feats'],
+            constraint_graph['edge_index'],
+            constraint_graph['edge_types'],
+        )
+    id_to_idx = constraint_graph.get('id_to_idx', {})
 
     utils = []
     bins_used_list = []
@@ -763,18 +793,18 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
         ep_ret = 0.0
         steps = 0
 
-        # OPTIMIZATION: Pre-compute initial state features (will be reused in loop)
         actions, mask_short = env.action_space()
-        feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+        feats = build_action_features(env, actions, constraint_graph) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
         patches = extract_patches_for_actions(env, actions, patch_size=patch_size) if len(actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
+        item_node_ids = build_item_node_indices(actions, id_to_idx, env.max_actions)
 
         while True:
-            # Use pre-computed features (from initialization or previous step's "next")
             act_idx = agent.select_action(
                 obs,
                 feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
                 patches if patches.shape[0] > 0 else np.zeros((1, patch_size, patch_size), np.float32),
-                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32),
+                item_ids=item_node_ids,
             )
             act = None if (act_idx is None or actions == [] or actions[act_idx] is None) else actions[act_idx]
 
@@ -792,9 +822,10 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
             nobs, rew, done, info = env.step(act)
 
             n_actions, n_mask_short = env.action_space()
-            n_feats = build_action_features(env, n_actions, constraint_cache) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            n_feats = build_action_features(env, n_actions, constraint_graph) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
             n_patches = extract_patches_for_actions(env, n_actions, patch_size=patch_size) if len(n_actions) > 0 else np.zeros((0, patch_size, patch_size), np.float32)
-            
+            n_item_node_ids = build_item_node_indices(n_actions, id_to_idx, env.max_actions)
+
             nextF, nextM = pad_feats_mask(
                 n_feats,
                 n_mask_short if n_mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
@@ -805,10 +836,11 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
                 env.max_actions,
                 patch_size
             )
-            
+
             agent.store(obs, act_idx, rew, nobs, done,
-                       curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
-                       next_action_feats=nextF, next_mask=nextM, next_patches=nextP)
+                        curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                        next_action_feats=nextF, next_mask=nextM, next_patches=nextP,
+                        curr_item_ids=item_node_ids, next_item_ids=n_item_node_ids)
             
             if steps % train_freq == 0:
                 for _ in range(num_train_steps):
@@ -821,9 +853,10 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
             mask_short = n_mask_short
             feats = n_feats
             patches = n_patches
+            item_node_ids = n_item_node_ids
             ep_ret += rew
             steps += 1
-            
+
             if done:
                 util = info.get('utilization', 0.0)
                 bins = info.get('bins_used', 0)
@@ -834,7 +867,6 @@ def evaluate_agent_on_problem(agent, env, items, episodes=20, patch_size=7,
                 items_placed_list.append(items_placed)
                 returns.append(ep_ret)
 
-                # Update episode count for episode-based epsilon decay
                 agent.on_episode_end()
 
                 if verbose:
@@ -941,8 +973,15 @@ def train_multibin_pack_dqn(
     )
     agent = DQNAgentEnhanced(cfg)  # Use enhanced agent
 
-    # Pre-compute constraint cache once — static across all training episodes
-    constraint_cache = _build_constraint_cache(problem)
+    # Build constraint graph once — shared across all episodes
+    constraint_graph = _build_constraint_graph(problem)
+    agent.set_problem_graph(
+        constraint_graph['node_feats'],
+        constraint_graph['edge_index'],
+        constraint_graph['edge_types'],
+    )
+    id_to_idx = constraint_graph.get('id_to_idx', {})
+    n_edges = constraint_graph['edge_index'].shape[1]
 
     # Tracking
     import collections
@@ -954,13 +993,12 @@ def train_multibin_pack_dqn(
     best_bins = float('inf')
     best_items = 0
     best_util = 0.0
-    best_solution = None  # Will store the best bins configuration
+    best_solution = None
 
     print(f"Enhanced agent initialized on {cfg.device}")
     print(f"   Heightmap patches: {cfg.heightmap_patch_size}x{cfg.heightmap_patch_size}")
     print(f"   Transformer attention: {'Enabled' if cfg.use_attention else 'Disabled'}")
-    n_constrained = sum(1 for v in constraint_cache.values() if v.any())
-    print(f"   Constraint encoding: {n_constrained}/{len(constraint_cache)} item types have relations")
+    print(f"   Constraint GNN: {len(id_to_idx)} item nodes, {n_edges} edges")
     print(f"Starting training...\n")
 
     for ep in range(episodes):
@@ -969,18 +1007,18 @@ def train_multibin_pack_dqn(
         steps = 0
         losses = []
 
-        # OPTIMIZATION: Pre-compute initial state features (will be reused in loop)
         actions, mask_short = env.action_space()
-        feats = build_action_features(env, actions, constraint_cache) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+        feats = build_action_features(env, actions, constraint_graph) if len(actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
         patches = extract_patches_for_actions(env, actions, patch_size=7) if len(actions) > 0 else np.zeros((0, 7, 7), np.float32)
+        item_node_ids = build_item_node_indices(actions, id_to_idx, env.max_actions)
 
         while True:
-            # Use pre-computed features (from initialization or previous step's "next")
             act_idx = agent.select_action(
                 obs,
                 feats if feats.shape[0] > 0 else np.zeros((1, ACTION_FEAT_DIM), np.float32),
                 patches if patches.shape[0] > 0 else np.zeros((1, 7, 7), np.float32),
-                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32)
+                mask_short if mask_short.shape[0] > 0 else np.zeros((1,), np.float32),
+                item_ids=item_node_ids,
             )
             act = None if (act_idx is None or actions == [] or actions[act_idx] is None) else actions[act_idx]
 
@@ -998,38 +1036,38 @@ def train_multibin_pack_dqn(
             nobs, rew, done, info = env.step(act)
 
             n_actions, n_mask_short = env.action_space()
-            n_feats = build_action_features(env, n_actions, constraint_cache) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
+            n_feats = build_action_features(env, n_actions, constraint_graph) if len(n_actions) > 0 else np.zeros((0, ACTION_FEAT_DIM), np.float32)
             n_patches = extract_patches_for_actions(env, n_actions, patch_size=7) if len(n_actions) > 0 else np.zeros((0, 7, 7), np.float32)
-            
+            n_item_node_ids = build_item_node_indices(n_actions, id_to_idx, env.max_actions)
+
             nextF, nextM = pad_feats_mask(
                 n_feats,
                 n_mask_short if n_mask_short.shape[0] > 0 else np.zeros((0,), np.float32),
                 env.max_actions
             )
-            # NEW: Pad next patches
             nextP = pad_patches(
                 n_patches if n_patches.shape[0] > 0 else np.zeros((0, 7, 7), np.float32),
                 env.max_actions,
                 7
             )
-            
+
             agent.store(obs, act_idx, rew, nobs, done,
-                       curr_action_feats=currF, curr_mask=currM, curr_patches=currP,  # NEW: Add curr_patches
-                       next_action_feats=nextF, next_mask=nextM, next_patches=nextP)  # NEW: Add next_patches
-            
+                        curr_action_feats=currF, curr_mask=currM, curr_patches=currP,
+                        next_action_feats=nextF, next_mask=nextM, next_patches=nextP,
+                        curr_item_ids=item_node_ids, next_item_ids=n_item_node_ids)
+
             if steps % train_freq == 0:
                 for _ in range(num_train_steps):
                     loss = agent.train_step()
                     if loss is not None:
                         losses.append(loss)
 
-            # OPTIMIZATION: Reuse next state features as current features for next iteration
-            # This avoids recomputing action_space, build_action_features, extract_patches
             obs = nobs
             actions = n_actions
             mask_short = n_mask_short
             feats = n_feats
             patches = n_patches
+            item_node_ids = n_item_node_ids
             ep_ret += rew
             steps += 1
             
