@@ -84,7 +84,7 @@ def compare_architectures(problem_path: str,
         'gamma': 0.992,
     })
     
-    baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device, total_episodes=episodes)
+    baseline_cfg = baseline_genome.to_dqn_config(8, ACTION_FEAT_DIM, 128, device, total_episodes=episodes)
     baseline_agent = DQNAgentEnhanced(baseline_cfg)
 
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
@@ -107,7 +107,7 @@ def compare_architectures(problem_path: str,
     print("Testing EVOLVED architecture...")
     print(evolved_genome)
     
-    evolved_cfg = evolved_genome.to_dqn_config(8, 25, 128, device, total_episodes=episodes)
+    evolved_cfg = evolved_genome.to_dqn_config(8, ACTION_FEAT_DIM, 128, device, total_episodes=episodes)
     evolved_agent = DQNAgentEnhanced(evolved_cfg)
     
     evolved_metrics = evaluate_agent_on_problem(
