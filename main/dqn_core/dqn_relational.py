@@ -60,15 +60,16 @@ class RelationalDQNConfig:
     # --- state geometry caps (define padded tensor shapes) ---
     max_types: int = 16          # action-scorable remaining item-type slots
     max_placed: int = 64         # placed-item token slots
-    max_ems: int = 64            # EMS token slots (across all bins)
+    max_ems: int = 96            # EMS token slots (across all bins, after pruning)
     max_bins: int = 4            # bin token slots
     num_rotations: int = 6
-    grid: int = 16               # bin heightmap is resampled to grid x grid
+    grid: int = 24               # bin heightmap is resampled to grid x grid
+    patch_size: int = 7          # local heightmap patch around each EMS corner
 
     # --- raw feature dims (must match the environment's state builder) ---
     item_feat_dim: int = 10
     ems_feat_dim: int = 7
-    bin_feat_dim: int = 8
+    bin_feat_dim: int = 12
     global_feat_dim: int = 4
 
     # --- architecture ---
@@ -111,8 +112,8 @@ class RelationalDQNConfig:
 # Replay buffer over structured states
 # ---------------------------------------------------------------------------
 
-STATE_KEYS = ("item_feats", "item_mask", "edge_types", "ems_feats", "ems_mask",
-              "bin_feats", "bin_hm", "bin_mask", "global_feats", "valid")
+STATE_KEYS = ("item_feats", "item_mask", "edge_types", "ems_feats", "ems_patches",
+              "ems_mask", "bin_feats", "bin_hm", "bin_mask", "global_feats", "valid")
 
 
 class RelationalReplayBuffer:
@@ -130,6 +131,7 @@ class RelationalReplayBuffer:
                 "item_mask": np.zeros((c, TI), np.float32),
                 "edge_types": np.zeros((c, TI, TI), np.int8),
                 "ems_feats": np.zeros((c, TE, cfg.ems_feat_dim), np.float32),
+                "ems_patches": np.zeros((c, TE, cfg.patch_size, cfg.patch_size), np.float16),
                 "ems_mask": np.zeros((c, TE), np.float32),
                 "bin_feats": np.zeros((c, TB, cfg.bin_feat_dim), np.float32),
                 "bin_hm": np.zeros((c, TB, G, G), np.float16),
@@ -161,8 +163,12 @@ class RelationalReplayBuffer:
         self.ptr = (self.ptr + 1) % self.cfg.buffer_size
         self.size = min(self.size + 1, self.cfg.buffer_size)
 
-    def push(self, s, a, r, s_next, done):
-        if self.n_step == 1:
+    def push(self, s, a, r, s_next, done, isolated: bool = False):
+        # isolated transitions (constraint refusals: self-loops that do not
+        # advance the packing) are written directly as 1-step transitions and
+        # NEVER enter the n-step chain, so their penalty cannot contaminate
+        # the returns of the real placement sequence
+        if isolated or self.n_step == 1:
             self._write(s, a, r, s_next, done)
             return
         self._n_buf.append((s, a, r, s_next, done))
@@ -277,8 +283,9 @@ class RelationalQNetwork(nn.Module):
 
         self.item_in = nn.Linear(cfg.item_feat_dim, d)
         self.ems_in = nn.Linear(cfg.ems_feat_dim, d)
+        self.ems_patch_cnn = HeightmapCNN(d, cfg.cnn_channels)  # local terrain at EMS
         self.bin_in = nn.Linear(cfg.bin_feat_dim, d)
-        self.bin_cnn = HeightmapCNN(d, cfg.cnn_channels)
+        self.bin_cnn = HeightmapCNN(d, cfg.cnn_channels)        # whole-bin heightmap
         self.glob_in = nn.Linear(cfg.global_feat_dim, d)
         self.tok_type = nn.Embedding(4, d)
 
@@ -304,7 +311,11 @@ class RelationalQNetwork(nn.Module):
         TI, TE, TB = cfg.num_item_tokens, cfg.max_ems, cfg.max_bins
 
         z_item = self.item_in(s["item_feats"]) + self.tok_type.weight[self.TOK_ITEM]
-        z_ems = self.ems_in(s["ems_feats"]) + self.tok_type.weight[self.TOK_EMS]
+        P = cfg.patch_size
+        patches = s["ems_patches"].float().view(B * TE, 1, P, P)
+        z_ems = (self.ems_in(s["ems_feats"])
+                 + self.ems_patch_cnn(patches).view(B, TE, -1)
+                 + self.tok_type.weight[self.TOK_EMS])
         hm = s["bin_hm"].float().view(B * TB, 1, cfg.grid, cfg.grid)
         z_bin = (self.bin_in(s["bin_feats"]) + self.bin_cnn(hm).view(B, TB, -1)
                  + self.tok_type.weight[self.TOK_BIN])
@@ -399,8 +410,8 @@ class RelationalDQNAgent:
         q[~valid.reshape(-1)] = -np.inf
         return int(np.argmax(q))
 
-    def store(self, s, a, r, s_next, done):
-        self.buffer.push(s, a, r, s_next, done)
+    def store(self, s, a, r, s_next, done, isolated: bool = False):
+        self.buffer.push(s, a, r, s_next, done, isolated=isolated)
 
     def train_step(self) -> Optional[float]:
         if self.buffer.size < max(self.cfg.warmup_steps, self.cfg.batch_size):

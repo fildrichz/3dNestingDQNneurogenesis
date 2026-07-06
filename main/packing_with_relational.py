@@ -28,10 +28,13 @@ Differences from packing_with_dqncore2_enhanced.py:
 """
 from __future__ import annotations
 import copy
+import os
 import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import matplotlib
+matplotlib.use("Agg", force=True)
 
 from nesting.packing_core_enhanced import Container
 from nesting.dataset_loader import load_problem, BinPackingProblem
@@ -52,12 +55,30 @@ def resample_heightmap(hm: np.ndarray, grid: int) -> np.ndarray:
     return hm[np.ix_(ix, iy)]
 
 
+def extract_ems_patch(heightmap: np.ndarray, ex: int, ey: int, patch_size: int,
+                      resolution: int, container_H: int) -> np.ndarray:
+    """Local heightmap patch centred on the EMS corner (same semantics as
+    nesting.heightmap_utils.extract_heightmap_patch, vectorised).
+    Out-of-bounds cells stay 0 (ground level)."""
+    gx, gy = ex // resolution, ey // resolution
+    half = patch_size // 2
+    patch = np.zeros((patch_size, patch_size), np.float32)
+    x0, y0 = gx - half, gy - half
+    sx0, sy0 = max(0, x0), max(0, y0)
+    sx1 = min(heightmap.shape[0], x0 + patch_size)
+    sy1 = min(heightmap.shape[1], y0 + patch_size)
+    if sx0 < sx1 and sy0 < sy1:
+        patch[sx0 - x0:sx1 - x0, sy0 - y0:sy1 - y0] = \
+            heightmap[sx0:sx1, sy0:sy1] / container_H
+    return patch
+
+
 class RelationalPackingEnv:
     """Multi-bin packing environment exposing a tokenised relational state."""
 
     def __init__(self, problem: BinPackingProblem, cfg: RelationalDQNConfig,
                  seed: int = 0, gamma: float = 0.992,
-                 violation_penalty: float = 0.25, max_env_steps: int = 2000):
+                 violation_penalty: float = 0.1, max_env_steps: int = 2000):
         self.problem = problem
         self.cfg = cfg
         self.rng = np.random.default_rng(seed)
@@ -153,11 +174,26 @@ class RelationalPackingEnv:
         return M
 
     def _rebuild_ems_refs(self):
-        """Flat, volume-sorted list of (bin_idx, EMS) capped at cfg.max_ems."""
+        """Flat, volume-sorted list of (bin_idx, EMS) capped at cfg.max_ems.
+
+        EMS that cannot geometrically fit ANY remaining item in ANY rotation
+        are pruned first (aligned with the former pipeline, where such EMS
+        simply produced no actions), so the token budget is spent only on
+        placeable spaces."""
         refs = []
         for b_idx, b in enumerate(self.bins):
             for ems in b.ems_list:
                 refs.append((b_idx, ems))
+        if refs:
+            dims = np.array([t["dims"] for t in self.types if t["qty"] > 0], np.int64)
+            if dims.size:
+                sizes = np.stack([dims[:, list(p)] for p in ROTATIONS], axis=1)  # (nT,6,3)
+                sizes = sizes.reshape(-1, 3)                                      # (nT*6,3)
+                edim = np.array([[r[1].w, r[1].d, r[1].h] for r in refs], np.int64)  # (nE,3)
+                fits_any = (sizes[None, :, :] <= edim[:, None, :]).all(-1).any(-1)   # (nE,)
+                refs = [r for r, ok in zip(refs, fits_any) if ok]
+            else:
+                refs = []
         refs.sort(key=lambda r: -r[1].volume())
         self.ems_refs = refs[:self.cfg.max_ems]
 
@@ -255,13 +291,18 @@ class RelationalPackingEnv:
             edge_types[np.ix_(act, act)] = self._edge_type_matrix[np.ix_(tt, tt)]
             np.fill_diagonal(edge_types, EDGE_NONE)
 
-        # ---- EMS tokens ---------------------------------------------------
+        # ---- EMS tokens (raw geometry + local heightmap patch) -------------
         ems_feats = np.zeros((cfg.max_ems, cfg.ems_feat_dim), np.float32)
+        ems_patches = np.zeros((cfg.max_ems, cfg.patch_size, cfg.patch_size), np.float16)
         ems_mask = np.zeros((cfg.max_ems,), np.float32)
         for e_idx, (b_idx, ems) in enumerate(self.ems_refs):
+            b = self.bins[b_idx]
             ems_feats[e_idx] = [ems.x / W, ems.y / D, ems.z / H,
                                 ems.w / W, ems.d / D, ems.h / H,
                                 (b_idx + 1) / cfg.max_bins]
+            ems_patches[e_idx] = extract_ems_patch(
+                b.heightmap, ems.x, ems.y, cfg.patch_size, b.resolution, H
+            ).astype(np.float16)
             ems_mask[e_idx] = 1.0
 
         # ---- bin tokens -----------------------------------------------------
@@ -269,17 +310,25 @@ class RelationalPackingEnv:
         bin_hm = np.zeros((cfg.max_bins, cfg.grid, cfg.grid), np.float16)
         bin_mask = np.zeros((cfg.max_bins,), np.float32)
         com_t = self.problem.center_of_mass
+        n_ems_per_bin = {b_idx: 0 for b_idx in range(self.n_bins)}
+        for b_idx, _ in self.ems_refs:
+            n_ems_per_bin[b_idx] += 1
         for b_idx, b in enumerate(self.bins):
             vol_util = sum(k.w * k.d * k.h for k in b.placed) / self.bin_volume
             cx, cy = b.get_center_of_mass()
+            hm = b.heightmap
             bin_feats[b_idx] = [
                 (b.current_weight / self.wnorm), 1.0 if self.max_weight else 0.0,
                 vol_util, cx / W, cy / D,
                 (com_t[0] / W) if com_t else 0.0,
                 (com_t[1] / D) if com_t else 0.0,
                 1.0 if com_t else 0.0,
+                float(hm.max()) / H,             # terrain summary: peak,
+                float(hm.mean()) / H,            # average fill height,
+                float(hm.std()) / H,             # roughness,
+                n_ems_per_bin[b_idx] / cfg.max_ems,  # fragmentation proxy
             ]
-            bin_hm[b_idx] = (resample_heightmap(b.heightmap, cfg.grid) / H).astype(np.float16)
+            bin_hm[b_idx] = (resample_heightmap(hm, cfg.grid) / H).astype(np.float16)
             bin_mask[b_idx] = 1.0
 
         # ---- global token ---------------------------------------------------
@@ -299,7 +348,7 @@ class RelationalPackingEnv:
         return {
             "item_feats": item_feats, "item_mask": item_mask,
             "edge_types": edge_types,
-            "ems_feats": ems_feats, "ems_mask": ems_mask,
+            "ems_feats": ems_feats, "ems_patches": ems_patches, "ems_mask": ems_mask,
             "bin_feats": bin_feats, "bin_hm": bin_hm, "bin_mask": bin_mask,
             "global_feats": global_feats, "valid": valid,
         }
@@ -362,6 +411,16 @@ class RelationalPackingEnv:
                 info["per_bin_items"].append(len(b.placed))
         return info
 
+    def _leftover_penalty(self) -> float:
+        """Price of abandoning items: the per-bin utilisation their volume
+        would have contributed (same scale as the shaping potential), plus a
+        small count-based term so tiny items are not abandoned for free."""
+        unplaced_vol = sum(t["qty"] * t["dims"][0] * t["dims"][1] * t["dims"][2]
+                           for t in self.types)
+        items_left = sum(t["qty"] for t in self.types)
+        return (unplaced_vol / self.bin_volume
+                + 0.2 * items_left / max(1, self.total_items0))
+
     def _completion_reward(self) -> Tuple[float, int]:
         bins_used = self._get_bins_used()
         bins_eff = 1.0 - (bins_used / max(1, self.n_bins))
@@ -390,7 +449,7 @@ class RelationalPackingEnv:
                 if av:
                     info["affinity_violations"] = av
             else:
-                reward -= 0.2 * (items_left / max(1, self.total_items0))
+                reward -= self._leftover_penalty()
             info.update(self._terminal_info(util_prev))
             return self.state(), reward, True, info
 
@@ -422,15 +481,22 @@ class RelationalPackingEnv:
                 violation = "placement_failed"
 
         if violation is not None:
-            # refusal: penalty, state unchanged except this combo is masked
+            # refusal: penalty, state unchanged except this combo is masked.
+            # reward components are reported separately so the trainer can
+            # store the refusal as an ISOLATED transition (its penalty must
+            # not leak into the n-step returns of real placements) while the
+            # terminal outcome, if any, goes into the placement chain.
             self.refused.add((t_idx, e_idx, r_idx))
             info["violation"] = violation
+            info["r_violation"] = -self.violation_penalty
             reward = -self.violation_penalty
             s = self.state()
             if not s["valid"].any() or self.env_steps >= self.max_env_steps:
                 self.done = True
-                reward += (self.gamma * util_prev) - util_prev
-                reward -= 0.2 * (items_left / max(1, self.total_items0))
+                r_term = ((self.gamma * util_prev) - util_prev
+                          - self._leftover_penalty())
+                info["r_terminal"] = r_term
+                reward += r_term
                 info.update(self._terminal_info(util_prev))
             return s, reward, self.done, info
 
@@ -467,7 +533,7 @@ class RelationalPackingEnv:
         if self.env_steps >= self.max_env_steps:
             self.done = True
             util = self.total_placed_volume / total_capacity
-            reward -= 0.2 * (items_left / max(1, self.total_items0))
+            reward -= self._leftover_penalty()
             info.update(self._terminal_info(util))
             return self.state(), reward, True, info
 
@@ -475,15 +541,146 @@ class RelationalPackingEnv:
 
 
 # ===========================================================================
+# Persistence (aligned with the former pipeline)
+# ===========================================================================
+
+def save_nesting(bins: List[Container], out_dir: str, prefix: str,
+                 max_weight: Optional[int] = None,
+                 problem: Optional[BinPackingProblem] = None) -> str:
+    """Save a packing solution: per-bin 3D plots (wireframe + filled) and a
+    solution text file in the spirit of the dataset's *_sol.txt format
+    (id, bin, orientation, position, rotated dims, weight)."""
+    os.makedirs(out_dir, exist_ok=True)
+
+    # original dims per item id, to recover the orientation index
+    orig_dims = {}
+    if problem is not None:
+        for it in problem.items:
+            orig_dims[int(it.id)] = (int(it.length), int(it.width), int(it.height))
+
+    used = [(i, b) for i, b in enumerate(bins) if len(b.placed) > 0]
+    bin_vol = bins[0].w * bins[0].d * bins[0].h if bins else 1
+
+    lines = []
+    lines.append(f"# Number of bins used: {len(used)}")
+    lines.append(f"# Number of cases packed: {sum(len(b.placed) for _, b in used)}")
+    if max_weight is not None:
+        lines.append(f"# Max weight: {max_weight}")
+    lines.append("# Weight of bins: " + " ".join(str(b.current_weight) for _, b in used))
+    lines.append("")
+    lines.append(f"{'id':>4}  {'bin':>4}  {'orientation':>11}  "
+                 f"{'x':>6} {'y':>6} {'z':>6}  {'x_':>5} {'y_':>5} {'z_':>5}  {'weight':>7}")
+    lines.append("-" * 72)
+    for bin_no, (b_idx, b) in enumerate(used, start=1):
+        for k in b.placed:
+            rot = -1
+            base = orig_dims.get(k.item_id)
+            if base:
+                for r_idx, perm in enumerate(ROTATIONS):
+                    if tuple(base[p] for p in perm) == (k.w, k.d, k.h):
+                        rot = r_idx
+                        break
+            lines.append(f"{k.item_id:>4}  {bin_no:>4}  {rot:>11}  "
+                         f"{k.x:>6} {k.y:>6} {k.z:>6}  "
+                         f"{k.w:>5} {k.d:>5} {k.h:>5}  {k.weight:>7}")
+
+    sol_path = os.path.join(out_dir, f"{prefix}_sol.txt")
+    with open(sol_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+    for bin_no, (b_idx, b) in enumerate(used, start=1):
+        util = sum(k.w * k.d * k.h for k in b.placed) / bin_vol
+        title = f"{prefix} - Bin {bin_no}/{len(bins)} ({len(b.placed)} items, util {util:.3f})"
+        b.plot3d(title=title + " [with EMS]",
+                 save_path=os.path.join(out_dir, f"{prefix}_bin_{bin_no}_with_ems.png"),
+                 show=False)
+        b.plot3d_filled(title=title,
+                        save_path=os.path.join(out_dir, f"{prefix}_bin_{bin_no}_filled.png"),
+                        show=False)
+    return sol_path
+
+
+def save_relational_model(agent: RelationalDQNAgent, save_path: str,
+                          problem_info: dict = None, training_stats: dict = None):
+    """Checkpoint with problem/training metadata (mirrors the former
+    pipeline's save_model)."""
+    import torch
+    from pathlib import Path
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    ckpt = {
+        'q_state_dict': agent.q.state_dict(),
+        'q_target_state_dict': agent.q_target.state_dict(),
+        'optimizer_state_dict': agent.opt.state_dict(),
+        'config': agent.cfg.__dict__,
+        'env_steps': agent.env_steps,
+        'training_steps': agent.training_steps,
+        'episodes_completed': agent.episodes_completed,
+    }
+    if problem_info:
+        ckpt['problem_info'] = problem_info
+    if training_stats:
+        ckpt['training_stats'] = training_stats
+    torch.save(ckpt, save_path)
+    print(f"Model saved to: {save_path}")
+
+
+def load_relational_model(load_path: str, problem_path: str = None,
+                          device: str = None):
+    """Load a relational agent checkpoint; optionally rebuild the environment
+    for the given problem. Returns (agent, checkpoint, env_or_None)."""
+    import torch
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    ckpt = torch.load(load_path, map_location=device, weights_only=False)
+    cfg = RelationalDQNConfig(**ckpt['config'])
+    cfg.device = device
+    agent = RelationalDQNAgent(cfg)
+    agent.q.load_state_dict(ckpt['q_state_dict'])
+    agent.q_target.load_state_dict(ckpt['q_target_state_dict'])
+    agent.opt.load_state_dict(ckpt['optimizer_state_dict'])
+    agent.env_steps = ckpt.get('env_steps', 0)
+    agent.training_steps = ckpt.get('training_steps', 0)
+    agent.episodes_completed = ckpt.get('episodes_completed', 0)
+    env = None
+    if problem_path:
+        env = RelationalPackingEnv(load_problem(problem_path), cfg)
+    if 'training_stats' in ckpt:
+        print("Best training performance:")
+        for k, v in ckpt['training_stats'].items():
+            print(f"  {k}: {v}")
+    return agent, ckpt, env
+
+
+# ===========================================================================
 # Training
 # ===========================================================================
+
+def _store_step(agent: RelationalDQNAgent, s, a, r, s_next, done, info):
+    """Route a transition into the replay buffer.
+
+    - Constraint refusals are self-loops: stored ISOLATED (1-step, outside the
+      n-step chain) so their penalty lands only on the violating action's
+      Q-value and cannot contaminate the returns of real placements.
+    - If the episode terminates on a refusal (action space exhausted), the
+      terminal outcome reward goes into the placement chain via an a=-1
+      transition (no TD loss of its own, but it propagates backwards through
+      n-step returns - this is the abandonment signal).
+    - Everything else (placements, dead-ends) flows through the n-step chain.
+    """
+    if "violation" in info:
+        agent.store(s, a, info["r_violation"], s_next, False, isolated=True)
+        if done:
+            agent.store(s_next, -1, info.get("r_terminal", 0.0), s_next, True)
+    else:
+        agent.store(s, -1 if a is None else a, r, s_next, done)
+
 
 def train_relational_dqn(
     problem_path: str,
     episodes: int = 400,
     seed: int = 42,
     device: str = None,
-    violation_penalty: float = 0.25,
+    violation_penalty: float = 0.1,
     log_interval: int = 10,
     train_freq: int = 1,
     save_path: str = None,
@@ -539,10 +736,7 @@ def train_relational_dqn(
         while True:
             a = agent.select_action(s)
             s_next, r, done, info = env.step(a)
-            # dead-end steps (a=None) are stored with action -1: excluded from
-            # the TD loss but their terminal reward still propagates backwards
-            # through the n-step aggregation
-            agent.store(s, -1 if a is None else a, r, s_next, done)
+            _store_step(agent, s, a, r, s_next, done, info)
             global_step += 1
             if global_step % train_freq == 0:
                 loss = agent.train_step()
@@ -584,21 +778,45 @@ def train_relational_dqn(
           f"violations/ep={np.mean(viol_hist):.1f}")
     print(f"{'='*80}\n")
 
+    problem_name = os.path.splitext(os.path.basename(problem_path))[0]
+
     if save_path:
-        import os
-        os.makedirs("output_data", exist_ok=True)
         if not save_path.startswith("output_data/"):
             save_path = os.path.join("output_data", os.path.basename(save_path))
-        agent.save(save_path)
-        print(f"Model saved to: {save_path}")
+        save_relational_model(
+            agent, save_path,
+            problem_info={
+                'problem_path': problem_path,
+                'bin_dimensions': (W, D, H),
+                'max_bins': problem.max_bins,
+                'max_weight': problem.max_weight,
+                'num_items': total_items,
+            },
+            training_stats={
+                'best_util': best_util,
+                'best_bins': best_bins,
+                'best_items': best_items,
+                'final_ma50_util': float(np.mean(util_hist)),
+                'final_ma50_violations': float(np.mean(viol_hist)),
+                'episodes': episodes,
+            })
+
+    # save the best nesting found during training (plots + solution file)
+    if best_solution is not None:
+        sol_path = save_nesting(best_solution, "output_data",
+                                f"relational_{problem_name}_best",
+                                max_weight=problem.max_weight, problem=problem)
+        print(f"Best nesting saved: {sol_path} (+ per-bin PNGs)")
 
     return agent, env, best_solution
 
 
-def evaluate_episode(env: RelationalPackingEnv, agent: RelationalDQNAgent) -> dict:
+def evaluate_episode(env: RelationalPackingEnv, agent: RelationalDQNAgent,
+                     save_dir: str = None, save_prefix: str = "eval") -> dict:
     """Run one greedy episode (no exploration). Constraints are still only
     refereed, never masked, so violations here mean the agent has NOT yet
-    internalised the constraint semantics - a key transfer metric."""
+    internalised the constraint semantics - a key transfer metric.
+    If save_dir is given, the resulting nesting is saved (plots + sol file)."""
     s = env.reset()
     violations = 0
     while True:
@@ -608,6 +826,10 @@ def evaluate_episode(env: RelationalPackingEnv, agent: RelationalDQNAgent) -> di
             violations += 1
         if done:
             info["greedy_violations"] = violations
+            if save_dir:
+                info["sol_path"] = save_nesting(
+                    env.bins, save_dir, save_prefix,
+                    max_weight=env.max_weight, problem=env.problem)
             return info
 
 
@@ -617,11 +839,13 @@ def train_relational_multi_problem(
     episodes: int = 600,
     seed: int = 42,
     device: str = None,
-    violation_penalty: float = 0.25,
+    violation_penalty: float = 0.1,
     log_interval: int = 10,
     train_freq: int = 1,
     save_path: str = None,
+    save_eval_dir: str = None,
     cfg_overrides: dict = None,
+    verbose: bool = True,
 ):
     """
     Train ONE relational agent on several problems in round-robin fashion,
@@ -630,6 +854,9 @@ def train_relational_multi_problem(
     typed edges), whatever the agent learns about the constraint vocabulary
     applies directly to unseen problems - this function measures exactly
     that transfer.
+
+    Returns (agent, results) where results["summary"] holds averaged
+    greedy-evaluation metrics per split (used by the GA fitness function).
     """
     import torch
 
@@ -650,10 +877,11 @@ def train_relational_multi_problem(
     train_envs = [make_env(p, i) for i, p in enumerate(train_paths)]
     agent = RelationalDQNAgent(cfg)
 
-    print(f"\n{'='*80}")
-    print(f"RELATIONAL MULTI-PROBLEM TRAINING ({len(train_paths)} problems, "
-          f"round-robin, {episodes} episodes, device={device})")
-    print(f"{'='*80}\n")
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"RELATIONAL MULTI-PROBLEM TRAINING ({len(train_paths)} problems, "
+              f"round-robin, {episodes} episodes, device={device})")
+        print(f"{'='*80}\n")
 
     from collections import deque as _dq
     util_hist, viol_hist = _dq(maxlen=50), _dq(maxlen=50)
@@ -666,7 +894,7 @@ def train_relational_multi_problem(
         while True:
             a = agent.select_action(s)
             s_next, r, done, info = env.step(a)
-            agent.store(s, -1 if a is None else a, r, s_next, done)
+            _store_step(agent, s, a, r, s_next, done, info)
             global_step += 1
             if global_step % train_freq == 0:
                 loss = agent.train_step()
@@ -681,7 +909,7 @@ def train_relational_multi_problem(
         viol_hist.append(ep_violations)
         agent.on_episode_end()
 
-        if (ep + 1) % log_interval == 0 or ep == 0:
+        if verbose and ((ep + 1) % log_interval == 0 or ep == 0):
             print(f"Ep {ep+1:4d}/{episodes} [{train_paths[ep % len(train_paths)].split('/')[-1]}] | "
                   f"Util {info.get('utilization', 0):.3f} (MA {np.mean(util_hist):.3f}) | "
                   f"Items {info.get('items_placed', 0)} | "
@@ -690,26 +918,44 @@ def train_relational_multi_problem(
                   f"L {np.mean(losses) if losses else 0.0:.4f}")
 
     # ---- greedy evaluation: training problems + held-out transfer ----------
-    results = {"train": {}, "test": {}}
-    print(f"\n{'-'*80}\nGREEDY EVALUATION (constraints refereed, not masked)\n{'-'*80}")
+    results = {"train": {}, "test": {}, "summary": {}}
+    if verbose:
+        print(f"\n{'-'*80}\nGREEDY EVALUATION (constraints refereed, not masked)\n{'-'*80}")
     for split, paths in (("train", train_paths), ("test", test_paths or [])):
         for p in paths:
             env = make_env(p, 999)
-            info = evaluate_episode(env, agent)
+            name = os.path.splitext(os.path.basename(p))[0]
+            info = evaluate_episode(
+                env, agent,
+                save_dir=save_eval_dir,
+                save_prefix=f"relational_{split}_{name}")
             results[split][p] = info
-            print(f"  [{split}] {p.split('/')[-1]}: "
-                  f"util={info.get('utilization', 0):.3f} "
-                  f"items={info.get('items_placed', 0)}+{info.get('items_remaining', 0)}left "
-                  f"bins={info.get('bins_used', 0)} "
-                  f"greedy_violations={info.get('greedy_violations', 0)}")
+            if verbose:
+                print(f"  [{split}] {p.split('/')[-1]}: "
+                      f"util={info.get('utilization', 0):.3f} "
+                      f"items={info.get('items_placed', 0)}+{info.get('items_remaining', 0)}left "
+                      f"bins={info.get('bins_used', 0)} "
+                      f"greedy_violations={info.get('greedy_violations', 0)}")
+        if results[split]:
+            infos = results[split].values()
+            results["summary"][split] = {
+                "avg_utilization": float(np.mean([i.get("utilization", 0) for i in infos])),
+                "avg_bins_used": float(np.mean([i.get("bins_used", 0) for i in infos])),
+                "avg_items_placed": float(np.mean([i.get("items_placed", 0) for i in infos])),
+                "avg_items_remaining": float(np.mean([i.get("items_remaining", 0) for i in infos])),
+                "avg_greedy_violations": float(np.mean([i.get("greedy_violations", 0) for i in infos])),
+            }
 
     if save_path:
-        import os
-        os.makedirs("output_data", exist_ok=True)
         if not save_path.startswith("output_data/"):
             save_path = os.path.join("output_data", os.path.basename(save_path))
-        agent.save(save_path)
-        print(f"\nModel saved to: {save_path}")
+        save_relational_model(
+            agent, save_path,
+            problem_info={'train_paths': list(train_paths),
+                          'test_paths': list(test_paths or [])},
+            training_stats={k + "_" + m: v
+                            for k, d in results["summary"].items()
+                            for m, v in d.items()})
 
     return agent, results
 
