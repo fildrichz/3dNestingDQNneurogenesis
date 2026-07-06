@@ -384,14 +384,14 @@ class RelationalDQNAgent:
             out[k] = t
         return out
 
-    def select_action(self, s: Dict[str, np.ndarray]) -> Optional[int]:
+    def select_action(self, s: Dict[str, np.ndarray], greedy: bool = False) -> Optional[int]:
         """Returns a flat action index into (max_types, max_ems, R), or None."""
         valid = s["valid"]
         flat_valid = np.flatnonzero(valid.reshape(-1))
         if flat_valid.size == 0:
             return None
         self.env_steps += 1
-        if np.random.rand() < self.epsilon():
+        if not greedy and np.random.rand() < self.epsilon():
             return int(np.random.choice(flat_valid))
         with torch.no_grad():
             st = self._state_to_torch(s)

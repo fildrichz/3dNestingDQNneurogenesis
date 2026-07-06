@@ -595,6 +595,125 @@ def train_relational_dqn(
     return agent, env, best_solution
 
 
+def evaluate_episode(env: RelationalPackingEnv, agent: RelationalDQNAgent) -> dict:
+    """Run one greedy episode (no exploration). Constraints are still only
+    refereed, never masked, so violations here mean the agent has NOT yet
+    internalised the constraint semantics - a key transfer metric."""
+    s = env.reset()
+    violations = 0
+    while True:
+        a = agent.select_action(s, greedy=True)
+        s, r, done, info = env.step(a)
+        if "violation" in info:
+            violations += 1
+        if done:
+            info["greedy_violations"] = violations
+            return info
+
+
+def train_relational_multi_problem(
+    train_paths: List[str],
+    test_paths: List[str] = None,
+    episodes: int = 600,
+    seed: int = 42,
+    device: str = None,
+    violation_penalty: float = 0.25,
+    log_interval: int = 10,
+    train_freq: int = 1,
+    save_path: str = None,
+    cfg_overrides: dict = None,
+):
+    """
+    Train ONE relational agent on several problems in round-robin fashion,
+    then greedy-evaluate on both training problems and held-out test
+    problems. Because item IDs never enter the network (constraints are
+    typed edges), whatever the agent learns about the constraint vocabulary
+    applies directly to unseen problems - this function measures exactly
+    that transfer.
+    """
+    import torch
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    cfg = RelationalDQNConfig(device=device)
+    cfg.eps_decay_episodes = max(1, int(episodes * 0.8))
+    if cfg_overrides:
+        for k, v in cfg_overrides.items():
+            setattr(cfg, k, v)
+
+    def make_env(path, s_off=0):
+        return RelationalPackingEnv(load_problem(path), cfg, seed=seed + s_off,
+                                    gamma=cfg.gamma,
+                                    violation_penalty=violation_penalty)
+
+    train_envs = [make_env(p, i) for i, p in enumerate(train_paths)]
+    agent = RelationalDQNAgent(cfg)
+
+    print(f"\n{'='*80}")
+    print(f"RELATIONAL MULTI-PROBLEM TRAINING ({len(train_paths)} problems, "
+          f"round-robin, {episodes} episodes, device={device})")
+    print(f"{'='*80}\n")
+
+    from collections import deque as _dq
+    util_hist, viol_hist = _dq(maxlen=50), _dq(maxlen=50)
+    global_step = 0
+
+    for ep in range(episodes):
+        env = train_envs[ep % len(train_envs)]
+        s = env.reset()
+        ep_violations, losses = 0, []
+        while True:
+            a = agent.select_action(s)
+            s_next, r, done, info = env.step(a)
+            agent.store(s, -1 if a is None else a, r, s_next, done)
+            global_step += 1
+            if global_step % train_freq == 0:
+                loss = agent.train_step()
+                if loss is not None:
+                    losses.append(loss)
+            if "violation" in info:
+                ep_violations += 1
+            s = s_next
+            if done:
+                break
+        util_hist.append(info.get("utilization", 0.0))
+        viol_hist.append(ep_violations)
+        agent.on_episode_end()
+
+        if (ep + 1) % log_interval == 0 or ep == 0:
+            print(f"Ep {ep+1:4d}/{episodes} [{train_paths[ep % len(train_paths)].split('/')[-1]}] | "
+                  f"Util {info.get('utilization', 0):.3f} (MA {np.mean(util_hist):.3f}) | "
+                  f"Items {info.get('items_placed', 0)} | "
+                  f"Viol {ep_violations:3d} (MA {np.mean(viol_hist):.1f}) | "
+                  f"eps {agent.epsilon():.3f} | "
+                  f"L {np.mean(losses) if losses else 0.0:.4f}")
+
+    # ---- greedy evaluation: training problems + held-out transfer ----------
+    results = {"train": {}, "test": {}}
+    print(f"\n{'-'*80}\nGREEDY EVALUATION (constraints refereed, not masked)\n{'-'*80}")
+    for split, paths in (("train", train_paths), ("test", test_paths or [])):
+        for p in paths:
+            env = make_env(p, 999)
+            info = evaluate_episode(env, agent)
+            results[split][p] = info
+            print(f"  [{split}] {p.split('/')[-1]}: "
+                  f"util={info.get('utilization', 0):.3f} "
+                  f"items={info.get('items_placed', 0)}+{info.get('items_remaining', 0)}left "
+                  f"bins={info.get('bins_used', 0)} "
+                  f"greedy_violations={info.get('greedy_violations', 0)}")
+
+    if save_path:
+        import os
+        os.makedirs("output_data", exist_ok=True)
+        if not save_path.startswith("output_data/"):
+            save_path = os.path.join("output_data", os.path.basename(save_path))
+        agent.save(save_path)
+        print(f"\nModel saved to: {save_path}")
+
+    return agent, results
+
+
 def full_datapath(filename: str) -> str:
     import os
     return os.path.join(
