@@ -413,8 +413,13 @@ class RelationalDQNAgent:
         done = to_torch(batch["done"], self.device).float()
 
         B = a.shape[0]
+        # a = -1 marks dead-end transitions (no action taken): they carry
+        # terminal reward into n-step returns but take no TD loss themselves
+        row_valid = a >= 0
+        if not row_valid.any():
+            return None
         q_all = self.q(s).view(B, -1)
-        q_sa = q_all.gather(1, a.unsqueeze(1)).squeeze(1)
+        q_sa = q_all.gather(1, a.clamp(min=0).unsqueeze(1)).squeeze(1)
 
         with torch.no_grad():
             next_valid = s_next["valid"].view(B, -1)
@@ -439,7 +444,7 @@ class RelationalDQNAgent:
             gamma_n = self.cfg.gamma ** self.cfg.n_step
             target = r + (1.0 - done) * gamma_n * max_next
 
-        loss = F.smooth_l1_loss(q_sa, target)
+        loss = F.smooth_l1_loss(q_sa[row_valid], target[row_valid])
         self.opt.zero_grad()
         loss.backward()
         if self.cfg.grad_clip > 0:

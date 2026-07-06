@@ -145,7 +145,10 @@ class RelationalPackingEnv:
                     M[a, b] = EDGE_NOT_ABOVE
                 elif (ida, idb) in self.relpos_pairs:   # a light, b heavy
                     M[a, b] = EDGE_NOT_BELOW
-                elif ida == idb and a != b:
+                elif ida == idb:
+                    # diagonal: two distinct TOKENS of the same type (a type
+                    # slot and its placed instances) look this entry up;
+                    # true self-edges are zeroed in state()
                     M[a, b] = EDGE_SAME_TYPE
         return M
 
@@ -482,6 +485,7 @@ def train_relational_dqn(
     device: str = None,
     violation_penalty: float = 0.25,
     log_interval: int = 10,
+    train_freq: int = 1,
     save_path: str = None,
     cfg_overrides: dict = None,
 ):
@@ -527,6 +531,7 @@ def train_relational_dqn(
     best_util, best_bins, best_items, best_solution = 0.0, float('inf'), 0, None
     t0 = time.time()
 
+    global_step = 0
     for ep in range(episodes):
         s = env.reset()
         ep_ret, ep_violations, losses = 0.0, 0, []
@@ -534,8 +539,12 @@ def train_relational_dqn(
         while True:
             a = agent.select_action(s)
             s_next, r, done, info = env.step(a)
-            if a is not None:
-                agent.store(s, a, r, s_next, done)
+            # dead-end steps (a=None) are stored with action -1: excluded from
+            # the TD loss but their terminal reward still propagates backwards
+            # through the n-step aggregation
+            agent.store(s, -1 if a is None else a, r, s_next, done)
+            global_step += 1
+            if global_step % train_freq == 0:
                 loss = agent.train_step()
                 if loss is not None:
                     losses.append(loss)
