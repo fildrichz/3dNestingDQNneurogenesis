@@ -3,11 +3,13 @@ Genetic-algorithm neurogenesis for the RELATIONAL DQN architecture.
 
 Same evolutionary scheme as ga_evolution.py (adaptive population sizing,
 elitism, tournament selection, uniform/single-point crossover, mutation-rate
-decay, multi-objective fitness 0.70*utilization + 0.20*bins-efficiency +
-0.10*parsimony), but genomes describe the relational constraint-learning
-network (genome_relational.RelationalGenome) and are evaluated by
-round-robin training + greedy evaluation via
+decay), but genomes describe the relational constraint-learning network
+(genome_relational.RelationalGenome) and are evaluated by round-robin
+training + greedy evaluation via
 packing_with_relational.train_relational_multi_problem.
+Fitness = 0.80*utilization + 0.20*bins-efficiency (no parsimony pressure:
+utilization differences are small in absolute value but significant, and a
+complexity penalty overly punishes larger networks).
 
 Because the relational network is problem-agnostic (item IDs never enter
 it), a genome can be evaluated on SEVERAL problems at once and the evolved
@@ -32,8 +34,7 @@ def evaluate_relational_genome(genome: RelationalGenome,
                                seed: int = 42,
                                train_freq: int = 2,
                                verbose: bool = False) -> Tuple[float, Dict]:
-    """Fitness = 0.70*avg_greedy_util + 0.20*bins_efficiency + 0.10*parsimony
-    (same weighting as ga_evolution.evaluate_genome_fitness)."""
+    """Fitness = 0.80*avg_greedy_util + 0.20*bins_efficiency (no parsimony)."""
     import torch
     from packing_with_relational import train_relational_multi_problem
 
@@ -67,11 +68,12 @@ def evaluate_relational_genome(genome: RelationalGenome,
     avg_bins = summary.get('avg_bins_used', 0.0)
     complexity = genome.get_network_complexity()
 
+    # NOTE: no parsimony term - utilization differences between architectures
+    # are small in absolute value but significant for the objective, and a
+    # complexity penalty was found to overly punish larger networks.
+    # Complexity is still reported in metrics for analysis.
     bins_penalty = min(avg_bins / 5.0, 1.0)
-    complexity_penalty = min(complexity / 5.0, 1.0)
-    fitness = (0.70 * avg_util
-               + 0.20 * (1.0 - bins_penalty)
-               + 0.10 * (1.0 - complexity_penalty))
+    fitness = 0.80 * avg_util + 0.20 * (1.0 - bins_penalty)
 
     genome.fitness = fitness
     genome.metrics = dict(summary)
@@ -79,7 +81,6 @@ def evaluate_relational_genome(genome: RelationalGenome,
     genome.metrics['fitness_components'] = {
         'utilization': avg_util,
         'bins_efficiency': 1.0 - bins_penalty,
-        'parsimony': 1.0 - complexity_penalty,
     }
     return fitness, genome.metrics
 

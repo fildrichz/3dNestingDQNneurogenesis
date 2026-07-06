@@ -612,6 +612,7 @@ def save_relational_model(agent: RelationalDQNAgent, save_path: str,
         'q_target_state_dict': agent.q_target.state_dict(),
         'optimizer_state_dict': agent.opt.state_dict(),
         'config': agent.cfg.__dict__,
+        'growth_log': agent.growth_log,
         'env_steps': agent.env_steps,
         'training_steps': agent.training_steps,
         'episodes_completed': agent.episodes_completed,
@@ -631,10 +632,16 @@ def load_relational_model(load_path: str, problem_path: str = None,
     import torch
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
+    from dqn_core.dqn_relational import apply_growth_log
     ckpt = torch.load(load_path, map_location=device, weights_only=False)
     cfg = RelationalDQNConfig(**ckpt['config'])
     cfg.device = device
     agent = RelationalDQNAgent(cfg)
+    # replay neurogenesis so parameter shapes match the grown checkpoint
+    agent.growth_log = ckpt.get('growth_log', [])
+    apply_growth_log(agent.q, agent.growth_log)
+    apply_growth_log(agent.q_target, agent.growth_log)
+    agent.opt = torch.optim.Adam(agent.q.parameters(), lr=cfg.lr)
     agent.q.load_state_dict(ckpt['q_state_dict'])
     agent.q_target.load_state_dict(ckpt['q_target_state_dict'])
     agent.opt.load_state_dict(ckpt['optimizer_state_dict'])
@@ -685,7 +692,12 @@ def train_relational_dqn(
     train_freq: int = 1,
     save_path: str = None,
     cfg_overrides: dict = None,
+    neurogenesis: dict = None,
 ):
+    """Set neurogenesis={} (or a dict of NeurogenesisController kwargs, e.g.
+    {'patience': 40, 'max_deepen': 3}) to let the network GROW during
+    training: function-preserving deepen/widen operations are applied when
+    the utilization moving average plateaus."""
     import os
     import torch
 
@@ -722,6 +734,16 @@ def train_relational_dqn(
     env = RelationalPackingEnv(problem, cfg, seed=seed, gamma=cfg.gamma,
                                violation_penalty=violation_penalty)
     agent = RelationalDQNAgent(cfg)
+
+    controller = None
+    if neurogenesis is not None:
+        from dqn_core.dqn_relational import NeurogenesisController
+        controller = NeurogenesisController(agent, total_episodes=episodes,
+                                            **neurogenesis)
+        print(f"Neurogenesis ENABLED: patience={controller.patience}, "
+              f"max_deepen={controller.max_deepen}, "
+              f"max_widen={controller.max_widen}, "
+              f"widen_extra={controller.widen_extra}")
 
     from collections import deque as _dq
     util_hist, bins_hist, items_hist, viol_hist = _dq(maxlen=50), _dq(maxlen=50), _dq(maxlen=50), _dq(maxlen=50)
@@ -760,6 +782,8 @@ def train_relational_dqn(
             best_solution = copy.deepcopy(env.bins)
 
         agent.on_episode_end()
+        if controller is not None:
+            controller.on_episode_end(util)
 
         if (ep + 1) % log_interval == 0 or ep == 0:
             print(f"Ep {ep+1:4d}/{episodes} | "
@@ -799,6 +823,8 @@ def train_relational_dqn(
                 'final_ma50_util': float(np.mean(util_hist)),
                 'final_ma50_violations': float(np.mean(viol_hist)),
                 'episodes': episodes,
+                'growth_events': list(agent.growth_log),
+                'final_n_params': sum(p.numel() for p in agent.q.parameters()),
             })
 
     # save the best nesting found during training (plots + solution file)
@@ -846,6 +872,7 @@ def train_relational_multi_problem(
     save_eval_dir: str = None,
     cfg_overrides: dict = None,
     verbose: bool = True,
+    neurogenesis: dict = None,
 ):
     """
     Train ONE relational agent on several problems in round-robin fashion,
@@ -877,10 +904,17 @@ def train_relational_multi_problem(
     train_envs = [make_env(p, i) for i, p in enumerate(train_paths)]
     agent = RelationalDQNAgent(cfg)
 
+    controller = None
+    if neurogenesis is not None:
+        from dqn_core.dqn_relational import NeurogenesisController
+        controller = NeurogenesisController(agent, total_episodes=episodes,
+                                            verbose=verbose, **neurogenesis)
+
     if verbose:
         print(f"\n{'='*80}")
         print(f"RELATIONAL MULTI-PROBLEM TRAINING ({len(train_paths)} problems, "
-              f"round-robin, {episodes} episodes, device={device})")
+              f"round-robin, {episodes} episodes, device={device}"
+              f"{', neurogenesis ON' if controller else ''})")
         print(f"{'='*80}\n")
 
     from collections import deque as _dq
@@ -908,6 +942,10 @@ def train_relational_multi_problem(
         util_hist.append(info.get("utilization", 0.0))
         viol_hist.append(ep_violations)
         agent.on_episode_end()
+        if controller is not None:
+            # NOTE: round-robin means the MA mixes problems; with problems of
+            # similar scale this is fine (utilization is normalised)
+            controller.on_episode_end(info.get("utilization", 0.0))
 
         if verbose and ((ep + 1) % log_interval == 0 or ep == 0):
             print(f"Ep {ep+1:4d}/{episodes} [{train_paths[ep % len(train_paths)].split('/')[-1]}] | "

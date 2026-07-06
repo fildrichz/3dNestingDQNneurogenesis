@@ -355,6 +355,156 @@ class RelationalQNetwork(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Neurogenesis: function-preserving structural growth DURING training
+# ---------------------------------------------------------------------------
+#
+# Instead of evolving separate architectures across many training runs (NAS),
+# a single network grows while it learns. Both growth operations are
+# function-preserving (the grown network computes exactly the same Q-values
+# at the moment of growth), so no learned behaviour is lost:
+#
+#   deepen:    append an encoder layer whose output projections are
+#              zero-initialised - the residual block starts as an identity.
+#   widen_ffn: add hidden units to every encoder layer's FFN; the new units'
+#              output columns are zero-initialised (Net2Net-style), so they
+#              contribute nothing until gradients recruit them.
+#
+# d_model is deliberately never grown: token/buffer shapes stay fixed, so the
+# replay buffer and all stored experience remain valid across growth events.
+
+def _grow_deepen(net: "RelationalQNetwork", seed: int):
+    """Append an identity-initialised encoder layer."""
+    cfg = net.cfg
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        layer = RelationalEncoderLayer(cfg.d_model, cfg.n_heads, NUM_EDGE_TYPES,
+                                       cfg.ffn_mult, cfg.dropout)
+    nn.init.zeros_(layer.attn.out.weight)
+    nn.init.zeros_(layer.attn.out.bias)
+    nn.init.zeros_(layer.ffn[-1].weight)
+    nn.init.zeros_(layer.ffn[-1].bias)
+    device = next(net.parameters()).device
+    net.layers.append(layer.to(device))
+
+
+def _grow_widen_ffn(net: "RelationalQNetwork", extra: int, seed: int):
+    """Add `extra` hidden units to every encoder layer's FFN (zero output)."""
+    device = next(net.parameters()).device
+    for li, layer in enumerate(net.layers):
+        l1: nn.Linear = layer.ffn[0]
+        l2: nn.Linear = layer.ffn[-1]
+        h_old = l1.out_features
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed + li)
+            new_l1 = nn.Linear(l1.in_features, h_old + extra)
+            new_l2 = nn.Linear(h_old + extra, l2.out_features)
+        with torch.no_grad():
+            new_l1.weight[:h_old] = l1.weight
+            new_l1.bias[:h_old] = l1.bias
+            new_l2.weight[:, :h_old] = l2.weight
+            new_l2.weight[:, h_old:] = 0.0
+            new_l2.bias.copy_(l2.bias)
+        layer.ffn[0] = new_l1.to(device)
+        layer.ffn[-1] = new_l2.to(device)
+
+
+GROWTH_OPS = {
+    "deepen": _grow_deepen,
+    "widen_ffn": _grow_widen_ffn,
+}
+
+
+def apply_growth_log(net: "RelationalQNetwork", growth_log):
+    """Replay recorded growth operations on a freshly built network so that
+    a grown checkpoint's state_dict shapes match before loading."""
+    for entry in growth_log:
+        if entry["op"] == "deepen":
+            _grow_deepen(net, entry["seed"])
+        elif entry["op"] == "widen_ffn":
+            _grow_widen_ffn(net, entry["extra"], entry["seed"])
+        else:
+            raise ValueError(f"Unknown growth op: {entry['op']}")
+
+
+class NeurogenesisController:
+    """Plateau-triggered growth schedule.
+
+    Tracks a moving average of an episode metric (utilization). When the best
+    MA has not improved by `min_delta` for `patience` episodes - and we are
+    past the initial exploration phase and any cooldown - the agent grows.
+    Operations alternate deepen / widen_ffn until their caps are reached.
+    """
+
+    def __init__(self, agent: "RelationalDQNAgent", total_episodes: int,
+                 patience: int = 40, min_delta: float = 0.003,
+                 cooldown: int = 25, start_after_frac: float = 0.2,
+                 ma_window: int = 20, max_deepen: int = 3, max_widen: int = 3,
+                 widen_extra: int = None, verbose: bool = True):
+        self.agent = agent
+        self.total_episodes = total_episodes
+        self.patience = patience
+        self.min_delta = min_delta
+        self.cooldown = cooldown
+        self.start_after = int(start_after_frac * total_episodes)
+        self.ma_window = ma_window
+        self.max_deepen = max_deepen
+        self.max_widen = max_widen
+        self.widen_extra = widen_extra or agent.cfg.d_model
+        self.verbose = verbose
+
+        self._metrics = deque(maxlen=ma_window)
+        self._best_ma = -np.inf
+        self._last_improve_ep = 0
+        self._last_growth_ep = -10**9
+        self._episode = 0
+        self.n_deepen = 0
+        self.n_widen = 0
+
+    def _next_op(self):
+        # alternate, starting with deepen; fall back to whichever has capacity
+        if self.n_deepen <= self.n_widen and self.n_deepen < self.max_deepen:
+            return "deepen"
+        if self.n_widen < self.max_widen:
+            return "widen_ffn"
+        if self.n_deepen < self.max_deepen:
+            return "deepen"
+        return None
+
+    def on_episode_end(self, metric: float):
+        """Feed the episode metric; returns a growth-event dict or None."""
+        self._episode += 1
+        self._metrics.append(float(metric))
+        if len(self._metrics) < self.ma_window:
+            return None
+        ma = float(np.mean(self._metrics))
+        if ma > self._best_ma + self.min_delta:
+            self._best_ma = ma
+            self._last_improve_ep = self._episode
+            return None
+        if self._episode < self.start_after:
+            return None
+        anchor = max(self._last_improve_ep, self._last_growth_ep)
+        if self._episode - anchor < max(self.patience, self.cooldown):
+            return None
+        op = self._next_op()
+        if op is None:
+            return None
+        event = self.agent.grow(op, extra=self.widen_extra,
+                                episode=self._episode)
+        self._last_growth_ep = self._episode
+        if op == "deepen":
+            self.n_deepen += 1
+        else:
+            self.n_widen += 1
+        if self.verbose:
+            print(f"  >> NEUROGENESIS at ep {self._episode}: {event['op']} "
+                  f"(layers={event['n_layers']}, "
+                  f"ffn_hidden={event['ffn_hidden']}, "
+                  f"params={event['n_params']/1e6:.2f}M, MA={ma:.3f})")
+        return event
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -371,6 +521,39 @@ class RelationalDQNAgent:
         self.env_steps = 0
         self.training_steps = 0
         self.episodes_completed = 0
+        self.growth_log: list = []   # neurogenesis events, replayed on load
+
+    def grow(self, op: str, extra: int = None, episode: int = None) -> dict:
+        """Apply a function-preserving growth operation to BOTH the online
+        and target networks (identical new parameters via a shared seed),
+        rebuild the optimizer, and record the event for checkpoint replay.
+
+        The replay buffer is untouched: growth never changes input shapes,
+        so all stored experience stays valid."""
+        seed = int(np.random.randint(0, 2**31 - 1))
+        if op == "deepen":
+            _grow_deepen(self.q, seed)
+            _grow_deepen(self.q_target, seed)
+            entry = {"op": "deepen", "seed": seed}
+        elif op == "widen_ffn":
+            extra = int(extra or self.cfg.d_model)
+            _grow_widen_ffn(self.q, extra, seed)
+            _grow_widen_ffn(self.q_target, extra, seed)
+            entry = {"op": "widen_ffn", "extra": extra, "seed": seed}
+        else:
+            raise ValueError(f"Unknown growth op: {op}")
+        if episode is not None:
+            entry["episode"] = int(episode)
+        self.growth_log.append(entry)
+        # Adam moments do not transfer across shape changes; rebuild
+        self.opt = torch.optim.Adam(self.q.parameters(), lr=self.cfg.lr)
+        entry_out = dict(entry)
+        entry_out.update({
+            "n_layers": len(self.q.layers),
+            "ffn_hidden": self.q.layers[0].ffn[0].out_features,
+            "n_params": sum(p.numel() for p in self.q.parameters()),
+        })
+        return entry_out
 
     # --- epsilon (episode based, same scheme as dqn_enhanced) ---
     def on_episode_end(self):
@@ -480,15 +663,21 @@ class RelationalDQNAgent:
             'q_target_state_dict': self.q_target.state_dict(),
             'optimizer_state_dict': self.opt.state_dict(),
             'config': self.cfg.__dict__,
+            'growth_log': self.growth_log,
             'env_steps': self.env_steps,
             'training_steps': self.training_steps,
             'episodes_completed': self.episodes_completed,
         }, path)
 
     def load(self, path: str):
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        # replay neurogenesis so parameter shapes match the grown checkpoint
+        self.growth_log = ckpt.get('growth_log', [])
+        apply_growth_log(self.q, self.growth_log)
+        apply_growth_log(self.q_target, self.growth_log)
         self.q.load_state_dict(ckpt['q_state_dict'])
         self.q_target.load_state_dict(ckpt['q_target_state_dict'])
+        self.opt = torch.optim.Adam(self.q.parameters(), lr=self.cfg.lr)
         self.opt.load_state_dict(ckpt['optimizer_state_dict'])
         self.env_steps = ckpt['env_steps']
         self.training_steps = ckpt['training_steps']
