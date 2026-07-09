@@ -39,14 +39,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# Edge type vocabulary (global across all problems - this is what transfers)
+# Edge relation vocabulary (global across all problems - this is what
+# transfers). Relations are BIT FLAGS: multiple relations can hold between
+# the same pair of items simultaneously (e.g. affinity + must-not-stack,
+# which occurs in the benchmark dataset), so an edge entry is the OR of all
+# applicable flags and the attention bias is the SUM of the corresponding
+# learned per-relation biases.
 EDGE_NONE = 0
 EDGE_INCOMPATIBLE = 1        # items may not share a bin (symmetric)
 EDGE_AFFINITY = 2            # items must share a bin (symmetric)
-EDGE_NOT_ABOVE = 3           # source item may not be placed above target (source=heavy)
-EDGE_NOT_BELOW = 4           # source item may not be placed below target (source=light)
-EDGE_SAME_TYPE = 5           # tokens are instances of the same item type
-NUM_EDGE_TYPES = 6
+EDGE_NOT_ABOVE = 4           # source item may not be placed above target (source=heavy)
+EDGE_NOT_BELOW = 8           # source item may not be placed below target (source=light)
+EDGE_SAME_TYPE = 16          # tokens are instances of the same item type
+NUM_EDGE_RELATIONS = 5       # number of bit flags
+NUM_EDGE_MASKS = 1 << NUM_EDGE_RELATIONS  # 32 possible combinations
 
 
 def to_torch(x, device):
@@ -205,23 +211,33 @@ class RelationalReplayBuffer:
 # ---------------------------------------------------------------------------
 
 class EdgeBiasedSelfAttention(nn.Module):
-    """Multi-head self-attention with an additive learned bias per edge type
-    (Graphormer-style). The bias table is the only place constraint relations
-    enter the network - their meaning is learned from reward."""
+    """Multi-head self-attention with an additive learned bias per edge
+    RELATION (Graphormer-style). Edge entries are bitmasks: when several
+    relations hold between the same pair of items, the bias is the sum of
+    the involved relations' learned biases (compositional - a rare
+    combination like affinity+must-not-stack generalises from its parts).
+    This bias table is the only place constraint relations enter the
+    network; their meaning is learned from reward."""
 
-    def __init__(self, d_model: int, n_heads: int, num_edge_types: int, dropout: float = 0.0):
+    def __init__(self, d_model: int, n_heads: int,
+                 num_relations: int = NUM_EDGE_RELATIONS, dropout: float = 0.0):
         super().__init__()
         assert d_model % n_heads == 0
         self.h = n_heads
         self.dk = d_model // n_heads
         self.qkv = nn.Linear(d_model, 3 * d_model)
         self.out = nn.Linear(d_model, d_model)
-        self.edge_bias = nn.Embedding(num_edge_types, n_heads)
-        nn.init.zeros_(self.edge_bias.weight)
+        # one learned bias vector per relation flag (zero-init: no relation
+        # influence until gradients discover their meaning)
+        self.rel_bias = nn.Parameter(torch.zeros(num_relations, n_heads))
+        # constant (2^R, R) matrix: row m = binary decomposition of mask m
+        masks = torch.arange(1 << num_relations)
+        bits = ((masks[:, None] >> torch.arange(num_relations)[None, :]) & 1).float()
+        self.register_buffer('bit_patterns', bits)
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x, edge_types, pad_mask):
-        # x: (B,T,d)   edge_types: (B,T,T) long   pad_mask: (B,T) True=pad
+        # x: (B,T,d)   edge_types: (B,T,T) long bitmasks   pad_mask: (B,T) True=pad
         B, T, _ = x.shape
         q, k, v = self.qkv(x).chunk(3, dim=-1)
         q = q.view(B, T, self.h, self.dk).transpose(1, 2)   # (B,h,T,dk)
@@ -229,7 +245,9 @@ class EdgeBiasedSelfAttention(nn.Module):
         v = v.view(B, T, self.h, self.dk).transpose(1, 2)
 
         scores = q @ k.transpose(-2, -1) / (self.dk ** 0.5)  # (B,h,T,T)
-        scores = scores + self.edge_bias(edge_types).permute(0, 3, 1, 2)
+        # additive multi-relation bias: table[mask] = sum of active relations
+        bias_table = self.bit_patterns @ self.rel_bias       # (2^R, heads)
+        scores = scores + bias_table[edge_types].permute(0, 3, 1, 2)
         scores = scores.masked_fill(pad_mask[:, None, None, :], float('-inf'))
         attn = torch.softmax(scores, dim=-1)
         attn = self.drop(attn)
@@ -290,7 +308,7 @@ class RelationalQNetwork(nn.Module):
         self.tok_type = nn.Embedding(4, d)
 
         self.layers = nn.ModuleList([
-            RelationalEncoderLayer(d, cfg.n_heads, NUM_EDGE_TYPES,
+            RelationalEncoderLayer(d, cfg.n_heads, NUM_EDGE_RELATIONS,
                                    cfg.ffn_mult, cfg.dropout)
             for _ in range(cfg.n_layers)
         ])
@@ -377,7 +395,7 @@ def _grow_deepen(net: "RelationalQNetwork", seed: int):
     cfg = net.cfg
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(seed)
-        layer = RelationalEncoderLayer(cfg.d_model, cfg.n_heads, NUM_EDGE_TYPES,
+        layer = RelationalEncoderLayer(cfg.d_model, cfg.n_heads, NUM_EDGE_RELATIONS,
                                        cfg.ffn_mult, cfg.dropout)
     nn.init.zeros_(layer.attn.out.weight)
     nn.init.zeros_(layer.attn.out.bias)

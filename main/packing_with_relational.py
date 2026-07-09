@@ -151,26 +151,33 @@ class RelationalPackingEnv:
         return self.state()
 
     def _build_type_edge_matrix(self) -> np.ndarray:
-        """Directed edge type between item TYPE ids a->b (n_types x n_types)."""
+        """Directed edge BITMASK between item TYPE ids a->b (n_types^2).
+
+        Relations are OR-ed together because several can hold for the same
+        pair at once (the benchmark contains e.g. affinity + relative-pos
+        between the same two items); the network sums the corresponding
+        learned biases."""
         n = len(self.types)
         M = np.zeros((n, n), np.int8)
         for a in range(n):
             for b in range(n):
                 ida, idb = self.types[a]["id"], self.types[b]["id"]
                 pair = frozenset((ida, idb))
+                mask = 0
                 if a != b and pair in self.incompat:
-                    M[a, b] = EDGE_INCOMPATIBLE
-                elif a != b and pair in self.affinity:
-                    M[a, b] = EDGE_AFFINITY
-                elif (idb, ida) in self.relpos_pairs:   # a heavy, b light
-                    M[a, b] = EDGE_NOT_ABOVE
-                elif (ida, idb) in self.relpos_pairs:   # a light, b heavy
-                    M[a, b] = EDGE_NOT_BELOW
-                elif ida == idb:
+                    mask |= EDGE_INCOMPATIBLE
+                if a != b and pair in self.affinity:
+                    mask |= EDGE_AFFINITY
+                if (idb, ida) in self.relpos_pairs:     # a heavy, b light
+                    mask |= EDGE_NOT_ABOVE
+                if (ida, idb) in self.relpos_pairs:     # a light, b heavy
+                    mask |= EDGE_NOT_BELOW
+                if ida == idb:
                     # diagonal: two distinct TOKENS of the same type (a type
                     # slot and its placed instances) look this entry up;
                     # true self-edges are zeroed in state()
-                    M[a, b] = EDGE_SAME_TYPE
+                    mask |= EDGE_SAME_TYPE
+                M[a, b] = mask
         return M
 
     def _rebuild_ems_refs(self):
