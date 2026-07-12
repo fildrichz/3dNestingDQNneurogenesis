@@ -28,6 +28,7 @@ from pathlib import Path
 from genome import NetworkGenome, create_initial_population, tournament_selection
 from dqn_core.dqn_enhanced import DQNAgentEnhanced
 from nesting.dataset_loader import load_problem, BinPackingProblem
+from packing_with_dqncore2_enhanced import ACTION_FEAT_DIM
 
 
 def get_adaptive_population_size(generation: int,
@@ -106,7 +107,7 @@ def evaluate_genome_fitness(genome: NetworkGenome,
     # Epsilon decay is calculated automatically based on total_episodes
     cfg = genome.to_dqn_config(
         obs_dim=8,  # Fixed for this environment
-        action_feat_dim=25,  # Fixed
+        action_feat_dim=ACTION_FEAT_DIM,
         max_actions=env.max_actions,
         device="cuda" if torch.cuda.is_available() else "cpu",
         total_episodes=episodes  # Automatic episode-based epsilon decay

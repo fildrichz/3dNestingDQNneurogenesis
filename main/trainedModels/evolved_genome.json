@@ -1,0 +1,75 @@
+{
+  "genome_id": 739,
+  "genes": {
+    "hidden_dim": 8,
+    "enc_layers": 2,
+    "head_hidden": 256,
+    "attention_type": "none",
+    "attention_heads": 8,
+    "num_inducing_points": 32,
+    "patch_size": 3,
+    "cnn_channels": [
+      16,
+      48
+    ],
+    "dropout": 0.0,
+    "activation": "gelu",
+    "lr": 0.0001,
+    "batch_size": 128,
+    "gamma": 0.985
+  },
+  "fitness": 0.3632841581847009,
+  "metrics": {
+    "avg_utilization": 0.3634379981847009,
+    "avg_bins_used": 1.4444444444444444,
+    "complexity": 0.015384,
+    "per_problem": [
+      {
+        "problem": "3dBPP_2",
+        "utilization": 0.332314880787037,
+        "bins": 2.0
+      },
+      {
+        "problem": "3dBPP_3",
+        "utilization": 0.5902903752066117,
+        "bins": 1.0
+      },
+      {
+        "problem": "3dBPP_5",
+        "utilization": 0.576225377310293,
+        "bins": 1.0
+      },
+      {
+        "problem": "3dBPP_6",
+        "utilization": 0.2987638970698723,
+        "bins": 2.0
+      },
+      {
+        "problem": "3dBPP_7",
+        "utilization": 0.5915078422453703,
+        "bins": 1.0
+      },
+      {
+        "problem": "3dBPP_8",
+        "utilization": 0.31163427297453705,
+        "bins": 2.0
+      },
+      {
+        "problem": "3dBPP_9",
+        "utilization": 0.1671819131851852,
+        "bins": 1.0
+      },
+      {
+        "problem": "3dBPP_10",
+        "utilization": 0.17168516,
+        "bins": 1.0
+      },
+      {
+        "problem": "3dBPP_11",
+        "utilization": 0.23133826488340192,
+        "bins": 2.0
+      }
+    ]
+  },
+  "complexity": 0.015384
+}

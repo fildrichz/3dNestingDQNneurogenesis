@@ -84,7 +84,7 @@ def compare_architectures(problem_path: str,
         'gamma': 0.992,
     })
     
-    baseline_cfg = baseline_genome.to_dqn_config(8, 25, 128, device, total_episodes=episodes)
+    baseline_cfg = baseline_genome.to_dqn_config(8, ACTION_FEAT_DIM, 128, device, total_episodes=episodes)
     baseline_agent = DQNAgentEnhanced(baseline_cfg)
 
     from packing_with_dqncore2_enhanced import evaluate_agent_on_problem
@@ -107,7 +107,7 @@ def compare_architectures(problem_path: str,
     print("Testing EVOLVED architecture...")
     print(evolved_genome)
     
-    evolved_cfg = evolved_genome.to_dqn_config(8, 25, 128, device, total_episodes=episodes)
+    evolved_cfg = evolved_genome.to_dqn_config(8, ACTION_FEAT_DIM, 128, device, total_episodes=episodes)
     evolved_agent = DQNAgentEnhanced(evolved_cfg)
     
     evolved_metrics = evaluate_agent_on_problem(
@@ -198,7 +198,7 @@ def train_with_evolved_genome(problem_path: str,
 
     obs = env.reset()
     OBS_DIM = obs.shape[0]
-    ACTION_FEAT_DIM = 25  # Standard action feature dimension
+    pass  # ACTION_FEAT_DIM imported from packing_with_dqncore2_enhanced
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -426,7 +426,6 @@ def load_trained_model(model_path: str, problem_path: str, device: str = None,
     )
     obs = env.reset()
     OBS_DIM = obs.shape[0]
-    ACTION_FEAT_DIM = 25
 
     # Build config from genome
     cfg = genome.to_dqn_config(
@@ -557,7 +556,6 @@ def continue_training_on_new_dataset(
     best_util = 0.0
 
     patch_size = genome.genes['patch_size']
-    ACTION_FEAT_DIM = 25
 
     # Training loop
     for ep in range(episodes):
